@@ -20,42 +20,50 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
+import org.apache.activemq.artemis.core.postoffice.impl.LocalQueueBinding;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.ActiveMQServers;
+import org.apache.activemq.artemis.core.server.Consumer;
+import org.apache.activemq.artemis.core.server.HandleStatus;
+import org.apache.activemq.artemis.core.server.MessageReference;
+import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.core.server.impl.QueueImpl;
+import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
+import org.apache.activemq.artemis.selector.filter.Filterable;
 import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakeConsumer;
 import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakeFilter;
 import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakePostOffice;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.core.filter.Filter;
-import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
-import org.apache.activemq.artemis.core.postoffice.impl.LocalQueueBinding;
-import org.apache.activemq.artemis.core.server.Consumer;
-import org.apache.activemq.artemis.core.server.HandleStatus;
-import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.core.server.ActiveMQServers;
-import org.apache.activemq.artemis.core.server.MessageReference;
-import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.core.server.ServerMessage;
-import org.apache.activemq.artemis.core.server.impl.QueueImpl;
-import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.FutureLatch;
-import org.apache.activemq.artemis.utils.LinkedListIterator;
+import org.apache.activemq.artemis.utils.actors.ArtemisExecutor;
+import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class QueueImplTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(QueueImplTest.class);
+
    // The tests ----------------------------------------------------------------
 
    private ScheduledExecutorService scheduledExecutor;
@@ -157,7 +165,17 @@ public class QueueImplTest extends ActiveMQTestBase {
 
       Filter filter = new Filter() {
          @Override
-         public boolean match(final ServerMessage message) {
+         public boolean match(final Message message) {
+            return false;
+         }
+
+         @Override
+         public boolean match(Map<String, String> map) {
+            return false;
+         }
+
+         @Override
+         public boolean match(Filterable filterable) {
             return false;
          }
 
@@ -207,7 +225,7 @@ public class QueueImplTest extends ActiveMQTestBase {
 
       float rate = queue.getRate();
       Assert.assertTrue(rate <= 10.0f);
-      System.out.println("Rate: " + rate);
+      log.debug("Rate: " + rate);
    }
 
    @Test
@@ -446,6 +464,7 @@ public class QueueImplTest extends ActiveMQTestBase {
       cons1.getReferences().clear();
 
       for (MessageReference ref : refs) {
+         ref.getMessage().refUp();
          queue.acknowledge(ref);
       }
 
@@ -570,14 +589,6 @@ public class QueueImplTest extends ActiveMQTestBase {
 
       // Test first with queueing
 
-      for (int i = 0; i < numMessages; i++) {
-         MessageReference ref = generateReference(queue, i);
-
-         refs.add(ref);
-
-         queue.addTail(ref);
-      }
-
       FakeConsumer cons1 = new FakeConsumer();
 
       FakeConsumer cons2 = new FakeConsumer();
@@ -585,6 +596,14 @@ public class QueueImplTest extends ActiveMQTestBase {
       queue.addConsumer(cons1);
 
       queue.addConsumer(cons2);
+
+      for (int i = 0; i < numMessages; i++) {
+         MessageReference ref = generateReference(queue, i);
+
+         refs.add(ref);
+
+         queue.addTail(ref);
+      }
 
       queue.resume();
 
@@ -1233,8 +1252,7 @@ public class QueueImplTest extends ActiveMQTestBase {
       public void run() {
          if (first) {
             queue.addHead(messageReference, false);
-         }
-         else {
+         } else {
             queue.addTail(messageReference);
          }
          added = true;
@@ -1258,7 +1276,7 @@ public class QueueImplTest extends ActiveMQTestBase {
       ClientSessionFactory factory = createSessionFactory(locator);
       ClientSession session = addClientSession(factory.createSession(false, true, true));
 
-      session.createQueue(MY_ADDRESS, MY_QUEUE, true);
+      session.createQueue(new QueueConfiguration(MY_QUEUE).setAddress(MY_ADDRESS));
 
       ClientProducer producer = addClientProducer(session.createProducer(MY_ADDRESS));
 
@@ -1275,7 +1293,7 @@ public class QueueImplTest extends ActiveMQTestBase {
       locator.close();
 
       Queue queue = ((LocalQueueBinding) server.getPostOffice().getBinding(new SimpleString(MY_QUEUE))).getQueue();
-      LinkedListIterator<MessageReference> totalIterator = queue.totalIterator();
+      LinkedListIterator<MessageReference> totalIterator = queue.browserIterator();
 
       try {
          int i = 0;
@@ -1283,11 +1301,69 @@ public class QueueImplTest extends ActiveMQTestBase {
             MessageReference ref = totalIterator.next();
             Assert.assertEquals(i++, ref.getMessage().getIntProperty("order").intValue());
          }
-      }
-      finally {
+      } finally {
          totalIterator.close();
          server.stop();
       }
+   }
+
+   @Test
+   public void testGroupMessageWithManyConsumers() throws Exception {
+      final CountDownLatch firstMessageHandled = new CountDownLatch(1);
+      final CountDownLatch finished = new CountDownLatch(2);
+      final Consumer groupConsumer = new FakeConsumer() {
+
+         int count = 0;
+
+         @Override
+         public synchronized HandleStatus handle(MessageReference reference) {
+            if (count == 0) {
+               //the first message is handled and will be used to determine this consumer
+               //to be the group consumer
+               count++;
+               firstMessageHandled.countDown();
+               return HandleStatus.HANDLED;
+            } else if (count <= 2) {
+               //the next two attempts to send the second message will be done
+               //attempting a direct delivery and an async one after that
+               count++;
+               finished.countDown();
+               return HandleStatus.BUSY;
+            } else {
+               //this shouldn't happen, because the last attempt to deliver
+               //the second message should have stop the delivery loop:
+               //it will succeed just to let the message being handled and
+               //reduce the message count to 0
+               return HandleStatus.HANDLED;
+            }
+         }
+      };
+      final Consumer noConsumer = new FakeConsumer() {
+         @Override
+         public synchronized HandleStatus handle(MessageReference reference) {
+            Assert.fail("this consumer isn't allowed to consume any message");
+            throw new AssertionError();
+         }
+      };
+      final QueueImpl queue = new QueueImpl(1, new SimpleString("address1"), QueueImplTest.queue1,
+                                            null, null, false, true, false,
+                                            scheduledExecutor, null, null, null,
+                                            ArtemisExecutor.delegate(executor), null, null);
+      queue.addConsumer(groupConsumer);
+      queue.addConsumer(noConsumer);
+      final MessageReference firstMessageReference = generateReference(queue, 1);
+      final SimpleString groupName = SimpleString.toSimpleString("group");
+      firstMessageReference.getMessage().putStringProperty(Message.HDR_GROUP_ID, groupName);
+      final MessageReference secondMessageReference = generateReference(queue, 2);
+      secondMessageReference.getMessage().putStringProperty(Message.HDR_GROUP_ID, groupName);
+      queue.addTail(firstMessageReference, true);
+      Assert.assertTrue("first message isn't handled", firstMessageHandled.await(3000, TimeUnit.MILLISECONDS));
+      Assert.assertEquals("group consumer isn't correctly set", groupConsumer, queue.getGroups().get(groupName));
+      queue.addTail(secondMessageReference, true);
+      final boolean atLeastTwoDeliverAttempts = finished.await(3000, TimeUnit.MILLISECONDS);
+      Assert.assertTrue(atLeastTwoDeliverAttempts);
+      Thread.sleep(1000);
+      Assert.assertEquals("The second message should be in the queue", 1, queue.getMessageCount());
    }
 
    private QueueImpl getNonDurableQueue() {
@@ -1311,6 +1387,7 @@ public class QueueImplTest extends ActiveMQTestBase {
    }
 
    private QueueImpl getQueue(SimpleString name, boolean durable, boolean temporary, Filter filter) {
-      return new QueueImpl(1, QueueImplTest.address1, name, filter, null, durable, temporary, false, scheduledExecutor, new FakePostOffice(), null, null, executor);
+      return new QueueImpl(1, QueueImplTest.address1, name, filter, null, durable, temporary, false, scheduledExecutor,
+                           new FakePostOffice(), null, null, ArtemisExecutor.delegate(executor), null, null);
    }
 }

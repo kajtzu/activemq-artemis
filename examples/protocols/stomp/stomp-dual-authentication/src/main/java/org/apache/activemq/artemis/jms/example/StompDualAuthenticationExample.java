@@ -29,9 +29,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
-import java.security.Security;
-
-import com.sun.net.ssl.internal.ssl.Provider;
 
 /**
  * An example where a client will send a Stomp message on a TCP socket
@@ -42,17 +39,17 @@ public class StompDualAuthenticationExample {
    private static final String END_OF_FRAME = "\u0000";
 
    public static void main(final String[] args) throws Exception {
-      // set up SSL keystores for Stomp connection
-      System.setProperty("javax.net.ssl.keyStore", args[0]);
-      System.setProperty("javax.net.ssl.keyStorePassword", args[1]);
-      System.setProperty("javax.net.ssl.trustStore", args[2]);
-      System.setProperty("javax.net.ssl.trustStorePassword", args[3]);
 
       Connection connection = null;
       InitialContext initialContext = null;
-      Security.addProvider(new Provider());
 
       try {
+         // set up SSL keystores for Stomp connection
+         System.setProperty("javax.net.ssl.trustStore", args[0] + "client-side-truststore.jks");
+         System.setProperty("javax.net.ssl.trustStorePassword", "secureexample");
+         System.setProperty("javax.net.ssl.keyStore", args[0] + "client-side-keystore.jks");
+         System.setProperty("javax.net.ssl.keyStorePassword", "secureexample");
+
          // Step 1. Create an SSL socket to connect to the broker
          SSLSocketFactory sslsocketfactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
          SSLSocket socket = (SSLSocket) sslsocketfactory.createSocket("localhost", 5500);
@@ -70,7 +67,7 @@ public class StompDualAuthenticationExample {
          // jms.queue.exampleQueue address with a text body
          String text = "Hello, world from Stomp!";
          String message = "SEND\n" +
-            "destination: jms.queue.exampleQueue\n" +
+            "destination: exampleQueue\n" +
             "\n" +
             text +
             END_OF_FRAME;
@@ -106,8 +103,7 @@ public class StompDualAuthenticationExample {
          // Step 10. Receive the message
          TextMessage messageReceived = (TextMessage) consumer.receive(5000);
          System.out.println("Received JMS message: " + messageReceived.getText());
-      }
-      finally {
+      } finally {
          // Step 11. Be sure to close our JMS resources!
          if (initialContext != null) {
             initialContext.close();
@@ -115,6 +111,11 @@ public class StompDualAuthenticationExample {
          if (connection != null) {
             connection.close();
          }
+
+         System.clearProperty("javax.net.ssl.trustStore");
+         System.clearProperty("javax.net.ssl.trustStorePassword");
+         System.clearProperty("javax.net.ssl.keyStore");
+         System.clearProperty("javax.net.ssl.keyStorePassword");
       }
    }
 

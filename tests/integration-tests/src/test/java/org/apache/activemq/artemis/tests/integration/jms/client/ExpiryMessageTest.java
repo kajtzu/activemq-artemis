@@ -22,9 +22,11 @@ import javax.jms.Session;
 import javax.jms.TextMessage;
 import javax.jms.Topic;
 
-import org.apache.activemq.artemis.api.jms.management.TopicControl;
-import org.apache.activemq.artemis.tests.integration.management.ManagementControlHelper;
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.api.core.management.AddressControl;
 import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.tests.util.Wait;
+import org.apache.activemq.artemis.tests.integration.management.ManagementControlHelper;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
 import org.junit.Test;
 
@@ -41,13 +43,13 @@ public class ExpiryMessageTest extends JMSTestBase {
 
    @Override
    protected Configuration createDefaultConfig(boolean netty) throws Exception {
-      return super.createDefaultConfig(netty).setMessageExpiryScanPeriod(1000);
+      return super.createDefaultConfig(netty).setMessageExpiryScanPeriod(50);
    }
 
    @Test
    public void testSendTopicNoSubscription() throws Exception {
       Topic topic = createTopic("test-topic");
-      TopicControl control = ManagementControlHelper.createTopicControl(topic, mbeanServer);
+      AddressControl control = ManagementControlHelper.createAddressControl(new SimpleString(topic.getTopicName()), mbeanServer);
 
       Connection conn2 = cf.createConnection();
 
@@ -63,7 +65,7 @@ public class ExpiryMessageTest extends JMSTestBase {
       conn = cf.createConnection();
       Session sess = conn.createSession(true, Session.SESSION_TRANSACTED);
       MessageProducer prod = sess.createProducer(topic);
-      prod.setTimeToLive(1000);
+      prod.setTimeToLive(100);
 
       for (int i = 0; i < 100; i++) {
          TextMessage txt = sess.createTextMessage("txt");
@@ -74,17 +76,7 @@ public class ExpiryMessageTest extends JMSTestBase {
 
       conn.close();
 
-      // minimal time needed
-      Thread.sleep(2000);
-
-      long timeout = System.currentTimeMillis() + 10000;
-
-      // We will wait some time, but we will wait as minimal as possible
-      while (control.getMessageCount() != 0 && System.currentTimeMillis() > timeout) {
-         Thread.sleep(100);
-      }
-
-      assertEquals(0, control.getMessageCount());
+      Wait.assertEquals(0, control::getMessageCount);
 
    }
 

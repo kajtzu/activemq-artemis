@@ -16,37 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.jms.cluster;
 
-import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.api.core.TransportConfiguration;
-import org.apache.activemq.artemis.api.core.client.ClientSession;
-import org.apache.activemq.artemis.api.core.client.FailoverEventListener;
-import org.apache.activemq.artemis.api.core.client.FailoverEventType;
-import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
-import org.apache.activemq.artemis.api.jms.JMSFactoryType;
-import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.ha.SharedStoreMasterPolicyConfiguration;
-import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfiguration;
-import org.apache.activemq.artemis.core.registry.JndiBindingRegistry;
-import org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants;
-import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.core.server.NodeManager;
-import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnection;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
-import org.apache.activemq.artemis.jms.client.ActiveMQSession;
-import org.apache.activemq.artemis.jms.server.JMSServerManager;
-import org.apache.activemq.artemis.jms.server.impl.JMSServerManagerImpl;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
-import org.apache.activemq.artemis.tests.integration.jms.server.management.JMSUtil;
-import org.apache.activemq.artemis.tests.unit.util.InVMNamingContext;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.tests.util.InVMNodeManagerServer;
-import org.apache.activemq.artemis.utils.RandomUtil;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
 import javax.jms.BytesMessage;
 import javax.jms.Connection;
 import javax.jms.DeliveryMode;
@@ -60,6 +29,34 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.core.client.ClientSession;
+import org.apache.activemq.artemis.api.core.client.FailoverEventListener;
+import org.apache.activemq.artemis.api.core.client.FailoverEventType;
+import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
+import org.apache.activemq.artemis.api.jms.JMSFactoryType;
+import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.config.ha.SharedStoreMasterPolicyConfiguration;
+import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfiguration;
+import org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.NodeManager;
+import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnection;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.jms.client.ActiveMQSession;
+import org.apache.activemq.artemis.tests.integration.jms.server.management.JMSUtil;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.InVMNodeManagerServer;
+import org.apache.activemq.artemis.tests.util.Wait;
+import org.apache.activemq.artemis.utils.RandomUtil;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
 /**
  * A JMSFailoverTest
  * <br>
@@ -67,25 +64,15 @@ import java.util.Map;
  */
 public class JMSFailoverListenerTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
-
    // Constants -----------------------------------------------------
 
    // Attributes ----------------------------------------------------
-
-   protected InVMNamingContext ctx1 = new InVMNamingContext();
-
-   protected InVMNamingContext ctx2 = new InVMNamingContext();
 
    protected Configuration backupConf;
 
    protected Configuration liveConf;
 
-   protected JMSServerManager liveJMSServer;
-
    protected ActiveMQServer liveServer;
-
-   protected JMSServerManager backupJMSServer;
 
    protected ActiveMQServer backupServer;
 
@@ -109,8 +96,12 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
    public void testAutomaticFailover() throws Exception {
       ActiveMQConnectionFactory jbcf = ActiveMQJMSClient.createConnectionFactoryWithHA(JMSFactoryType.CF, livetc);
       jbcf.setReconnectAttempts(-1);
+      jbcf.setRetryInterval(100);
+      jbcf.setConnectionTTL(500);
+      jbcf.setClientFailureCheckPeriod(100);
       jbcf.setBlockOnDurableSend(true);
       jbcf.setBlockOnNonDurableSend(true);
+      jbcf.setCallTimeout(1000);
 
       // Note we set consumer window size to a value so we can verify that consumer credit re-sending
       // works properly on failover
@@ -132,9 +123,9 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
 
       ClientSession coreSession = ((ActiveMQSession) sess).getCoreSession();
 
-      SimpleString jmsQueueName = new SimpleString(ActiveMQDestination.JMS_QUEUE_ADDRESS_PREFIX + "myqueue");
+      SimpleString jmsQueueName = new SimpleString("myqueue");
 
-      coreSession.createQueue(jmsQueueName, jmsQueueName, null, true);
+      coreSession.createQueue(new QueueConfiguration(jmsQueueName).setRoutingType(RoutingType.ANYCAST));
 
       Queue queue = sess.createQueue("myqueue");
 
@@ -154,17 +145,17 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
          producer.send(bm);
       }
 
+      Wait.assertEquals(numMessages, liveServer.locateQueue(jmsQueueName)::getMessageCount);
+
       conn.start();
 
-      JMSFailoverListenerTest.log.info("sent messages and started connection");
-
-      Thread.sleep(2000);
+      instanceLog.debug("sent messages and started connection");
 
       JMSUtil.crash(liveServer, ((ActiveMQSession) sess).getCoreSession());
 
-      Assert.assertEquals(FailoverEventType.FAILURE_DETECTED, listener.get(0));
+      Wait.assertTrue(() -> FailoverEventType.FAILURE_DETECTED == listener.get(0));
       for (int i = 0; i < numMessages; i++) {
-         JMSFailoverListenerTest.log.info("got message " + i);
+         instanceLog.debug("got message " + i);
 
          BytesMessage bm = (BytesMessage) consumer.receive(1000);
 
@@ -188,12 +179,14 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
 
       jbcfLive.setBlockOnNonDurableSend(true);
       jbcfLive.setBlockOnDurableSend(true);
+      jbcfLive.setCallTimeout(1000);
 
       ActiveMQConnectionFactory jbcfBackup = ActiveMQJMSClient.createConnectionFactoryWithoutHA(JMSFactoryType.CF, new TransportConfiguration(INVM_CONNECTOR_FACTORY, backupParams));
       jbcfBackup.setBlockOnNonDurableSend(true);
       jbcfBackup.setBlockOnDurableSend(true);
       jbcfBackup.setInitialConnectAttempts(-1);
       jbcfBackup.setReconnectAttempts(-1);
+      jbcfBackup.setRetryInterval(100);
 
       ActiveMQConnection connLive = (ActiveMQConnection) jbcfLive.createConnection();
 
@@ -205,9 +198,9 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
 
       ClientSession coreSessionLive = ((ActiveMQSession) sessLive).getCoreSession();
 
-      SimpleString jmsQueueName = new SimpleString(ActiveMQDestination.JMS_QUEUE_ADDRESS_PREFIX + "myqueue");
+      SimpleString jmsQueueName = new SimpleString("myqueue");
 
-      coreSessionLive.createQueue(jmsQueueName, jmsQueueName, null, true);
+      coreSessionLive.createQueue(new QueueConfiguration(jmsQueueName).setRoutingType(RoutingType.ANYCAST));
 
       Queue queue = sessLive.createQueue("myqueue");
 
@@ -278,29 +271,23 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
       backupParams.put(TransportConstants.SERVER_ID_PROP_NAME, 1);
 
       backupConf = createBasicConfig().addAcceptorConfiguration(backupAcceptortc).addConnectorConfiguration(livetc.getName(), livetc).addConnectorConfiguration(backuptc.getName(), backuptc).setJournalType(getDefaultJournalType()).addAcceptorConfiguration(new TransportConfiguration(INVM_ACCEPTOR_FACTORY, backupParams)).setBindingsDirectory(getBindingsDir()).setJournalMinFiles(2).setJournalDirectory(getJournalDir()).setPagingDirectory(getPageDir()).setLargeMessagesDirectory(getLargeMessagesDir()).setPersistenceEnabled(true).setHAPolicyConfiguration(new SharedStoreSlavePolicyConfiguration()).addClusterConfiguration(basicClusterConnectionConfig(backuptc.getName(), livetc.getName()));
+      backupConf.setConnectionTtlCheckInterval(100);
 
       backupServer = addServer(new InVMNodeManagerServer(backupConf, nodeManager));
 
-      backupJMSServer = new JMSServerManagerImpl(backupServer);
-
-      backupJMSServer.setRegistry(new JndiBindingRegistry(ctx2));
-
-      backupJMSServer.getActiveMQServer().setIdentity("JMSBackup");
-      log.info("Starting backup");
-      backupJMSServer.start();
+      backupServer.setIdentity("JMSBackup");
+      instanceLog.debug("Starting backup");
+      backupServer.start();
 
       liveConf = createBasicConfig().setJournalDirectory(getJournalDir()).setBindingsDirectory(getBindingsDir()).addAcceptorConfiguration(liveAcceptortc).setJournalType(getDefaultJournalType()).setBindingsDirectory(getBindingsDir()).setJournalMinFiles(2).setJournalDirectory(getJournalDir()).setPagingDirectory(getPageDir()).setLargeMessagesDirectory(getLargeMessagesDir()).addConnectorConfiguration(livetc.getName(), livetc).setPersistenceEnabled(true).setHAPolicyConfiguration(new SharedStoreMasterPolicyConfiguration()).addClusterConfiguration(basicClusterConnectionConfig(livetc.getName()));
+      liveConf.setConnectionTtlCheckInterval(100);
 
       liveServer = addServer(new InVMNodeManagerServer(liveConf, nodeManager));
 
-      liveJMSServer = new JMSServerManagerImpl(liveServer);
+      liveServer.setIdentity("JMSLive");
+      instanceLog.debug("Starting life");
 
-      liveJMSServer.setRegistry(new JndiBindingRegistry(ctx1));
-
-      liveJMSServer.getActiveMQServer().setIdentity("JMSLive");
-      log.info("Starting life");
-
-      liveJMSServer.start();
+      liveServer.start();
 
       JMSUtil.waitForServer(backupServer);
    }
@@ -327,8 +314,7 @@ public class JMSFailoverListenerTest extends ActiveMQTestBase {
          while (timeout > System.currentTimeMillis() && eventTypeList.size() < elements) {
             try {
                Thread.sleep(1);
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                fail(e.getMessage());
             }
          }

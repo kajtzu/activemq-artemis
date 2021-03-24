@@ -22,7 +22,7 @@ import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.tests.unit.UnitTestLogger;
 import org.apache.activemq.artemis.tests.unit.core.journal.impl.JournalImplTestBase;
 import org.apache.activemq.artemis.tests.unit.core.journal.impl.fakes.SimpleEncoding;
@@ -218,8 +218,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          double rate = 1000 * (double) numMessages / (end - start);
 
          JournalImplTestUnit.log.info("Rate " + rate + " records/sec");
-      }
-      finally {
+      } finally {
          journal.stop();
       }
 

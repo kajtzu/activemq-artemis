@@ -20,6 +20,7 @@ import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.InvalidClientIDException;
 import javax.jms.JMSContext;
+import javax.jms.JMSException;
 import javax.jms.QueueConnection;
 import javax.jms.QueueSession;
 import javax.jms.Session;
@@ -31,14 +32,22 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ConnectionTest extends JMSTestBase {
+
+   private static final Logger log = Logger.getLogger(ConnectionTest.class);
 
    private Connection conn2;
 
@@ -51,19 +60,18 @@ public class ConnectionTest extends JMSTestBase {
       connectionFactory = serialClone(connectionFactory);
       testThroughNewConnectionFactory(connectionFactory);
 
-
       connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616?&blockOnNonDurableSend=true&" +
-                                       "retryIntervalMultiplier=1.0&maxRetryInterval=2000&producerMaxRate=-1&" +
-                                       "blockOnDurableSend=true&connectionTTL=60000&compressLargeMessage=false&reconnectAttempts=0&" +
-                                       "cacheLargeMessagesClient=false&scheduledThreadPoolMaxSize=5&useGlobalPools=true&" +
-                                       "callFailoverTimeout=-1&initialConnectAttempts=1&clientFailureCheckPeriod=30000&" +
-                                       "blockOnAcknowledge=true&consumerWindowSize=1048576&minLargeMessageSize=102400&" +
-                                       "autoGroup=false&threadPoolMaxSize=-1&confirmationWindowSize=-1&" +
-                                       "transactionBatchSize=1048576&callTimeout=30000&preAcknowledge=false&" +
-                                       "connectionLoadBalancingPolicyClassName=org.apache.activemq.artemis.api.core.client.loadbalance." +
-                                       "RoundRobinConnectionLoadBalancingPolicy&dupsOKBatchSize=1048576&initialMessagePacketSize=1500&" +
-                                       "consumerMaxRate=-1&retryInterval=2000&failoverOnInitialConnection=false&producerWindowSize=65536&" +
-                                       "port=61616&host=localhost#");
+                                                           "retryIntervalMultiplier=1.0&maxRetryInterval=2000&producerMaxRate=-1&" +
+                                                           "blockOnDurableSend=true&connectionTTL=60000&compressLargeMessage=false&reconnectAttempts=0&" +
+                                                           "cacheLargeMessagesClient=false&scheduledThreadPoolMaxSize=5&useGlobalPools=true&" +
+                                                           "callFailoverTimeout=-1&initialConnectAttempts=1&clientFailureCheckPeriod=30000&" +
+                                                           "blockOnAcknowledge=true&consumerWindowSize=1048576&minLargeMessageSize=102400&" +
+                                                           "autoGroup=false&threadPoolMaxSize=-1&confirmationWindowSize=-1&" +
+                                                           "transactionBatchSize=1048576&callTimeout=30000&preAcknowledge=false&" +
+                                                           "connectionLoadBalancingPolicyClassName=org.apache.activemq.artemis.api.core.client.loadbalance." +
+                                                           "RoundRobinConnectionLoadBalancingPolicy&dupsOKBatchSize=1048576&initialMessagePacketSize=1500&" +
+                                                           "consumerMaxRate=-1&retryInterval=2000&producerWindowSize=65536&" +
+                                                           "port=61616&host=localhost#");
 
       testThroughNewConnectionFactory(connectionFactory);
 
@@ -98,10 +106,60 @@ public class ConnectionTest extends JMSTestBase {
       try {
          conn2.setClientID(id);
          Assert.fail("should not happen.");
-      }
-      catch (InvalidClientIDException expected) {
+      } catch (InvalidClientIDException expected) {
          // expected
       }
+
+
+      Session session1 = conn.createSession();
+      Session session2 = conn.createSession();
+
+      session1.close();
+      session2.close();
+
+   }
+
+
+   @Test
+   public void testTwoConnectionsSameIDThroughCF() throws Exception {
+      ActiveMQConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616?clientID=myid");
+
+      conn = connectionFactory.createConnection();
+      try {
+         conn2 = connectionFactory.createConnection();
+         Assert.fail("Exception expected");
+      } catch (InvalidClientIDException expected) {
+         // expected
+      }
+
+
+      Session session1 = conn.createSession();
+      Session session2 = conn.createSession();
+
+      session1.close();
+      session2.close();
+   }
+
+   @Test
+   public void testTwoConnectionsSameIDThroughCFWithShareClientIDEnabeld() throws Exception {
+      ActiveMQConnectionFactory connectionFactory = new ActiveMQConnectionFactory("tcp://localhost:61616?clientID=myid;enableSharedClientID=true");
+
+      conn = connectionFactory.createConnection();
+      try {
+         conn2 = connectionFactory.createConnection();
+      } catch (InvalidClientIDException expected) {
+         Assert.fail("Should allow sharing of client IDs among the same CF");
+      }
+
+      Session session1 = conn.createSession();
+      Session session2 = conn.createSession();
+      Session session3 = conn2.createSession();
+      Session session4 = conn2.createSession();
+
+      session1.close();
+      session2.close();
+      session3.close();
+      session4.close();
    }
 
    @Test
@@ -160,8 +218,7 @@ public class ConnectionTest extends JMSTestBase {
          aConn = cf.createConnection();
          newCF = getCFThruSerialization(cf);
          testCreateConnection(newCF);
-      }
-      finally {
+      } finally {
          if (aConn != null) {
             aConn.close();
          }
@@ -193,11 +250,59 @@ public class ConnectionTest extends JMSTestBase {
          session1.close();
          Session session2 = newConn.createSession(true, Session.SESSION_TRANSACTED);
          session2.close();
-      }
-      finally {
+      } finally {
          if (newConn != null) {
             newConn.close();
          }
+      }
+   }
+
+   @Test
+   public void testCreateSessionAndCloseConnectionConcurrently() throws Exception {
+      final int ATTEMPTS = 10;
+      final int THREAD_COUNT = 50;
+      final int SESSION_COUNT = 10;
+      final ExecutorService executor = Executors.newFixedThreadPool(THREAD_COUNT);
+      try {
+         ActiveMQConnectionFactory cf = new ActiveMQConnectionFactory("tcp://127.0.0.1:61616");
+
+         for (int i = 0; i < ATTEMPTS; i++) {
+            final CountDownLatch lineUp = new CountDownLatch(THREAD_COUNT);
+            final AtomicBoolean error = new AtomicBoolean(false);
+            final Connection connection = cf.createConnection();
+
+            for (int j = 0; j < THREAD_COUNT; ++j) {
+               executor.execute(() -> {
+                  for (int k = 0; k < SESSION_COUNT; k++) {
+                     try {
+                        connection.createSession().close();
+                        if (k == 0) {
+                           lineUp.countDown();
+                        }
+                     } catch (javax.jms.IllegalStateException e) {
+                        // ignore
+                        break;
+                     } catch (JMSException e) {
+                        // ignore
+                        break;
+                     } catch (Throwable t) {
+                        log.warn(t.getMessage(), t);
+                        error.set(true);
+                        break;
+                     }
+                  }
+               });
+            }
+
+            // wait until all the threads have created & closed at least 1 session
+            assertTrue(lineUp.await(10, TimeUnit.SECONDS));
+            connection.close();
+            if (error.get()) {
+               assertFalse(error.get());
+            }
+         }
+      } finally {
+         executor.shutdownNow();
       }
    }
 

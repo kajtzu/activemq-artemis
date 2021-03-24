@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -151,54 +151,6 @@ public class JmsTopicWildcardSendReceiveTest extends JmsTopicSendReceiveTest {
       }
       assertNull(consumer.receiveNoWait());
 
-   }
-
-   public void testReceiveWildcardTopicMatchDoubleWildcard() throws Exception {
-      connection.start();
-      Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-
-      ActiveMQDestination destination1 = (ActiveMQDestination) session.createTopic("a.*.>.>");
-      ActiveMQDestination destination2 = (ActiveMQDestination) session.createTopic("a.b");
-
-      Message m = null;
-      MessageConsumer consumer = null;
-      String text = null;
-
-      consumer = session.createConsumer(destination1);
-      sendMessage(session, destination2, destination3String);
-
-      m = consumer.receive(1000);
-      assertNotNull(m);
-      text = ((TextMessage) m).getText();
-      if (!(text.equals(destination1String) || text.equals(destination3String))) {
-         fail("unexpected message:" + text);
-      }
-
-      assertNull(consumer.receiveNoWait());
-   }
-
-   public void testReceiveWildcardTopicMatchSinglePastTheEndWildcard() throws Exception {
-      connection.start();
-      Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-
-      ActiveMQDestination destination1 = (ActiveMQDestination) session.createTopic("a.>");
-      ActiveMQDestination destination2 = (ActiveMQDestination) session.createTopic("a");
-
-      Message m = null;
-      MessageConsumer consumer = null;
-      String text = null;
-
-      consumer = session.createConsumer(destination1);
-      sendMessage(session, destination2, destination3String);
-
-      m = consumer.receive(1000);
-      assertNotNull(m);
-      text = ((TextMessage) m).getText();
-      if (!(text.equals(destination1String) || text.equals(destination3String))) {
-         fail("unexpected message:" + text);
-      }
-
-      assertNull(consumer.receiveNoWait());
    }
 
    private void sendMessage(Session session, Destination destination, String text) throws JMSException {

@@ -16,14 +16,19 @@
  */
 package org.apache.activemq.artemis.core.postoffice;
 
+
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.server.Bindable;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.group.UnproposalListener;
 
 public interface Binding extends UnproposalListener {
+
+   default boolean isLocal() {
+      return false;
+   }
 
    SimpleString getAddress();
 
@@ -39,17 +44,17 @@ public interface Binding extends UnproposalListener {
 
    Filter getFilter();
 
-   boolean isHighAcceptPriority(ServerMessage message);
+   boolean isHighAcceptPriority(Message message);
 
    boolean isExclusive();
 
-   long getID();
+   Long getID();
 
    int getDistance();
 
-   void route(ServerMessage message, RoutingContext context) throws Exception;
+   void route(Message message, RoutingContext context) throws Exception;
 
-   void routeWithAck(ServerMessage message, RoutingContext context) throws Exception;
+   void routeWithAck(Message message, RoutingContext context) throws Exception;
 
    void close() throws Exception;
 

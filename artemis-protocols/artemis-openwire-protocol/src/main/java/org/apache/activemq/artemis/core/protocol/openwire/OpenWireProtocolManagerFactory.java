@@ -43,6 +43,7 @@ public class OpenWireProtocolManagerFactory extends AbstractProtocolManagerFacto
                                                 Map<String, Object> parameters,
                                                 final List<BaseInterceptor> incomingInterceptors,
                                                 List<BaseInterceptor> outgoingInterceptors) throws Exception {
+      BeanSupport.stripPasswords(parameters);
       return BeanSupport.setData(new OpenWireProtocolManager(this, server), parameters);
    }
 

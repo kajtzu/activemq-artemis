@@ -16,6 +16,10 @@
  */
 package org.apache.activemq.artemis.tests.integration.paging;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -25,15 +29,21 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.logs.AssertionLoggerHandler;
+import org.apache.activemq.artemis.tests.util.SpawnedTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.apache.activemq.artemis.utils.Wait;
+import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+public class PageCountSyncOnNonTXTest extends SpawnedTestBase {
 
-public class PageCountSyncOnNonTXTest extends ActiveMQTestBase {
+   @Rule
+   public RetryRule retryRule = new RetryRule(1);
 
    public static final String WORD_START = "&*STARTED&*";
 
@@ -42,12 +52,29 @@ public class PageCountSyncOnNonTXTest extends ActiveMQTestBase {
 
    Process process;
 
+   @Before
+   public void checkLoggerStart() throws Exception {
+      AssertionLoggerHandler.startCapture();
+   }
+
+   @After
+   public void checkLoggerEnd() throws Exception {
+      try {
+         // These are the message errors for the negative size address size
+         Assert.assertFalse(AssertionLoggerHandler.findText("222214"));
+         Assert.assertFalse(AssertionLoggerHandler.findText("222215"));
+      } finally {
+         AssertionLoggerHandler.stopCapture();
+      }
+   }
+
+
    @Override
    @Before
    public void setUp() throws Exception {
       super.setUp();
 
-      timeToRun = 30000 + RandomUtil.randomPositiveInt() % 1000;
+      timeToRun = 5000L + RandomUtil.randomPositiveInt() % 1000;
    }
 
    @Test
@@ -72,7 +99,7 @@ public class PageCountSyncOnNonTXTest extends ActiveMQTestBase {
 
          ClientSessionFactory factory = locator.createSessionFactory();
          ClientSession session = factory.createSession(true, true);
-         session.createQueue(QUEUE_NAME, QUEUE_NAME, true);
+         session.createQueue(new QueueConfiguration(QUEUE_NAME));
          ClientProducer producer = session.createProducer(QUEUE_NAME);
          ClientConsumer consumer = session.createConsumer(QUEUE_NAME);
          session.start();
@@ -123,13 +150,11 @@ public class PageCountSyncOnNonTXTest extends ActiveMQTestBase {
                   session.commit();
                }
             }
-         }
-         catch (Exception expected) {
+         } catch (Exception expected) {
             expected.printStackTrace();
          }
 
-      }
-      finally {
+      } finally {
          locator.close();
       }
       assertEquals("Process didn't end as expected", 1, process.waitFor());
@@ -139,7 +164,7 @@ public class PageCountSyncOnNonTXTest extends ActiveMQTestBase {
       try {
          server.start();
 
-         Thread.sleep(500);
+         Wait.assertTrue(server::isActive);
 
          locator = createNettyNonHALocator();
 
@@ -169,13 +194,11 @@ public class PageCountSyncOnNonTXTest extends ActiveMQTestBase {
 
             session.close();
 
-         }
-         finally {
+         } finally {
             locator.close();
          }
 
-      }
-      finally {
+      } finally {
          server.stop();
       }
 

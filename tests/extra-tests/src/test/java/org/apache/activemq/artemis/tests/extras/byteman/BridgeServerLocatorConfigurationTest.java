@@ -21,9 +21,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.cluster.impl.BridgeImpl;
@@ -69,8 +69,7 @@ public class BridgeServerLocatorConfigurationTest extends ActiveMQTestBase {
       Map<String, Object> server1Params = new HashMap<>();
       if (isNetty()) {
          server1Params.put("port", org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_PORT + 1);
-      }
-      else {
+      } else {
          server1Params.put(TransportConstants.SERVER_ID_PROP_NAME, 1);
       }
       ActiveMQServer server1 = createClusteredServerWithParams(isNetty(), 1, true, server1Params);
@@ -95,15 +94,9 @@ public class BridgeServerLocatorConfigurationTest extends ActiveMQTestBase {
          bridgeConfigs.add(bridgeConfiguration);
          serverWithBridge.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-         CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-         List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
-         queueConfigs0.add(queueConfig0);
-         serverWithBridge.getConfiguration().setQueueConfigurations(queueConfigs0);
+         serverWithBridge.getConfiguration().addQueueConfiguration(new QueueConfiguration(queueName0).setAddress(testAddress));
 
-         CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-         List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
-         queueConfigs1.add(queueConfig1);
-         server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+         server1.getConfiguration().addQueueConfiguration(new QueueConfiguration(queueName1).setAddress(forwardAddress));
 
          server1.start();
          waitForServerToStart(server1);
@@ -114,8 +107,7 @@ public class BridgeServerLocatorConfigurationTest extends ActiveMQTestBase {
          long bridgeTTL = getBridgeTTL(serverWithBridge, BRIDGE_NAME);
 
          assertEquals(BRIDGE_TTL, bridgeTTL);
-      }
-      finally {
+      } finally {
          serverWithBridge.stop();
 
          server1.stop();

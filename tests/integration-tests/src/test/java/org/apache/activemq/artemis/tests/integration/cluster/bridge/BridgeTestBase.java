@@ -20,7 +20,6 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreMasterPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfiguration;
@@ -28,10 +27,17 @@ import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnector;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.core.server.NodeManager;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.tests.util.InVMNodeManagerServer;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.junit.After;
+import org.junit.Rule;
 
 public abstract class BridgeTestBase extends ActiveMQTestBase {
+
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    @Override
    @After
@@ -57,8 +63,7 @@ public abstract class BridgeTestBase extends ActiveMQTestBase {
          params.put(org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.PORT_PROP_NAME, org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_PORT + id);
          tc = new TransportConfiguration(NETTY_ACCEPTOR_FACTORY, params);
 
-      }
-      else {
+      } else {
          params.put(org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants.SERVER_ID_PROP_NAME, id);
          tc = new TransportConfiguration(INVM_ACCEPTOR_FACTORY, params);
       }
@@ -69,8 +74,7 @@ public abstract class BridgeTestBase extends ActiveMQTestBase {
       ActiveMQServer server;
       if (nodeManager == null) {
          server = ActiveMQServers.newActiveMQServer(serviceConf, true);
-      }
-      else {
+      } else {
          server = new InVMNodeManagerServer(serviceConf, nodeManager);
       }
 
@@ -88,8 +92,7 @@ public abstract class BridgeTestBase extends ActiveMQTestBase {
          params.put(org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.PORT_PROP_NAME, org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_PORT + id);
          tc = new TransportConfiguration(NETTY_ACCEPTOR_FACTORY, params);
 
-      }
-      else {
+      } else {
          params.put(org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants.SERVER_ID_PROP_NAME, id);
          tc = new TransportConfiguration(INVM_ACCEPTOR_FACTORY, params);
       }
@@ -101,8 +104,7 @@ public abstract class BridgeTestBase extends ActiveMQTestBase {
       ActiveMQServer server;
       if (nodeManager == null) {
          server = ActiveMQServers.newActiveMQServer(serviceConf, true);
-      }
-      else {
+      } else {
          server = new InVMNodeManagerServer(serviceConf, nodeManager);
       }
       return addServer(server);

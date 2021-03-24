@@ -16,6 +16,16 @@
  */
 package org.apache.activemq.artemis.tests.integration.ra;
 
+import javax.jms.Message;
+import javax.resource.ResourceException;
+import javax.resource.spi.ApplicationServerInternalException;
+import javax.transaction.xa.XAException;
+import javax.transaction.xa.XAResource;
+import javax.transaction.xa.Xid;
+import java.lang.reflect.Method;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
@@ -24,17 +34,9 @@ import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.transaction.impl.XidImpl;
 import org.apache.activemq.artemis.ra.ActiveMQResourceAdapter;
 import org.apache.activemq.artemis.ra.inflow.ActiveMQActivationSpec;
+import org.apache.activemq.artemis.service.extensions.ServiceUtils;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.junit.Test;
-
-import javax.jms.Message;
-import javax.resource.ResourceException;
-import javax.transaction.xa.XAException;
-import javax.transaction.xa.XAResource;
-import javax.transaction.xa.Xid;
-import java.lang.reflect.Method;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 public class ActiveMQMessageHandlerXATest extends ActiveMQRATestBase {
 
@@ -70,6 +72,36 @@ public class ActiveMQMessageHandlerXATest extends ActiveMQRATestBase {
       assertEquals(endpoint.lastMessage.getCoreMessage().getBodyBuffer().readString(), "teststring");
       endpoint.prepare();
       endpoint.commit();
+      qResourceAdapter.endpointDeactivation(endpointFactory, spec);
+      qResourceAdapter.stop();
+   }
+
+   @Test
+   public void testXABeginFails() throws Exception {
+      ActiveMQResourceAdapter qResourceAdapter = newResourceAdapter();
+      MyBootstrapContext ctx = new MyBootstrapContext();
+      qResourceAdapter.start(ctx);
+      ActiveMQActivationSpec spec = new ActiveMQActivationSpec();
+      spec.setResourceAdapter(qResourceAdapter);
+      spec.setUseJNDI(false);
+      spec.setDestinationType("javax.jms.Queue");
+      spec.setDestination(MDBQUEUE);
+      qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      CountDownLatch latch = new CountDownLatch(1);
+      XADummyEndpointBegin endpoint = new XADummyEndpointBegin(latch);
+      DummyMessageEndpointFactory endpointFactory = new DummyMessageEndpointFactory(endpoint, true);
+      qResourceAdapter.endpointActivation(endpointFactory, spec);
+      ClientSession session = locator.createSessionFactory().createSession();
+      ClientProducer clientProducer = session.createProducer(MDBQUEUEPREFIXED);
+      ClientMessage message = session.createMessage(true);
+      message.getBodyBuffer().writeString("teststring");
+      clientProducer.send(message);
+      session.close();
+      latch.await(5, TimeUnit.SECONDS);
+
+      DummyTransaction transaction = (DummyTransaction) ServiceUtils.getTransactionManager().getTransaction();
+      assertTrue(transaction.rollbackOnly);
+      assertTrue(endpoint.afterDelivery);
       qResourceAdapter.endpointDeactivation(endpointFactory, spec);
       qResourceAdapter.stop();
    }
@@ -146,10 +178,6 @@ public class ActiveMQMessageHandlerXATest extends ActiveMQRATestBase {
       assertTrue(endpoint.interrupted);
       assertNotNull(endpoint.lastMessage);
       assertEquals(endpoint.lastMessage.getCoreMessage().getBodyBuffer().readString(), "teststring");
-
-      Binding binding = server.getPostOffice().getBinding(MDBQUEUEPREFIXEDSIMPLE);
-      long messageCount = getMessageCount((Queue) binding.getBindable());
-      assertEquals(1, messageCount);
    }
 
    @Test
@@ -205,8 +233,7 @@ public class ActiveMQMessageHandlerXATest extends ActiveMQRATestBase {
          super.beforeDelivery(method);
          try {
             xaResource.start(xid, XAResource.TMNOFLAGS);
-         }
-         catch (XAException e) {
+         } catch (XAException e) {
             throw new ResourceException(e.getMessage(), e);
          }
       }
@@ -215,8 +242,7 @@ public class ActiveMQMessageHandlerXATest extends ActiveMQRATestBase {
       public void afterDelivery() throws ResourceException {
          try {
             xaResource.end(xid, XAResource.TMSUCCESS);
-         }
-         catch (XAException e) {
+         } catch (XAException e) {
             throw new ResourceException(e.getMessage(), e);
          }
 
@@ -258,8 +284,7 @@ public class ActiveMQMessageHandlerXATest extends ActiveMQRATestBase {
          super.onMessage(message);
          try {
             Thread.sleep(2000);
-         }
-         catch (InterruptedException e) {
+         } catch (InterruptedException e) {
             interrupted = true;
          }
       }
@@ -269,11 +294,34 @@ public class ActiveMQMessageHandlerXATest extends ActiveMQRATestBase {
          try {
             prepare();
             commit();
-         }
-         catch (XAException e) {
+         } catch (XAException e) {
             e.printStackTrace();
          }
          super.release();
+      }
+   }
+
+   class XADummyEndpointBegin extends  XADummyEndpoint {
+
+      private boolean afterDelivery = false;
+
+      XADummyEndpointBegin(CountDownLatch latch) {
+         super(latch);
+      }
+
+      @Override
+      public void beforeDelivery(Method method) throws NoSuchMethodException, ResourceException {
+         super.beforeDelivery(method);
+         DummyTransactionManager dummyTransactionManager = (DummyTransactionManager) ServiceUtils.getTransactionManager();
+         DummyTransaction tx = new DummyTransaction();
+         dummyTransactionManager.tx = tx;
+         throw new ApplicationServerInternalException();
+      }
+
+      @Override
+      public void afterDelivery() throws ResourceException {
+         afterDelivery = true;
+         latch.countDown();
       }
    }
 }

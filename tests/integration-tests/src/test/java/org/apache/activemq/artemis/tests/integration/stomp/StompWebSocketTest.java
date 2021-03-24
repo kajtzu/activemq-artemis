@@ -16,29 +16,24 @@
  */
 package org.apache.activemq.artemis.tests.integration.stomp;
 
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.protocol.stomp.StompProtocolManagerFactory;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMAcceptorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.netty.NettyAcceptorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
-import org.apache.activemq.artemis.jms.server.JMSServerManager;
-import org.apache.activemq.artemis.jms.server.config.JMSConfiguration;
-import org.apache.activemq.artemis.jms.server.config.impl.JMSConfigurationImpl;
-import org.apache.activemq.artemis.jms.server.impl.JMSServerManagerImpl;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.HashMap;
-import java.util.Map;
+public class StompWebSocketTest extends StompTestBase {
 
-public class StompWebSocketTest extends ActiveMQTestBase {
-
-   private JMSServerManager server;
+   private ActiveMQServer server;
 
    /**
     * to test the Stomp over Web Sockets protocol,
@@ -63,23 +58,25 @@ public class StompWebSocketTest extends ActiveMQTestBase {
     * @return
     * @throws Exception
     */
-   private JMSServerManager createServer() throws Exception {
+   @Override
+   protected ActiveMQServer createServer() throws Exception {
       Map<String, Object> params = new HashMap<>();
       params.put(TransportConstants.PROTOCOLS_PROP_NAME, StompProtocolManagerFactory.STOMP_PROTOCOL_NAME);
       params.put(TransportConstants.PORT_PROP_NAME, TransportConstants.DEFAULT_STOMP_PORT + 1);
       TransportConfiguration stompTransport = new TransportConfiguration(NettyAcceptorFactory.class.getName(), params);
 
-      Configuration config = createBasicConfig().addAcceptorConfiguration(stompTransport).addAcceptorConfiguration(new TransportConfiguration(InVMAcceptorFactory.class.getName())).addQueueConfiguration(new CoreQueueConfiguration().setAddress(getQueueName()).setName(getQueueName()).setDurable(false));
+      Configuration config = createBasicConfig()
+         .addAcceptorConfiguration(stompTransport)
+         .addAcceptorConfiguration(new TransportConfiguration(InVMAcceptorFactory.class.getName()))
+         .setPersistenceEnabled(isPersistenceEnabled())
+         .addQueueConfiguration(new QueueConfiguration(getQueueName())
+                                   .setDurable(false));
 
-      ActiveMQServer activeMQServer = addServer(ActiveMQServers.newActiveMQServer(config));
-
-      JMSConfiguration jmsConfig = new JMSConfigurationImpl();
-      server = new JMSServerManagerImpl(activeMQServer, jmsConfig);
-      server.setRegistry(null);
+      server = addServer(ActiveMQServers.newActiveMQServer(config));
       return server;
    }
 
-   protected String getQueueName() {
+   protected static String getQueueName() {
       return "/queue/test";
    }
 }

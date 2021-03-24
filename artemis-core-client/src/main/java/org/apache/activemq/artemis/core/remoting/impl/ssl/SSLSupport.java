@@ -16,6 +16,12 @@
  */
 package org.apache.activemq.artemis.core.remoting.impl.ssl;
 
+import javax.net.ssl.CertPathTrustManagerParameters;
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,36 +31,193 @@ import java.security.AccessController;
 import java.security.KeyStore;
 import java.security.PrivilegedAction;
 import java.security.SecureRandom;
+import java.security.Security;
+import java.security.cert.CRL;
+import java.security.cert.CertStore;
+import java.security.cert.CertificateFactory;
+import java.security.cert.CollectionCertStoreParameters;
+import java.security.cert.PKIXBuilderParameters;
+import java.security.cert.X509CertSelector;
+import java.util.Collection;
 
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.handler.ssl.SslProvider;
+import io.netty.handler.ssl.util.InsecureTrustManagerFactory;
+import org.apache.activemq.artemis.api.core.TrustManagerFactoryPlugin;
+import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
+import org.apache.activemq.artemis.spi.core.remoting.ssl.SSLContextConfig;
 import org.apache.activemq.artemis.utils.ClassloadingUtil;
 
 /**
  * Please note, this class supports PKCS#11 keystores, but there are no specific tests in the ActiveMQ Artemis test-suite to
  * validate/verify this works because this requires a functioning PKCS#11 provider which is not available by default
- * (see java.security.Security#getProviders()).  The main thing to keep in mind is that PKCS#11 keystores will have a
- * null keystore path.
+ * (see java.security.Security#getProviders()).  The main thing to keep in mind is that PKCS#11 keystores will either use
+ * null, and empty string, or NONE for their keystore path.
  */
 public class SSLSupport {
-   // Public --------------------------------------------------------
 
-   public static SSLContext createContext(final String keystoreProvider,
-                                          final String keystorePath,
-                                          final String keystorePassword,
-                                          final String trustStoreProvider,
-                                          final String trustStorePath,
-                                          final String trustStorePassword) throws Exception {
+   public static final String NONE = "NONE";
+   private String keystoreProvider = TransportConstants.DEFAULT_KEYSTORE_PROVIDER;
+   private String keystoreType = TransportConstants.DEFAULT_KEYSTORE_TYPE;
+   private String keystorePath = TransportConstants.DEFAULT_KEYSTORE_PATH;
+   private String keystorePassword = TransportConstants.DEFAULT_KEYSTORE_PASSWORD;
+   private String truststoreProvider = TransportConstants.DEFAULT_TRUSTSTORE_PROVIDER;
+   private String truststoreType = TransportConstants.DEFAULT_TRUSTSTORE_TYPE;
+   private String truststorePath = TransportConstants.DEFAULT_TRUSTSTORE_PATH;
+   private String truststorePassword = TransportConstants.DEFAULT_TRUSTSTORE_PASSWORD;
+   private String crlPath = TransportConstants.DEFAULT_CRL_PATH;
+   private String sslProvider = TransportConstants.DEFAULT_SSL_PROVIDER;
+   private boolean trustAll = TransportConstants.DEFAULT_TRUST_ALL;
+   private String trustManagerFactoryPlugin = TransportConstants.DEFAULT_TRUST_MANAGER_FACTORY_PLUGIN;
+
+   public SSLSupport() {
+   }
+
+   public SSLSupport(final SSLContextConfig config) {
+      keystoreProvider = config.getKeystoreProvider();
+      keystorePath = config.getKeystorePath();
+      keystoreType = config.getKeystoreType();
+      keystorePassword = config.getKeystorePassword();
+      truststoreProvider = config.getTruststoreProvider();
+      truststorePath = config.getTruststorePath();
+      truststoreType = config.getTruststoreType();
+      truststorePassword = config.getTruststorePassword();
+      crlPath = config.getCrlPath();
+      trustAll = config.isTrustAll();
+      trustManagerFactoryPlugin = config.getTrustManagerFactoryPlugin();
+   }
+
+   public String getKeystoreProvider() {
+      return keystoreProvider;
+   }
+
+   public SSLSupport setKeystoreProvider(String keystoreProvider) {
+      this.keystoreProvider = keystoreProvider;
+      return this;
+   }
+
+   public String getKeystoreType() {
+      return keystoreType;
+   }
+
+   public SSLSupport setKeystoreType(String keystoreType) {
+      this.keystoreType = keystoreType;
+      return this;
+   }
+
+   public String getKeystorePath() {
+      return keystorePath;
+   }
+
+   public SSLSupport setKeystorePath(String keystorePath) {
+      this.keystorePath = keystorePath;
+      return this;
+   }
+
+   public String getKeystorePassword() {
+      return keystorePassword;
+   }
+
+   public SSLSupport setKeystorePassword(String keystorePassword) {
+      this.keystorePassword = keystorePassword;
+      return this;
+   }
+
+   public String getTruststoreProvider() {
+      return truststoreProvider;
+   }
+
+   public SSLSupport setTruststoreProvider(String truststoreProvider) {
+      this.truststoreProvider = truststoreProvider;
+      return this;
+   }
+
+   public String getTruststoreType() {
+      return truststoreType;
+   }
+
+   public SSLSupport setTruststoreType(String truststoreType) {
+      this.truststoreType = truststoreType;
+      return this;
+   }
+
+   public String getTruststorePath() {
+      return truststorePath;
+   }
+
+   public SSLSupport setTruststorePath(String truststorePath) {
+      this.truststorePath = truststorePath;
+      return this;
+   }
+
+   public String getTruststorePassword() {
+      return truststorePassword;
+   }
+
+   public SSLSupport setTruststorePassword(String truststorePassword) {
+      this.truststorePassword = truststorePassword;
+      return this;
+   }
+
+   public String getCrlPath() {
+      return crlPath;
+   }
+
+   public SSLSupport setCrlPath(String crlPath) {
+      this.crlPath = crlPath;
+      return this;
+   }
+
+   public String getSslProvider() {
+      return sslProvider;
+   }
+
+   public SSLSupport setSslProvider(String sslProvider) {
+      this.sslProvider = sslProvider;
+      return this;
+   }
+
+   public boolean isTrustAll() {
+      return trustAll;
+   }
+
+   public SSLSupport setTrustAll(boolean trustAll) {
+      this.trustAll = trustAll;
+      return this;
+   }
+
+   public String getTrustManagerFactoryPlugin() {
+      return trustManagerFactoryPlugin;
+   }
+
+   public SSLSupport setTrustManagerFactoryPlugin(String trustManagerFactoryPlugin) {
+      this.trustManagerFactoryPlugin = trustManagerFactoryPlugin;
+      return this;
+   }
+
+   public SSLContext createContext() throws Exception {
       SSLContext context = SSLContext.getInstance("TLS");
-      KeyManager[] keyManagers = SSLSupport.loadKeyManagers(keystoreProvider, keystorePath, keystorePassword);
-      TrustManager[] trustManagers = SSLSupport.loadTrustManager(trustStoreProvider, trustStorePath, trustStorePassword);
+      KeyManager[] keyManagers = loadKeyManagers();
+      TrustManager[] trustManagers = loadTrustManagers();
       context.init(keyManagers, trustManagers, new SecureRandom());
       return context;
    }
+
+   public SslContext createNettyContext() throws Exception {
+      KeyStore keyStore = SSLSupport.loadKeystore(keystoreProvider, keystoreType, keystorePath, keystorePassword);
+      KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+      keyManagerFactory.init(keyStore, keystorePassword.toCharArray());
+      return SslContextBuilder.forServer(keyManagerFactory).sslProvider(SslProvider.valueOf(sslProvider)).trustManager(loadTrustManagerFactory()).build();
+   }
+
+   public SslContext createNettyClientContext() throws Exception {
+      KeyStore keyStore = SSLSupport.loadKeystore(keystoreProvider, keystoreType, keystorePath, keystorePassword);
+      KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+      keyManagerFactory.init(keyStore, keystorePassword == null ? null : keystorePassword.toCharArray());
+      return SslContextBuilder.forClient().sslProvider(SslProvider.valueOf(sslProvider)).keyManager(keyManagerFactory).trustManager(loadTrustManagerFactory()).build();
+   }
+
 
    public static String[] parseCommaSeparatedListIntoArray(String suites) {
       String[] cipherSuites = suites.split(",");
@@ -77,58 +240,97 @@ public class SSLSupport {
    }
 
    // Private -------------------------------------------------------
+   private TrustManagerFactory loadTrustManagerFactory() throws Exception {
+      if (trustManagerFactoryPlugin != null) {
+         return AccessController.doPrivileged((PrivilegedAction<TrustManagerFactory>) () -> ((TrustManagerFactoryPlugin) ClassloadingUtil.newInstanceFromClassLoader(SSLSupport.class, trustManagerFactoryPlugin)).getTrustManagerFactory());
+      } else if (trustAll) {
+         //This is useful for testing but not should be used outside of that purpose
+         return InsecureTrustManagerFactory.INSTANCE;
+      } else if ((truststorePath == null || truststorePath.isEmpty() || truststorePath.equalsIgnoreCase(NONE)) && (truststoreProvider == null || !truststoreProvider.toUpperCase().contains("PKCS11"))) {
+         return null;
+      } else {
+         TrustManagerFactory trustMgrFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+         KeyStore trustStore = SSLSupport.loadKeystore(truststoreProvider, truststoreType, truststorePath, truststorePassword);
+         boolean ocsp = Boolean.valueOf(Security.getProperty("ocsp.enable"));
 
-   private static TrustManager[] loadTrustManager(final String trustStoreProvider,
-                                                  final String trustStorePath,
-                                                  final String trustStorePassword) throws Exception {
-      if (trustStorePath == null && (trustStoreProvider == null || !"PKCS11".equals(trustStoreProvider.toUpperCase()))) {
+         boolean initialized = false;
+         if ((ocsp || crlPath != null) && TrustManagerFactory.getDefaultAlgorithm().equalsIgnoreCase("PKIX")) {
+            PKIXBuilderParameters pkixParams = new PKIXBuilderParameters(trustStore, new X509CertSelector());
+            if (crlPath != null) {
+               pkixParams.setRevocationEnabled(true);
+               Collection<? extends CRL> crlList = loadCRL();
+               if (crlList != null) {
+                  pkixParams.addCertStore(CertStore.getInstance("Collection", new CollectionCertStoreParameters(crlList)));
+               }
+            }
+            trustMgrFactory.init(new CertPathTrustManagerParameters(pkixParams));
+            initialized = true;
+         }
+
+         if (!initialized) {
+            trustMgrFactory.init(trustStore);
+         }
+         return trustMgrFactory;
+      }
+   }
+
+   private TrustManager[] loadTrustManagers() throws Exception {
+      TrustManagerFactory trustManagerFactory = loadTrustManagerFactory();
+      if (trustManagerFactory == null) {
          return null;
       }
-      else {
-         TrustManagerFactory trustMgrFactory;
-         KeyStore trustStore = SSLSupport.loadKeystore(trustStoreProvider, trustStorePath, trustStorePassword);
-         trustMgrFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-         trustMgrFactory.init(trustStore);
-         return trustMgrFactory.getTrustManagers();
+      return trustManagerFactory.getTrustManagers();
+   }
+
+   private Collection<? extends CRL> loadCRL() throws Exception {
+      if (crlPath == null) {
+         return null;
+      }
+      URL resource = validateStoreURL(crlPath);
+      try (InputStream is = resource.openStream()) {
+         return CertificateFactory.getInstance("X.509").generateCRLs(is);
       }
    }
 
    private static KeyStore loadKeystore(final String keystoreProvider,
+                                        final String keystoreType,
                                         final String keystorePath,
                                         final String keystorePassword) throws Exception {
-      KeyStore ks = KeyStore.getInstance(keystoreProvider);
+      KeyStore ks = keystoreProvider == null ? KeyStore.getInstance(keystoreType) : KeyStore.getInstance(keystoreType, keystoreProvider);
       InputStream in = null;
       try {
-         if (keystorePath != null) {
+         if (keystorePath != null && !keystorePath.isEmpty() && !keystorePath.equalsIgnoreCase(NONE)) {
             URL keystoreURL = SSLSupport.validateStoreURL(keystorePath);
             in = keystoreURL.openStream();
          }
          ks.load(in, keystorePassword == null ? null : keystorePassword.toCharArray());
-      }
-      finally {
+      } finally {
          if (in != null) {
             try {
                in.close();
-            }
-            catch (IOException ignored) {
+            } catch (IOException ignored) {
             }
          }
       }
       return ks;
    }
 
-   private static KeyManager[] loadKeyManagers(final String keyStoreProvider,
-                                               final String keystorePath,
-                                               final String keystorePassword) throws Exception {
-      if (keystorePath == null && (keyStoreProvider == null || !"PKCS11".equals(keyStoreProvider.toUpperCase()))) {
+   private KeyManager[] loadKeyManagers() throws Exception {
+      KeyManagerFactory factory = loadKeyManagerFactory();
+      if (factory == null) {
          return null;
       }
-      else {
-         KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-         KeyStore ks = SSLSupport.loadKeystore(keyStoreProvider, keystorePath, keystorePassword);
-         kmf.init(ks, keystorePassword == null ? null : keystorePassword.toCharArray());
+      return factory.getKeyManagers();
+   }
 
-         return kmf.getKeyManagers();
+   private KeyManagerFactory loadKeyManagerFactory() throws Exception {
+      if ((keystorePath == null || keystorePath.isEmpty() || keystorePath.equalsIgnoreCase(NONE)) && (keystoreProvider == null || !keystoreProvider.toUpperCase().contains("PKCS11"))) {
+         return null;
+      } else {
+         KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+         KeyStore ks = SSLSupport.loadKeystore(keystoreProvider, keystoreType, keystorePath, keystorePassword);
+         kmf.init(ks, keystorePassword == null ? null : keystorePassword.toCharArray());
+         return kmf;
       }
    }
 
@@ -138,13 +340,11 @@ public class SSLSupport {
       // First see if this is a URL
       try {
          return new URL(storePath);
-      }
-      catch (MalformedURLException e) {
+      } catch (MalformedURLException e) {
          File file = new File(storePath);
-         if (file.exists() == true && file.isFile()) {
+         if (file.exists() && file.isFile()) {
             return file.toURI().toURL();
-         }
-         else {
+         } else {
             URL url = findResource(storePath);
             if (url != null) {
                return url;

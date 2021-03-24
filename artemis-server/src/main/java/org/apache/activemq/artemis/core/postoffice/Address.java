@@ -16,8 +16,6 @@
  */
 package org.apache.activemq.artemis.core.postoffice;
 
-import java.util.List;
-
 import org.apache.activemq.artemis.api.core.SimpleString;
 
 /**
@@ -30,12 +28,6 @@ public interface Address {
    SimpleString[] getAddressParts();
 
    boolean containsWildCard();
-
-   List<Address> getLinkedAddresses();
-
-   void addLinkedAddress(Address address);
-
-   void removeLinkedAddress(Address actualAddress);
 
    boolean matches(Address add);
 }

@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.tests.integration.client;
 import java.util.concurrent.CountDownLatch;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -28,7 +29,6 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.MessageHandler;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
@@ -36,7 +36,6 @@ import org.junit.Test;
 
 public class AutogroupIdTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    public final SimpleString addressA = new SimpleString("addressA");
 
@@ -78,7 +77,7 @@ public class AutogroupIdTest extends ActiveMQTestBase {
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(groupTestQ, groupTestQ, null, false);
+      session.createQueue(new QueueConfiguration(groupTestQ).setDurable(false));
 
       ClientProducer producer = session.createProducer(groupTestQ);
 
@@ -92,8 +91,6 @@ public class AutogroupIdTest extends ActiveMQTestBase {
       ClientConsumer consumer2 = session.createConsumer(groupTestQ);
       consumer2.setMessageHandler(myMessageHandler2);
 
-      log.info("starting session");
-
       session.start();
 
       final int numMessages = 100;
@@ -104,8 +101,6 @@ public class AutogroupIdTest extends ActiveMQTestBase {
       waitForLatch(latch);
 
       session.close();
-
-      log.info(myMessageHandler2.messagesReceived);
 
       Assert.assertEquals(100, myMessageHandler.messagesReceived);
       Assert.assertEquals(0, myMessageHandler2.messagesReceived);
@@ -121,7 +116,7 @@ public class AutogroupIdTest extends ActiveMQTestBase {
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(groupTestQ, groupTestQ, null, false);
+      session.createQueue(new QueueConfiguration(groupTestQ).setDurable(false));
 
       ClientProducer producer = session.createProducer(groupTestQ);
       ClientProducer producer2 = session.createProducer(groupTestQ);
@@ -167,7 +162,7 @@ public class AutogroupIdTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(groupTestQ, groupTestQ, null, false);
+      session.createQueue(new QueueConfiguration(groupTestQ).setDurable(false));
 
       ClientProducer producer = session.createProducer(groupTestQ);
 
@@ -212,8 +207,7 @@ public class AutogroupIdTest extends ActiveMQTestBase {
          messagesReceived++;
          try {
             message.acknowledge();
-         }
-         catch (ActiveMQException e) {
+         } catch (ActiveMQException e) {
             e.printStackTrace();
          }
          latch.countDown();

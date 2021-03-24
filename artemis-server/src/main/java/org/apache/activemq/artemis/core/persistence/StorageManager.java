@@ -22,21 +22,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.io.IOCallback;
+import org.apache.activemq.artemis.core.io.SequentialFile;
+import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
-import org.apache.activemq.artemis.core.io.SequentialFile;
-import org.apache.activemq.artemis.core.message.impl.MessageInternal;
 import org.apache.activemq.artemis.core.paging.PageTransactionInfo;
 import org.apache.activemq.artemis.core.paging.PagedMessage;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PagePosition;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
-import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
+import org.apache.activemq.artemis.core.persistence.config.PersistedRole;
+import org.apache.activemq.artemis.core.persistence.config.PersistedSecuritySetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedUser;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -45,8 +52,9 @@ import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.LargeServerMessage;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.RouteContextList;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.core.server.files.FileStoreMonitor;
 import org.apache.activemq.artemis.core.server.group.impl.GroupBinding;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.JournalLoader;
 import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.core.transaction.Transaction;
@@ -63,6 +71,15 @@ import org.apache.activemq.artemis.utils.IDGenerator;
  * So the best was to add the interface and adjust the callers for the method
  */
 public interface StorageManager extends IDGenerator, ActiveMQComponent {
+
+   default long getMaxRecordSize() {
+      /** Null journal is pretty much memory */
+      return Long.MAX_VALUE;
+   }
+
+   default SequentialFileFactory getJournalSequentialFileFactory() {
+      return null;
+   }
 
    void criticalError(Throwable error);
 
@@ -86,9 +103,12 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
    void setContext(OperationContext context);
 
    /**
-    * @param ioCriticalError is the server being stopped due to an IO critical error
+    *
+    * @param ioCriticalError is the server being stopped due to an IO critical error.
+    * @param sendFailover this is to send the replication stopping in case of replication.
+    * @throws Exception
     */
-   void stop(boolean ioCriticalError) throws Exception;
+   void stop(boolean ioCriticalError, boolean sendFailover) throws Exception;
 
    // Message related operations
 
@@ -100,8 +120,11 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    void afterCompleteOperations(IOCallback run);
 
-   /** This is similar to afterComplete, however this only cares about the journal part. */
+   /**
+    * This is similar to afterComplete, however this only cares about the journal part.
+    */
    void afterStoreOperations(IOCallback run);
+
    /**
     * Block until the operations are done.
     * Warning: Don't use it inside an ordered executor, otherwise the system may lock up
@@ -128,6 +151,12 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @throws Exception
     */
    void beforePageRead() throws Exception;
+
+   /**
+    * Like {@link #beforePageRead()} but return {@code true} if acquired within {@code timeout},
+    * {@code false} otherwise.
+    */
+   boolean beforePageRead(long timeout, TimeUnit unit) throws InterruptedException;
 
    /**
     * We need a safeguard in place to avoid too much concurrent IO happening on Paging, otherwise
@@ -164,25 +193,25 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     */
    void confirmPendingLargeMessage(long recordID) throws Exception;
 
-   void storeMessage(ServerMessage message) throws Exception;
+   void storeMessage(Message message) throws Exception;
 
    void storeReference(long queueID, long messageID, boolean last) throws Exception;
 
-   void deleteMessage(long messageID) throws Exception;
+   boolean deleteMessage(long messageID) throws Exception;
 
    void storeAcknowledge(long queueID, long messageID) throws Exception;
 
    void storeCursorAcknowledge(long queueID, PagePosition position) throws Exception;
 
-   void updateDeliveryCount(MessageReference ref) throws Exception;
+   boolean updateDeliveryCount(MessageReference ref) throws Exception;
 
-   void updateScheduledDeliveryTime(MessageReference ref) throws Exception;
+   boolean updateScheduledDeliveryTime(MessageReference ref) throws Exception;
 
    void storeDuplicateID(SimpleString address, byte[] duplID, long recordID) throws Exception;
 
    void deleteDuplicateID(long recordID) throws Exception;
 
-   void storeMessageTransactional(long txID, ServerMessage message) throws Exception;
+   void storeMessageTransactional(long txID, Message message) throws Exception;
 
    void storeReferenceTransactional(long txID, long queueID, long messageID) throws Exception;
 
@@ -217,7 +246,9 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @return a large message object
     * @throws Exception
     */
-   LargeServerMessage createLargeMessage(long id, MessageInternal message) throws Exception;
+   LargeServerMessage createLargeMessage(long id, Message message) throws Exception;
+
+   LargeServerMessage largeMessageCreated(long id, LargeServerMessage largeMessage) throws Exception;
 
    enum LargeMessageExtension {
       DURABLE(".msg"), TEMPORARY(".tmp"), SYNC(".sync");
@@ -239,7 +270,20 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @param extension the extension to add to the file
     * @return
     */
-   SequentialFile createFileForLargeMessage(final long messageID, LargeMessageExtension extension);
+   SequentialFile createFileForLargeMessage(long messageID, LargeMessageExtension extension);
+
+   void largeMessageClosed(LargeServerMessage largeServerMessage) throws ActiveMQException;
+
+   void deleteLargeMessageBody(LargeServerMessage largeServerMessage) throws ActiveMQException;
+
+   default SequentialFile createFileForLargeMessage(long messageID, boolean durable) {
+      if (durable) {
+         return createFileForLargeMessage(messageID, LargeMessageExtension.DURABLE);
+      } else {
+         return createFileForLargeMessage(messageID, LargeMessageExtension.TEMPORARY);
+      }
+   }
+
 
    void prepare(long txID, Xid xid) throws Exception;
 
@@ -257,21 +301,16 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    void updatePageTransaction(long txID, PageTransactionInfo pageTransaction, int depage) throws Exception;
 
-   /**
-    * FIXME Unused
-    */
-   void updatePageTransaction(PageTransactionInfo pageTransaction, int depage) throws Exception;
-
    void deletePageTransactional(long recordID) throws Exception;
 
-   JournalLoadInformation loadMessageJournal(final PostOffice postOffice,
-                                             final PagingManager pagingManager,
-                                             final ResourceManager resourceManager,
+   JournalLoadInformation loadMessageJournal(PostOffice postOffice,
+                                             PagingManager pagingManager,
+                                             ResourceManager resourceManager,
                                              Map<Long, QueueBindingInfo> queueInfos,
-                                             final Map<SimpleString, List<Pair<byte[], Long>>> duplicateIDMap,
-                                             final Set<Pair<Long, Long>> pendingLargeMessages,
+                                             Map<SimpleString, List<Pair<byte[], Long>>> duplicateIDMap,
+                                             Set<Pair<Long, Long>> pendingLargeMessages,
                                              List<PageCountPending> pendingNonTXPageCounter,
-                                             final JournalLoader journalLoader) throws Exception;
+                                             JournalLoader journalLoader) throws Exception;
 
    long storeHeuristicCompletion(Xid xid, boolean isCommit) throws Exception;
 
@@ -281,10 +320,32 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    void addQueueBinding(long tx, Binding binding) throws Exception;
 
+   void updateQueueBinding(long tx, Binding binding) throws Exception;
+
    void deleteQueueBinding(long tx, long queueBindingID) throws Exception;
 
+   /**
+    *
+    * @param queueID The id of the queue
+    * @param status The current status of the queue. (Reserved for future use, ATM we only use this record for PAUSED)
+    * @return the id of the journal
+    * @throws Exception
+    */
+   long storeQueueStatus(long queueID, AddressQueueStatus status) throws Exception;
+
+   void deleteQueueStatus(long recordID) throws Exception;
+
+   long storeAddressStatus(long addressID, AddressQueueStatus status) throws Exception;
+
+   void deleteAddressStatus(long recordID) throws Exception;
+
+   void addAddressBinding(long tx, AddressInfo addressInfo) throws Exception;
+
+   void deleteAddressBinding(long tx, long addressBindingID) throws Exception;
+
    JournalLoadInformation loadBindingJournal(List<QueueBindingInfo> queueBindingInfos,
-                                             List<GroupingInfo> groupingInfos) throws Exception;
+                                             List<GroupingInfo> groupingInfos,
+                                             List<AddressBindingInfo> addressBindingInfos) throws Exception;
 
    // grouping related operations
    void addGrouping(GroupBinding groupBinding) throws Exception;
@@ -297,18 +358,36 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
 
    List<PersistedAddressSetting> recoverAddressSettings() throws Exception;
 
-   void storeSecurityRoles(PersistedRoles persistedRoles) throws Exception;
+   void storeSecuritySetting(PersistedSecuritySetting persistedRoles) throws Exception;
 
-   void deleteSecurityRoles(SimpleString addressMatch) throws Exception;
+   void deleteSecuritySetting(SimpleString addressMatch) throws Exception;
 
-   List<PersistedRoles> recoverPersistedRoles() throws Exception;
+   List<PersistedSecuritySetting> recoverSecuritySettings() throws Exception;
+
+   void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception;
+
+   void deleteDivertConfiguration(String divertName) throws Exception;
+
+   List<PersistedDivertConfiguration> recoverDivertConfigurations();
+
+   void storeUser(PersistedUser persistedUser) throws Exception;
+
+   void deleteUser(String username) throws Exception;
+
+   Map<String, PersistedUser> getPersistedUsers();
+
+   void storeRole(PersistedRole persistedRole) throws Exception;
+
+   void deleteRole(String role) throws Exception;
+
+   Map<String, PersistedRole> getPersistedRoles();
 
    /**
     * @return The ID with the stored counter
     */
-   long storePageCounter(long txID, long queueID, long value) throws Exception;
+   long storePageCounter(long txID, long queueID, long value, long persistentSize) throws Exception;
 
-   long storePendingCounter(long queueID, long pageID, int inc) throws Exception;
+   long storePendingCounter(long queueID, long pageID) throws Exception;
 
    void deleteIncrementRecord(long txID, long recordID) throws Exception;
 
@@ -320,13 +399,13 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @return the ID with the increment record
     * @throws Exception
     */
-   long storePageCounterInc(long txID, long queueID, int add) throws Exception;
+   long storePageCounterInc(long txID, long queueID, int add, long persistentSize) throws Exception;
 
    /**
     * @return the ID with the increment record
     * @throws Exception
     */
-   long storePageCounterInc(long queueID, int add) throws Exception;
+   long storePageCounterInc(long queueID, int add, long size) throws Exception;
 
    /**
     * @return the bindings journal
@@ -359,7 +438,7 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * needs to be sent to the journal
     * @throws Exception
     */
-   boolean addToPage(PagingStore store, ServerMessage msg, Transaction tx, RouteContextList listCtx) throws Exception;
+   boolean addToPage(PagingStore store, Message msg, Transaction tx, RouteContextList listCtx) throws Exception;
 
    /**
     * Stops the replication of data from the live to the backup.
@@ -374,6 +453,10 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * @param bytes
     */
    void addBytesToLargeMessage(SequentialFile appendFile, long messageID, byte[] bytes) throws Exception;
+
+   void addBytesToLargeMessage(SequentialFile file,
+                               long messageId,
+                               ActiveMQBuffer bytes) throws Exception;
 
    /**
     * Stores the id from IDManager.
@@ -413,4 +496,6 @@ public interface StorageManager extends IDGenerator, ActiveMQComponent {
     * {@link org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl}
     */
    void persistIdGenerator();
+
+   void injectMonitor(FileStoreMonitor monitor) throws Exception;
 }

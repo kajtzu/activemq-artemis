@@ -49,11 +49,10 @@ public class JGroupsSchema extends AbstractCFSchema {
       ActiveMQConnectionFactory factory;
       if (options.isHa()) {
          factory = ActiveMQJMSClient.createConnectionFactoryWithHA(dcConfig, options.getFactoryTypeEnum());
-      }
-      else {
+      } else {
          factory = ActiveMQJMSClient.createConnectionFactoryWithoutHA(dcConfig, options.getFactoryTypeEnum());
       }
-      return BeanSupport.setData(uri, factory, query);
+      return setData(uri, query, factory);
    }
 
    @Override
@@ -63,11 +62,9 @@ public class JGroupsSchema extends AbstractCFSchema {
       String auth;
       if (endpoint instanceof JGroupsFileBroadcastEndpointFactory) {
          auth = ((JGroupsFileBroadcastEndpointFactory) endpoint).getChannelName();
-      }
-      else if (endpoint instanceof JGroupsPropertiesBroadcastEndpointFactory) {
+      } else if (endpoint instanceof JGroupsPropertiesBroadcastEndpointFactory) {
          auth = ((JGroupsPropertiesBroadcastEndpointFactory) endpoint).getChannelName();
-      }
-      else {
+      } else {
          throw new NotSerializableException(endpoint + "not serializable");
       }
       String query = BeanSupport.getData(null, bean, dgc, endpoint);

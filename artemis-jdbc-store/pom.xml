@@ -20,7 +20,7 @@
    <parent>
       <groupId>org.apache.activemq</groupId>
       <artifactId>artemis-pom</artifactId>
-      <version>1.5.0-SNAPSHOT</version>
+      <version>2.18.0-SNAPSHOT</version>
    </parent>
 
    <artifactId>artemis-jdbc-store</artifactId>
@@ -40,16 +40,51 @@
          <scope>provided</scope>
          <optional>true</optional>
       </dependency>
-
+      <dependency>
+          <groupId>com.google.errorprone</groupId>
+          <artifactId>error_prone_core</artifactId>
+      </dependency>
       <dependency>
          <groupId>org.jboss.logging</groupId>
          <artifactId>jboss-logging</artifactId>
       </dependency>
-
       <dependency>
          <groupId>org.jboss.logmanager</groupId>
          <artifactId>jboss-logmanager</artifactId>
          <scope>test</scope>
+      </dependency>
+      <dependency>
+          <groupId>org.wildfly.common</groupId>
+          <artifactId>wildfly-common</artifactId>
+          <scope>test</scope>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-commons</artifactId>
+         <version>${project.version}</version>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-commons</artifactId>
+         <version>${project.version}</version>
+         <scope>test</scope>
+         <type>test-jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-journal</artifactId>
+         <version>${project.version}</version>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-core-client</artifactId>
+         <version>${project.version}</version>
+      </dependency>
+
+      <!-- Default DataSource for database -->
+      <dependency>
+         <groupId>org.apache.commons</groupId>
+         <artifactId>commons-dbcp2</artifactId>
       </dependency>
 
       <!-- Database driver support -->
@@ -58,30 +93,15 @@
          <artifactId>derby</artifactId>
          <scope>test</scope>
       </dependency>
-
       <dependency>
          <groupId>org.postgresql</groupId>
          <artifactId>postgresql</artifactId>
          <scope>provided</scope>
       </dependency>
-
-      <dependency>
-         <groupId>org.apache.activemq</groupId>
-         <artifactId>artemis-journal</artifactId>
-         <version>${project.version}</version>
-      </dependency>
-
-      <dependency>
-         <groupId>org.apache.activemq</groupId>
-         <artifactId>artemis-core-client</artifactId>
-         <version>${project.version}</version>
-      </dependency>
-
       <dependency>
          <groupId>junit</groupId>
          <artifactId>junit</artifactId>
          <scope>test</scope>
       </dependency>
-
    </dependencies>
 </project>

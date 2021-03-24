@@ -16,28 +16,38 @@
  */
 package org.apache.activemq.artemis.tests.unit.core.journal.impl;
 
+import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.List;
-import java.io.File;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQIOErrorException;
-import org.apache.activemq.artemis.tests.unit.core.journal.impl.fakes.SimpleEncoding;
-import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.core.io.SequentialFile;
 import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
-import org.apache.activemq.artemis.core.io.SequentialFile;
+import org.apache.activemq.artemis.core.journal.TestableJournal;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
+import org.apache.activemq.artemis.logs.AssertionLoggerHandler;
 import org.apache.activemq.artemis.tests.unit.UnitTestLogger;
+import org.apache.activemq.artemis.tests.unit.core.journal.impl.fakes.SimpleEncoding;
+import org.apache.activemq.artemis.utils.RandomUtil;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
+   private static final Logger log = Logger.getLogger(JournalImplTestUnit.class);
+
    @Override
    @After
    public void tearDown() throws Exception {
+      //stop journal first to let it manage its files
+      stopComponent(journal);
+
       List<String> files = fileFactory.listFiles(fileExtension);
 
       for (String file : files) {
@@ -58,23 +68,14 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       try {
          load();
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalStateException e) {
-         // OK
-      }
-      try {
-         stopJournal();
-         Assert.fail("Should throw exception");
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // OK
       }
       startJournal();
       try {
          startJournal();
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // OK
       }
       stopJournal();
@@ -83,15 +84,13 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       try {
          load();
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // OK
       }
       try {
          startJournal();
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // OK
       }
       stopJournal();
@@ -119,13 +118,37 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
    }
 
    @Test
+   public void testFlushAppendsAndDeletes() throws Exception {
+      setup(10, 10 * 1024, true);
+      createJournal();
+      startJournal();
+      load();
+      byte[] record = new byte[1000];
+      for (int i = 0; i < record.length; i++) {
+         record[i] = (byte) 'a';
+      }
+      // Appending records after restart should be valid (not throwing any
+      // exceptions)
+      for (int i = 0; i < 10_000; i++) {
+         journal.appendAddRecord(i, (byte) 1, new SimpleEncoding(2, (byte) 'a'), false);
+         journal.appendDeleteRecord(i, false);
+      }
+      stopJournal();
+
+      List<String> files = fileFactory.listFiles(fileExtension);
+
+      // I am allowing one extra as a possible race with pushOpenFiles. I have not seen it happening on my test
+      // but it wouldn't be a problem if it happened
+      Assert.assertTrue("Supposed to have up to 10 files", files.size() <= 11);
+   }
+
+   @Test
    public void testParams() throws Exception {
       try {
          new JournalImpl(JournalImpl.MIN_FILE_SIZE - 1, 10, 10, 0, 0, fileFactory, filePrefix, fileExtension, 1);
 
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // Ok
       }
 
@@ -133,8 +156,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          new JournalImpl(10 * 1024, 1, 0, 0, 0, fileFactory, filePrefix, fileExtension, 1);
 
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // Ok
       }
 
@@ -142,8 +164,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          new JournalImpl(10 * 1024, 10, 0, 0, 0, null, filePrefix, fileExtension, 1);
 
          Assert.fail("Should throw exception");
-      }
-      catch (NullPointerException e) {
+      } catch (NullPointerException e) {
          // Ok
       }
 
@@ -151,8 +172,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          new JournalImpl(10 * 1024, 10, 0, 0, 0, fileFactory, null, fileExtension, 1);
 
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // Ok
       }
 
@@ -160,8 +180,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          new JournalImpl(10 * 1024, 10, 0, 0, 0, fileFactory, filePrefix, null, 1);
 
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // Ok
       }
 
@@ -169,8 +188,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          new JournalImpl(10 * 1024, 10, 0, 0, 0, fileFactory, filePrefix, null, 0);
 
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // Ok
       }
 
@@ -217,11 +235,9 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       boolean exceptionHappened = false;
       try {
          load();
-      }
-      catch (ActiveMQIOErrorException ioe) {
+      } catch (ActiveMQIOErrorException ioe) {
          exceptionHappened = true;
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          Assert.fail("invalid exception type:" + e.getType());
       }
 
@@ -347,8 +363,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          }
 
          stopJournal();
-      }
-      finally {
+      } finally {
          filePrefix = "amq";
 
          fileExtension = "amq";
@@ -453,7 +468,13 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
    /**
     * Use: calculateNumberOfFiles (fileSize, numberOfRecords, recordSize,  numberOfRecords2, recordSize2, , ...., numberOfRecordsN, recordSizeN);
     */
-   private int calculateNumberOfFiles(final int fileSize, final int alignment, final int... record) throws Exception {
+   private int calculateNumberOfFiles(TestableJournal journal,
+                                      final int fileSize,
+                                      final int alignment,
+                                      final int... record) throws Exception {
+      if (journal != null) {
+         journal.flush();
+      }
       int headerSize = calculateRecordSize(JournalImpl.SIZE_HEADER, alignment);
       int currentPosition = headerSize;
       int totalFiles = 0;
@@ -467,12 +488,10 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
             if (numberOfRecords < recordsFit) {
                currentPosition = currentPosition + numberOfRecords * recordSize;
                numberOfRecords = 0;
-            }
-            else if (recordsFit > 0) {
+            } else if (recordsFit > 0) {
                currentPosition = currentPosition + recordsFit * recordSize;
                numberOfRecords -= recordsFit;
-            }
-            else {
+            } else {
                totalFiles++;
                currentPosition = headerSize;
             }
@@ -505,7 +524,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          add(i);
       }
 
-      int numberOfFiles = calculateNumberOfFiles(10 * 1024, journal.getAlignment(), 91, JournalImpl.SIZE_ADD_RECORD + recordLength);
+      int numberOfFiles = calculateNumberOfFiles(journal, 10 * 1024, journal.getAlignment(), 91, JournalImpl.SIZE_ADD_RECORD + recordLength);
 
       Assert.assertEquals(numberOfFiles, journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
@@ -528,7 +547,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          add(i);
       }
 
-      numberOfFiles = calculateNumberOfFiles(10 * 1024, journal.getAlignment(), 95, JournalImpl.SIZE_ADD_RECORD + recordLength);
+      numberOfFiles = calculateNumberOfFiles(journal, 10 * 1024, journal.getAlignment(), 95, JournalImpl.SIZE_ADD_RECORD + recordLength);
 
       Assert.assertEquals(numberOfFiles, journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
@@ -549,7 +568,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          add(i);
       }
 
-      numberOfFiles = calculateNumberOfFiles(10 * 1024, journal.getAlignment(), 200, JournalImpl.SIZE_ADD_RECORD + recordLength);
+      numberOfFiles = calculateNumberOfFiles(journal, 10 * 1024, journal.getAlignment(), 200, JournalImpl.SIZE_ADD_RECORD + recordLength);
 
       Assert.assertEquals(numberOfFiles, journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
@@ -566,7 +585,6 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       stopJournal();
    }
-
 
    @Test
    public void testOrganicallyGrowNoLimit() throws Exception {
@@ -592,15 +610,12 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          journal.forceMoveNextFile();
       }
 
-
       for (int i = 0; i < 200; i++) {
          delete(i);
       }
       journal.forceMoveNextFile();
 
       journal.checkReclaimStatus();
-
-
 
       files1 = fileFactory.listFiles(fileExtension);
       Assert.assertTrue(files1.size() > 200);
@@ -613,13 +628,8 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       }
       journal.checkReclaimStatus();
 
-
       files1 = fileFactory.listFiles(fileExtension);
       Assert.assertTrue(files1.size() > 200);
-
-      Assert.assertEquals(numberOfFiles, files1.size());
-
-      System.out.println("we have " + files1.size() + " files now");
 
       stopJournal();
    }
@@ -650,7 +660,6 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       journal.checkReclaimStatus();
 
-
       for (int i = 0; i < 200; i++) {
          delete(i);
       }
@@ -668,14 +677,14 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
    @Test
    public void testCalculations() throws Exception {
 
-      Assert.assertEquals(0, calculateNumberOfFiles(10 * 1024, 1, 1, 10, 2, 20));
-      Assert.assertEquals(0, calculateNumberOfFiles(10 * 1024, 512, 1, 1));
-      Assert.assertEquals(0, calculateNumberOfFiles(10 * 1024, 512, 19, 10));
-      Assert.assertEquals(1, calculateNumberOfFiles(10 * 1024, 512, 20, 10));
-      Assert.assertEquals(0, calculateNumberOfFiles(3000, 500, 2, 1000, 1, 500));
-      Assert.assertEquals(1, calculateNumberOfFiles(3000, 500, 2, 1000, 1, 1000));
-      Assert.assertEquals(9, calculateNumberOfFiles(10240, 1, 90, 1038, 45, 10));
-      Assert.assertEquals(11, calculateNumberOfFiles(10 * 1024, 512, 60, 14 + 1024, 30, 14));
+      Assert.assertEquals(0, calculateNumberOfFiles(journal, 10 * 1024, 1, 1, 10, 2, 20));
+      Assert.assertEquals(0, calculateNumberOfFiles(journal, 10 * 1024, 512, 1, 1));
+      Assert.assertEquals(0, calculateNumberOfFiles(journal, 10 * 1024, 512, 19, 10));
+      Assert.assertEquals(1, calculateNumberOfFiles(journal, 10 * 1024, 512, 20, 10));
+      Assert.assertEquals(0, calculateNumberOfFiles(journal, 3000, 500, 2, 1000, 1, 500));
+      Assert.assertEquals(1, calculateNumberOfFiles(journal, 3000, 500, 2, 1000, 1, 1000));
+      Assert.assertEquals(9, calculateNumberOfFiles(journal, 10240, 1, 90, 1038, 45, 10));
+      Assert.assertEquals(11, calculateNumberOfFiles(journal, 10 * 1024, 512, 60, 14 + 1024, 30, 14));
    }
 
    @Test
@@ -696,7 +705,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       int addRecordsPerFile = calculateRecordsPerFile(10 * 1024, journal.getAlignment(), JournalImpl.SIZE_ADD_RECORD + 1 + recordLength);
 
-      System.out.println(JournalImpl.SIZE_ADD_RECORD + 1 + recordLength);
+      log.debug(JournalImpl.SIZE_ADD_RECORD + 1 + recordLength);
 
       // Fills exactly 10 files
       int initialNumberOfAddRecords = addRecordsPerFile * 10;
@@ -884,13 +893,13 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          addTx(1, i);
       }
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 100, recordLength), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 100, recordLength), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(0, journal.getIDMapSize());
 
       List<String> files2 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 100, recordLength) + 2, files2.size());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 100, recordLength) + 2, files2.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
       for (String file : files1) {
@@ -901,13 +910,13 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       // Make sure nothing reclaimed
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 100, recordLength), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 100, recordLength), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(0, journal.getIDMapSize());
 
       List<String> files3 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 100, recordLength) + 2, files3.size());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 100, recordLength) + 2, files3.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
       for (String file : files1) {
@@ -920,13 +929,13 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          updateTx(1, i);
       }
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 200, recordLength), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(0, journal.getIDMapSize());
 
       List<String> files4 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength) + 2, files4.size());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 200, recordLength) + 2, files4.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
       for (String file : files1) {
@@ -937,7 +946,6 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       // Make sure nothing reclaimed
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(0, journal.getIDMapSize());
 
@@ -956,14 +964,11 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          deleteTx(1, i);
       }
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength, 200, JournalImpl.SIZE_DELETE_RECORD_TX), journal.getDataFilesCount());
-
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(0, journal.getIDMapSize());
 
       List<String> files7 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength, 200, JournalImpl.SIZE_DELETE_RECORD_TX) + 2, files7.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
       for (String file : files1) {
@@ -972,13 +977,11 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       checkAndReclaimFiles();
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength, 200, JournalImpl.SIZE_DELETE_RECORD_TX), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(0, journal.getIDMapSize());
 
       List<String> files8 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength, 200, JournalImpl.SIZE_DELETE_RECORD_TX) + 2, files8.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
       for (String file : files1) {
@@ -989,8 +992,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       if (commit) {
          commit(1);
-      }
-      else {
+      } else {
          rollback(1);
       }
 
@@ -1000,13 +1002,11 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          add(i);
       }
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength, 200, JournalImpl.SIZE_DELETE_RECORD_TX, 1, JournalImpl.SIZE_COMMIT_RECORD, 10, JournalImpl.SIZE_ADD_RECORD + recordLength), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(10, journal.getIDMapSize());
 
       List<String> files9 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 200, recordLength, 200, JournalImpl.SIZE_DELETE_RECORD_TX, 1, JournalImpl.SIZE_COMMIT_RECORD, 10, JournalImpl.SIZE_ADD_RECORD + recordLength) + 2, files9.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
       for (String file : files1) {
@@ -1017,16 +1017,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       // Most Should now be reclaimed - leaving 10 left in total
 
-      Assert.assertEquals(journal.getAlignment() == 1 ? 1 : 2, journal.getDataFilesCount());
-      Assert.assertEquals(journal.getAlignment() == 1 ? 7 : 6, journal.getFreeFilesCount());
       Assert.assertEquals(10, journal.getIDMapSize());
-
-      List<String> files10 = fileFactory.listFiles(fileExtension);
-
-      // The journal will aways keep one file opened (even if there are no more
-      // files on freeFiles)
-      Assert.assertEquals(10, files10.size());
-      Assert.assertEquals(1, journal.getOpenedFilesCount());
    }
 
    @Test
@@ -1050,7 +1041,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       journal.debugWait();
 
-      System.out.println("journal tmp :" + journal.debug());
+      log.debug("journal tmp :" + journal.debug());
 
       List<String> files2 = fileFactory.listFiles(fileExtension);
 
@@ -1067,7 +1058,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       journal.debugWait();
 
-      System.out.println("journal tmp2 :" + journal.debug());
+      log.debug("journal tmp2 :" + journal.debug());
 
       List<String> files3 = fileFactory.listFiles(fileExtension);
 
@@ -1122,7 +1113,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       journal.checkReclaimStatus();
 
-      System.out.println("journal:" + journal.debug());
+      log.debug("journal:" + journal.debug());
 
       stopJournal(false);
       createJournal();
@@ -1456,8 +1447,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
    @Test
    public void testCommitRecordsInFileNoReclaim() throws Exception {
-      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) +
-         512, true);
+      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) + 512, true);
       createJournal();
       startJournal();
       load();
@@ -1481,7 +1471,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       Assert.assertEquals(3, files2.size());
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
       Assert.assertEquals(1, journal.getIDMapSize());
@@ -1490,10 +1480,10 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       List<String> files3 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD + 1) + 2, files3.size());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD + 1) + 2, files3.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(2, journal.getIDMapSize());
 
@@ -1501,10 +1491,10 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       List<String> files4 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1) + 2, files4.size());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1) + 2, files4.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_COMMIT_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(1, journal.getIDMapSize());
 
@@ -1540,8 +1530,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
    @Test
    public void testRollbackRecordsInFileNoReclaim() throws Exception {
-      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) +
-         512, true);
+      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) + 512, true);
       createJournal();
       startJournal();
       load();
@@ -1572,10 +1561,10 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       rollback(1); // in file 1
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1), journal.getDataFilesCount());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(1, journal.getIDMapSize());
 
@@ -1583,10 +1572,10 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       List<String> files4 = fileFactory.listFiles(fileExtension);
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1) + 2, files4.size());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1) + 2, files4.size());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength, 1, JournalImpl.SIZE_ROLLBACK_RECORD + 1, 1, JournalImpl.SIZE_DELETE_RECORD + 1), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(0, journal.getIDMapSize());
 
@@ -1632,8 +1621,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
    @Test
    public void testEmptyPrepare() throws Exception {
-      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) +
-         512, true);
+      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) + 512, true);
       createJournal();
       startJournal();
       load();
@@ -1667,8 +1655,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
    @Test
    public void testPrepareNoReclaim() throws Exception {
-      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) +
-         512, true);
+      setup(2, calculateRecordSize(JournalImpl.SIZE_HEADER, getAlignment()) + calculateRecordSize(recordLength, getAlignment()) + 512, true);
       createJournal();
       startJournal();
       load();
@@ -1692,7 +1679,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       Assert.assertEquals(3, files2.size());
 
-      Assert.assertEquals(calculateNumberOfFiles(fileSize, journal.getAlignment(), 2, recordLength), journal.getDataFilesCount());
+      Assert.assertEquals(calculateNumberOfFiles(journal, fileSize, journal.getAlignment(), 2, recordLength), journal.getDataFilesCount());
       Assert.assertEquals(0, journal.getFreeFilesCount());
       Assert.assertEquals(1, journal.getOpenedFilesCount());
       Assert.assertEquals(1, journal.getIDMapSize());
@@ -2039,6 +2026,60 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       createJournal();
       startJournal();
       loadAndCheck();
+   }
+
+   @Test
+   public void testDoubleDelete() throws Exception {
+
+      AssertionLoggerHandler.startCapture();
+      try {
+         setup(10, 10 * 1024, true);
+         createJournal();
+         startJournal();
+         load();
+
+         byte[] record = generateRecord(100);
+
+         add(1);
+
+         // I'm not adding that to the test assertion, as it will be deleted anyway.
+         // the test assertion doesn't support multi-thread, so I'm calling the journal directly here
+         journal.appendAddRecord(2, (byte) 0, record, sync);
+
+         Thread[] threads = new Thread[100];
+         CountDownLatch alignLatch = new CountDownLatch(threads.length);
+         CountDownLatch startFlag = new CountDownLatch(1);
+         for (int i = 0; i < threads.length; i++) {
+            threads[i] = new Thread(() -> {
+               alignLatch.countDown();
+               try {
+                  startFlag.await(5, TimeUnit.SECONDS);
+                  journal.appendDeleteRecord(2, false);
+               } catch (java.lang.IllegalStateException expected) {
+               } catch (Exception e) {
+                  e.printStackTrace();
+               }
+            });
+            threads[i].start();
+         }
+
+         Assert.assertTrue(alignLatch.await(5, TimeUnit.SECONDS));
+         startFlag.countDown();
+
+         for (Thread t : threads) {
+            t.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse(t.isAlive());
+         }
+         journal.flush();
+
+         Assert.assertFalse(AssertionLoggerHandler.findText("NullPointerException"));
+         stopJournal();
+         createJournal();
+         startJournal();
+         loadAndCheck();
+      } finally {
+         AssertionLoggerHandler.stopCapture();
+      }
    }
 
    @Test
@@ -2448,7 +2489,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
    }
 
    @Test
-   public void testTransactionChangesNotVisibleOutsideTX() throws Exception {
+   public void testTransactionChangesNotVisibleOutsideTXtestTransactionChangesNotVisibleOutsideTX() throws Exception {
       setup(10, 10 * 1024, true);
       createJournal();
       startJournal();
@@ -2665,10 +2706,25 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       try {
          update(1);
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // Ok
       }
+
+      stopJournal();
+      createJournal();
+      startJournal();
+      loadAndCheck();
+   }
+
+   @Test
+   public void testTryIsolation2() throws Exception {
+      setup(10, 10 * 1024, true);
+      createJournal();
+      startJournal();
+      load();
+      addTx(1, 1, 2, 3);
+
+      Assert.assertFalse(tryUpdate(1));
 
       stopJournal();
       createJournal();
@@ -2686,10 +2742,25 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
       try {
          delete(1);
          Assert.fail("Should throw exception");
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // Ok
       }
+
+      stopJournal();
+      createJournal();
+      startJournal();
+      loadAndCheck();
+   }
+
+   @Test
+   public void testTryDelete() throws Exception {
+      setup(10, 10 * 1024, true);
+      createJournal();
+      startJournal();
+      load();
+      addTx(1, 1, 2, 3);
+
+      Assert.assertFalse(tryDelete(1));
 
       stopJournal();
       createJournal();
@@ -2936,18 +3007,22 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          update(i);
       }
 
-      System.out.println("Before stop ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      /**
+       * Enable System.outs again if test fails and needs to be debugged
+       */
+
+      //      log.debug("Before stop ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       stopJournal();
       createJournal();
       startJournal();
       loadAndCheck();
 
-      System.out.println("After start ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      //      log.debug("After start ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       journal.forceMoveNextFile();
 
@@ -2955,49 +3030,49 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
          delete(i);
       }
 
-      System.out.println("After delete ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      //      log.debug("After delete ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       for (int i = 100; i < 200; i++) {
          updateTx(transactionID, i);
       }
 
-      System.out.println("After updatetx ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      //      log.debug("After updatetx ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       journal.forceMoveNextFile();
 
       commit(transactionID++);
 
-      System.out.println("After commit ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      //      log.debug("After commit ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       for (int i = 100; i < 200; i++) {
          updateTx(transactionID, i);
          deleteTx(transactionID, i);
       }
 
-      System.out.println("After delete ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      //      log.debug("After delete ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       commit(transactionID++);
 
-      System.out.println("Before reclaim/after commit ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      //      log.debug("Before reclaim/after commit ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       stopJournal();
       createJournal();
       startJournal();
       loadAndCheck();
 
-      System.out.println("After reclaim ****************************");
-      System.out.println(journal.debug());
-      System.out.println("*****************************************");
+      //      log.debug("After reclaim ****************************");
+      //      log.debug(journal.debug());
+      //      log.debug("*****************************************");
 
       journal.forceMoveNextFile();
       checkAndReclaimFiles();
@@ -3045,8 +3120,7 @@ public abstract class JournalImplTestUnit extends JournalImplTestBase {
 
       try {
          load();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          Assert.fail("Unexpected exception: " + e.toString());
       }
    }

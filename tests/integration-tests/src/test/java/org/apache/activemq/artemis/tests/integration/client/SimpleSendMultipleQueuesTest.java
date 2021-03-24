@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -58,9 +59,9 @@ public class SimpleSendMultipleQueuesTest extends ActiveMQTestBase {
 
          message.getBodyBuffer().writeString(body);
 
-         //  log.info("sending message");
+         //  log.debug("sending message");
          producer.send(message);
-         // log.info("sent message");
+         // log.debug("sent message");
 
          ClientMessage received1 = consumer1.receive(1000);
          Assert.assertNotNull(received1);
@@ -91,9 +92,9 @@ public class SimpleSendMultipleQueuesTest extends ActiveMQTestBase {
 
       session = cf.createSession();
 
-      session.createQueue(SimpleSendMultipleQueuesTest.address, "queue1");
-      session.createQueue(SimpleSendMultipleQueuesTest.address, "queue2");
-      session.createQueue(SimpleSendMultipleQueuesTest.address, "queue3");
+      session.createQueue(new QueueConfiguration("queue1").setAddress(SimpleSendMultipleQueuesTest.address));
+      session.createQueue(new QueueConfiguration("queue2").setAddress(SimpleSendMultipleQueuesTest.address));
+      session.createQueue(new QueueConfiguration("queue3").setAddress(SimpleSendMultipleQueuesTest.address));
 
       producer = session.createProducer(SimpleSendMultipleQueuesTest.address);
 

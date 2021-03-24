@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.extras.byteman;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -29,6 +30,7 @@ import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.jboss.byteman.contrib.bmunit.BMRule;
 import org.jboss.byteman.contrib.bmunit.BMRules;
 import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -36,6 +38,11 @@ import org.junit.runner.RunWith;
 
 @RunWith(BMUnitRunner.class)
 public class OrphanedConsumerTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(OrphanedConsumerTest.class);
+
+   private static void debugLog(String message) {
+      log.debug(message);
+   }
 
    private static boolean conditionActive = true;
 
@@ -108,14 +115,13 @@ public class OrphanedConsumerTest extends ActiveMQTestBase {
          targetMethod = "close",
          targetLocation = "AT EXIT",
          condition = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.isConditionActive()",
-         action = "System.out.println(\"throwing stuff\");throw new InterruptedException()"), @BMRule(
+         action = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.debugLog(\"throwing stuff\");throw new InterruptedException()"), @BMRule(
          name = "closeEnter",
          targetClass = "org.apache.activemq.artemis.core.server.impl.ServerConsumerImpl",
          targetMethod = "close",
          targetLocation = "ENTRY",
          condition = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.isConditionActive()",
-         action = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.leavingCloseOnTestCountersWhileClosing()")
-         })
+         action = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.leavingCloseOnTestCountersWhileClosing()")})
    public void testOrphanedConsumers() throws Exception {
       internalTestOrphanedConsumers(false);
    }
@@ -136,14 +142,13 @@ public class OrphanedConsumerTest extends ActiveMQTestBase {
          targetMethod = "close",
          targetLocation = "AT EXIT",
          condition = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.isConditionActive()",
-         action = "System.out.println(\"throwing stuff\");throw new InterruptedException()"), @BMRule(
+         action = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.debugLog(\"throwing stuff\");throw new InterruptedException()"), @BMRule(
          name = "closeEnter",
          targetClass = "org.apache.activemq.artemis.core.server.impl.ServerConsumerImpl",
          targetMethod = "close",
          targetLocation = "ENTRY",
          condition = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.isConditionActive()",
-         action = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.leavingCloseOnTestCountersWhileClosing()")
-         })
+         action = "org.apache.activemq.artemis.tests.extras.byteman.OrphanedConsumerTest.leavingCloseOnTestCountersWhileClosing()")})
    public void testOrphanedConsumersByManagement() throws Exception {
       internalTestOrphanedConsumers(true);
    }
@@ -167,8 +172,8 @@ public class OrphanedConsumerTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(true, true, 0);
 
-      session.createQueue("queue", "queue1", true);
-      session.createQueue("queue", "queue2", true);
+      session.createQueue(new QueueConfiguration("queue1").setAddress("queue"));
+      session.createQueue(new QueueConfiguration("queue2").setAddress("queue"));
 
       ClientProducer prod = session.createProducer("queue");
 
@@ -190,8 +195,7 @@ public class OrphanedConsumerTest extends ActiveMQTestBase {
 
          // an extra second to avoid races of something closing the session while we are asserting it
          Thread.sleep(1000);
-      }
-      else {
+      } else {
          server.getActiveMQServerControl().closeConnectionsForAddress("127.0.0.1");
       }
 

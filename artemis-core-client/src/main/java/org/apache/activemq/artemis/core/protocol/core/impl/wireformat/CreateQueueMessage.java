@@ -17,22 +17,27 @@
 package org.apache.activemq.artemis.core.protocol.core.impl.wireformat;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 
 public class CreateQueueMessage extends PacketImpl {
 
-   private SimpleString address;
+   protected SimpleString address;
 
-   private SimpleString queueName;
+   protected SimpleString queueName;
 
-   private SimpleString filterString;
+   protected SimpleString filterString;
 
-   private boolean durable;
+   protected boolean durable;
 
-   private boolean temporary;
+   protected boolean temporary;
 
-   private boolean requiresResponse;
+   protected boolean requiresResponse;
+
+   public CreateQueueMessage(final QueueConfiguration queueConfiguration, boolean requiresResponse) {
+      this(queueConfiguration.getAddress(), queueConfiguration.getName(), queueConfiguration.getFilterString(), queueConfiguration.isDurable(), queueConfiguration.isTemporary(), requiresResponse);
+   }
 
    public CreateQueueMessage(final SimpleString address,
                              final SimpleString queueName,
@@ -55,16 +60,28 @@ public class CreateQueueMessage extends PacketImpl {
    }
 
    // Public --------------------------------------------------------
+   /**
+    * @param createQueueMessageV2
+    */
+   public CreateQueueMessage(byte createQueueMessageV2) {
+      super(createQueueMessageV2);
+   }
 
    @Override
    public String toString() {
       StringBuffer buff = new StringBuffer(getParentString());
+      buff.append("]");
+      return buff.toString();
+   }
+
+   @Override
+   public String getParentString() {
+      StringBuffer buff = new StringBuffer(super.getParentString());
       buff.append(", address=" + address);
       buff.append(", queueName=" + queueName);
       buff.append(", filterString=" + filterString);
       buff.append(", durable=" + durable);
       buff.append(", temporary=" + temporary);
-      buff.append("]");
       return buff.toString();
    }
 
@@ -88,6 +105,7 @@ public class CreateQueueMessage extends PacketImpl {
       return temporary;
    }
 
+   @Override
    public boolean isRequiresResponse() {
       return requiresResponse;
    }
@@ -157,22 +175,19 @@ public class CreateQueueMessage extends PacketImpl {
       if (address == null) {
          if (other.address != null)
             return false;
-      }
-      else if (!address.equals(other.address))
+      } else if (!address.equals(other.address))
          return false;
       if (durable != other.durable)
          return false;
       if (filterString == null) {
          if (other.filterString != null)
             return false;
-      }
-      else if (!filterString.equals(other.filterString))
+      } else if (!filterString.equals(other.filterString))
          return false;
       if (queueName == null) {
          if (other.queueName != null)
             return false;
-      }
-      else if (!queueName.equals(other.queueName))
+      } else if (!queueName.equals(other.queueName))
          return false;
       if (requiresResponse != other.requiresResponse)
          return false;

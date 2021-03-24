@@ -29,13 +29,13 @@ import org.apache.activemq.artemis.utils.UTF8Util;
 
 public class ChannelBufferWrapper implements ActiveMQBuffer {
 
-   protected ByteBuf buffer; // NO_UCD (use final)
+   protected final ByteBuf buffer;
    private final boolean releasable;
-
+   private final boolean isPooled;
    public static ByteBuf unwrap(ByteBuf buffer) {
       ByteBuf parent;
       while ((parent = buffer.unwrap()) != null && parent != buffer) { // this last part is just in case the semantic
-                                                                       // ever changes where unwrap is returning itself
+         // ever changes where unwrap is returning itself
          buffer = parent;
       }
 
@@ -45,15 +45,18 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    public ChannelBufferWrapper(final ByteBuf buffer) {
       this(buffer, false);
    }
-
    public ChannelBufferWrapper(final ByteBuf buffer, boolean releasable) {
+      this(buffer, releasable, false);
+   }
+   public ChannelBufferWrapper(final ByteBuf buffer, boolean releasable, boolean pooled) {
       if (!releasable) {
          this.buffer = Unpooled.unreleasableBuffer(buffer);
-      }
-      else {
+      } else {
          this.buffer = buffer;
       }
       this.releasable = releasable;
+      this.isPooled = pooled;
+
    }
 
    @Override
@@ -62,12 +65,18 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    }
 
    @Override
-   public SimpleString readNullableSimpleString() {
-      int b = buffer.readByte();
+   public Boolean readNullableBoolean() {
+      int b = readByte();
       if (b == DataConstants.NULL) {
          return null;
+      } else {
+         return readBoolean();
       }
-      return readSimpleStringInternal();
+   }
+
+   @Override
+   public SimpleString readNullableSimpleString() {
+      return SimpleString.readNullableSimpleString(buffer);
    }
 
    @Override
@@ -81,14 +90,7 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
 
    @Override
    public SimpleString readSimpleString() {
-      return readSimpleStringInternal();
-   }
-
-   private SimpleString readSimpleStringInternal() {
-      int len = buffer.readInt();
-      byte[] data = new byte[len];
-      buffer.readBytes(data);
-      return new SimpleString(data);
+      return SimpleString.readSimpleString(buffer);
    }
 
    @Override
@@ -105,13 +107,22 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
             chars[i] = (char) buffer.readShort();
          }
          return new String(chars);
-      }
-      else if (len < 0xfff) {
+      } else if (len < 0xfff) {
          return readUTF();
+      } else {
+         return SimpleString.readSimpleString(buffer).toString();
+
       }
-      else {
-         return readSimpleStringInternal().toString();
-      }
+   }
+
+   @Override
+   public void writeNullableString(String val) {
+      UTF8Util.writeNullableString(buffer, val);
+   }
+
+   @Override
+   public void writeUTF(String utf) {
+      UTF8Util.saveUTF(buffer, utf);
    }
 
    @Override
@@ -125,67 +136,28 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    }
 
    @Override
-   public void writeNullableSimpleString(final SimpleString val) {
+   public void writeNullableBoolean(Boolean val) {
       if (val == null) {
          buffer.writeByte(DataConstants.NULL);
-      }
-      else {
+      } else {
          buffer.writeByte(DataConstants.NOT_NULL);
-         writeSimpleStringInternal(val);
+         writeBoolean(val);
       }
    }
 
    @Override
-   public void writeNullableString(final String val) {
-      if (val == null) {
-         buffer.writeByte(DataConstants.NULL);
-      }
-      else {
-         buffer.writeByte(DataConstants.NOT_NULL);
-         writeStringInternal(val);
-      }
+   public void writeNullableSimpleString(final SimpleString val) {
+      SimpleString.writeNullableSimpleString(buffer, val);
    }
 
    @Override
    public void writeSimpleString(final SimpleString val) {
-      writeSimpleStringInternal(val);
-   }
-
-   private void writeSimpleStringInternal(final SimpleString val) {
-      byte[] data = val.getData();
-      buffer.writeInt(data.length);
-      buffer.writeBytes(data);
+      SimpleString.writeSimpleString(buffer, val);
    }
 
    @Override
    public void writeString(final String val) {
-      writeStringInternal(val);
-   }
-
-   private void writeStringInternal(final String val) {
-      int length = val.length();
-
-      buffer.writeInt(length);
-
-      if (length < 9) {
-         // If very small it's more performant to store char by char
-         for (int i = 0; i < val.length(); i++) {
-            buffer.writeShort((short) val.charAt(i));
-         }
-      }
-      else if (length < 0xfff) {
-         // Store as UTF - this is quicker than char by char for most strings
-         writeUTF(val);
-      }
-      else {
-         // Store as SimpleString, since can't store utf > 0xffff in length
-         writeSimpleStringInternal(new SimpleString(val));
-      }
-   }
-
-   @Override
-   public void writeUTF(final String utf) {
-      UTF8Util.saveUTF(this, utf);
+      UTF8Util.writeString(buffer, val);
    }
 
    @Override
@@ -359,11 +331,6 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    }
 
    @Override
-   public ActiveMQBuffer readBytes(final int length) {
-      return new ChannelBufferWrapper(buffer.readBytes(length), releasable);
-   }
-
-   @Override
    public char readChar() {
       return (char) buffer.readShort();
    }
@@ -394,8 +361,28 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    }
 
    @Override
+   public Integer readNullableInt() {
+      int b = readByte();
+      if (b == DataConstants.NULL) {
+         return null;
+      } else {
+         return readInt();
+      }
+   }
+
+   @Override
    public long readLong() {
       return buffer.readLong();
+   }
+
+   @Override
+   public Long readNullableLong() {
+      int b = readByte();
+      if (b == DataConstants.NULL) {
+         return null;
+      } else {
+         return readLong();
+      }
    }
 
    @Override
@@ -405,7 +392,19 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
 
    @Override
    public ActiveMQBuffer readSlice(final int length) {
-      return new ChannelBufferWrapper(buffer.readSlice(length), releasable);
+      if ( isPooled ) {
+         ByteBuf fromBuffer = buffer.readSlice(length);
+         ByteBuf newNettyBuffer = Unpooled.buffer(fromBuffer.capacity());
+         int read = fromBuffer.readerIndex();
+         int writ = fromBuffer.writerIndex();
+         fromBuffer.readerIndex(0);
+         fromBuffer.readBytes(newNettyBuffer,0,writ);
+         newNettyBuffer.setIndex(read,writ);
+         ActiveMQBuffer returnBuffer = new ChannelBufferWrapper(newNettyBuffer,releasable,false);
+         returnBuffer.setIndex(read,writ);
+         return returnBuffer;
+      }
+      return new ChannelBufferWrapper(buffer.readSlice(length), releasable, isPooled);
    }
 
    @Override
@@ -530,6 +529,13 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    }
 
    @Override
+   public void release() {
+      if ( this.isPooled ) {
+         buffer.release();
+      }
+   }
+
+   @Override
    public boolean writable() {
       return buffer.isWritable();
    }
@@ -557,6 +563,11 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    @Override
    public void writeBytes(final ByteBuffer src) {
       buffer.writeBytes(src);
+   }
+
+   @Override
+   public void writeBytes(ByteBuf src, int srcIndex, int length) {
+      buffer.writeBytes(src, srcIndex, length);
    }
 
    @Override
@@ -590,8 +601,28 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
    }
 
    @Override
+   public void writeNullableInt(final Integer value) {
+      if (value == null) {
+         buffer.writeByte(DataConstants.NULL);
+      } else {
+         buffer.writeByte(DataConstants.NOT_NULL);
+         writeInt(value);
+      }
+   }
+
+   @Override
    public void writeLong(final long value) {
       buffer.writeLong(value);
+   }
+
+   @Override
+   public void writeNullableLong(Long value) {
+      if (value == null) {
+         buffer.writeByte(DataConstants.NULL);
+      } else {
+         buffer.writeByte(DataConstants.NOT_NULL);
+         writeLong(value);
+      }
    }
 
    @Override
@@ -609,23 +640,28 @@ public class ChannelBufferWrapper implements ActiveMQBuffer {
       buffer.writeShort(value);
    }
 
-   /** from {@link java.io.DataInput} interface */
+   /**
+    * from {@link java.io.DataInput} interface
+    */
    @Override
    public void readFully(byte[] b) throws IOException {
       readBytes(b);
    }
 
-   /** from {@link java.io.DataInput} interface */
+   /**
+    * from {@link java.io.DataInput} interface
+    */
    @Override
    public void readFully(byte[] b, int off, int len) throws IOException {
       readBytes(b, off, len);
    }
 
-   /** from {@link java.io.DataInput} interface */
+   /**
+    * from {@link java.io.DataInput} interface
+    */
    @Override
    public String readLine() throws IOException {
       return ByteUtil.readLine(this);
    }
-
 
 }

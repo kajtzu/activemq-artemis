@@ -16,6 +16,16 @@
  */
 package org.apache.activemq.artemis.tests.integration.xa;
 
+import javax.management.MBeanServer;
+import javax.management.MBeanServerFactory;
+import javax.transaction.xa.XAResource;
+import javax.transaction.xa.Xid;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -31,10 +41,10 @@ import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.impl.XidImpl;
 import org.apache.activemq.artemis.jms.client.ActiveMQBytesMessage;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.integration.management.ManagementControlHelper;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -42,19 +52,10 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import javax.management.MBeanServer;
-import javax.management.MBeanServerFactory;
-import javax.transaction.xa.XAResource;
-import javax.transaction.xa.Xid;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.Map;
-
 @RunWith(Parameterized.class)
 public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
-   private static IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(BasicXaRecoveryTest.class);
 
    private final Map<String, AddressSettings> addressSettings = new HashMap<>();
 
@@ -84,7 +85,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
    @Parameterized.Parameters(name = "storeType={0}")
    public static Collection<Object[]> data() {
-      Object[][] params = new Object[][] {{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
+      Object[][] params = new Object[][]{{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
       return Arrays.asList(params);
    }
 
@@ -97,16 +98,13 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
          Class.forName("org.apache.derby.jdbc.EmbeddedDriver").newInstance();
       }
 
-
       addressSettings.clear();
 
       if (storeType == StoreConfiguration.StoreType.DATABASE) {
          configuration = createDefaultJDBCConfig(true).setJMXManagementEnabled(true);
-      }
-      else {
+      } else {
          configuration = createDefaultInVMConfig().setJMXManagementEnabled(true);
       }
-
 
       mbeanServer = MBeanServerFactory.createMBeanServer();
 
@@ -126,7 +124,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       MBeanServerFactory.releaseMBeanServer(mbeanServer);
       super.tearDown();
       if (storeType == StoreConfiguration.StoreType.DATABASE) {
-         destroyTables(Arrays.asList("BINDINGS", "LARGE_MESSAGE", "MESSAGE"));
+         destroyTables(Arrays.asList("BINDINGS", "LARGE_MESSAGE", "MESSAGE", "NODE_MANAGER_STORE"));
       }
    }
 
@@ -243,18 +241,21 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
    @Test
    public void testPagingServerRestarted() throws Exception {
-      if (storeType == StoreConfiguration.StoreType.DATABASE) return;
+      if (storeType == StoreConfiguration.StoreType.DATABASE)
+         return;
       verifyPaging(true);
    }
 
    @Test
    public void testPaging() throws Exception {
-      if (storeType == StoreConfiguration.StoreType.DATABASE) return;
+      if (storeType == StoreConfiguration.StoreType.DATABASE)
+         return;
       verifyPaging(false);
    }
 
    public void verifyPaging(final boolean restartServer) throws Exception {
-      if (storeType == StoreConfiguration.StoreType.DATABASE) return;
+      if (storeType == StoreConfiguration.StoreType.DATABASE)
+         return;
       Xid xid = new XidImpl("xa1".getBytes(), 1, UUIDGenerator.getInstance().generateStringUUID().getBytes());
 
       SimpleString pageQueue = new SimpleString("pagequeue");
@@ -265,7 +266,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       addSettings();
 
-      clientSession.createQueue(pageQueue, pageQueue, null, true);
+      clientSession.createQueue(new QueueConfiguration(pageQueue));
 
       clientSession.start(xid, XAResource.TMNOFLAGS);
 
@@ -281,12 +282,11 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       clientSession.end(xid, XAResource.TMSUCCESS);
       clientSession.prepare(xid);
 
-      BasicXaRecoveryTest.log.info("*** stopping and restarting");
+      log.debug("*** stopping and restarting");
 
       if (restartServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -320,13 +320,15 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
    @Test
    public void testRollbackPaging() throws Exception {
-      if (storeType == StoreConfiguration.StoreType.DATABASE) return;
+      if (storeType == StoreConfiguration.StoreType.DATABASE)
+         return;
       testRollbackPaging(false);
    }
 
    @Test
    public void testRollbackPagingServerRestarted() throws Exception {
-      if (storeType == StoreConfiguration.StoreType.DATABASE) return;
+      if (storeType == StoreConfiguration.StoreType.DATABASE)
+         return;
       testRollbackPaging(true);
    }
 
@@ -341,7 +343,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       addSettings();
 
-      clientSession.createQueue(pageQueue, pageQueue, null, true);
+      clientSession.createQueue(new QueueConfiguration(pageQueue));
 
       clientSession.start(xid, XAResource.TMNOFLAGS);
 
@@ -357,8 +359,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (restartServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -414,8 +415,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       Assert.assertEquals(xids.length, 0);
       if (commit) {
          clientSession.commit(xid, false);
-      }
-      else {
+      } else {
          clientSession.rollback(xid);
       }
 
@@ -474,8 +474,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -520,16 +519,15 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       clientSession.end(xid, XAResource.TMSUCCESS);
       clientSession.prepare(xid);
 
-      BasicXaRecoveryTest.log.info("shutting down server");
+      log.debug("shutting down server");
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
-      BasicXaRecoveryTest.log.info("restarted");
+      log.debug("restarted");
 
       Xid[] xids = clientSession.recover(XAResource.TMSTARTRSCAN);
 
@@ -572,8 +570,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -632,8 +629,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -703,8 +699,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -752,8 +747,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -811,8 +805,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -888,8 +881,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -952,16 +944,15 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       clientSession.end(xid, XAResource.TMSUCCESS);
       clientSession.prepare(xid);
 
-      BasicXaRecoveryTest.log.info("stopping and restarting");
+      log.debug("stopping and restarting");
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
-      BasicXaRecoveryTest.log.info("Restarted");
+      log.debug("Restarted");
 
       Xid[] xids = clientSession.recover(XAResource.TMSTARTRSCAN);
 
@@ -1001,7 +992,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       ClientSession clientSession2 = sessionFactory.createSession(false, true, true);
       ClientProducer clientProducer2 = clientSession2.createProducer(atestq);
       SimpleString anewtestq = new SimpleString("anewtestq");
-      clientSession.createQueue(anewtestq, anewtestq, null, true);
+      clientSession.createQueue(new QueueConfiguration(anewtestq));
       ClientProducer clientProducer3 = clientSession2.createProducer(anewtestq);
       clientProducer2.send(m1);
       clientProducer2.send(m2);
@@ -1059,8 +1050,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -1088,7 +1078,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       ClientSession clientSession2 = sessionFactory.createSession(false, true, true);
       ClientProducer clientProducer2 = clientSession2.createProducer(atestq);
       SimpleString anewtestq = new SimpleString("anewtestq");
-      clientSession.createQueue(anewtestq, anewtestq, null, true);
+      clientSession.createQueue(new QueueConfiguration(anewtestq));
       ClientProducer clientProducer3 = clientSession2.createProducer(anewtestq);
       clientProducer2.send(m1);
       clientProducer2.send(m2);
@@ -1146,8 +1136,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
 
       if (stopServer) {
          stopAndRestartServer();
-      }
-      else {
+      } else {
          recreateClients();
       }
 
@@ -1225,7 +1214,7 @@ public class BasicXaRecoveryTest extends ActiveMQTestBase {
       sessionFactory = createSessionFactory(locator);
       clientSession = sessionFactory.createSession(true, false, commitACKs);
       if (createQueue) {
-         clientSession.createQueue(atestq, atestq, null, true);
+         clientSession.createQueue(new QueueConfiguration(atestq));
       }
       clientProducer = clientSession.createProducer(atestq);
       clientConsumer = clientSession.createConsumer(atestq);

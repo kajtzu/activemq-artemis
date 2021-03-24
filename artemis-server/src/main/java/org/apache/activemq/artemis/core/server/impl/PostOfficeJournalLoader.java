@@ -23,25 +23,30 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.filter.FilterUtils;
 import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
 import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.paging.PagedMessage;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
-import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscriptionCounter;
 import org.apache.activemq.artemis.core.paging.impl.Page;
+import org.apache.activemq.artemis.core.persistence.AddressBindingInfo;
+import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.GroupingInfo;
 import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.persistence.impl.journal.AddMessageRecord;
+import org.apache.activemq.artemis.core.persistence.impl.journal.codec.QueueStatusEncoding;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.DuplicateIDCache;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -52,7 +57,6 @@ import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.NodeManager;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.QueueFactory;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.group.GroupingHandler;
 import org.apache.activemq.artemis.core.server.group.impl.GroupBinding;
 import org.apache.activemq.artemis.core.server.management.ManagementService;
@@ -67,12 +71,12 @@ public class PostOfficeJournalLoader implements JournalLoader {
 
    protected final PostOffice postOffice;
    protected final PagingManager pagingManager;
-   private StorageManager storageManager;
+   private final StorageManager storageManager;
    private final QueueFactory queueFactory;
    protected final NodeManager nodeManager;
    private final ManagementService managementService;
    private final GroupingHandler groupingHandler;
-   private Configuration configuration;
+   private final Configuration configuration;
    private Map<Long, Queue> queues;
 
    public PostOfficeJournalLoader(PostOffice postOffice,
@@ -113,51 +117,82 @@ public class PostOfficeJournalLoader implements JournalLoader {
    public void initQueues(Map<Long, QueueBindingInfo> queueBindingInfosMap,
                           List<QueueBindingInfo> queueBindingInfos) throws Exception {
       int duplicateID = 0;
-      for (QueueBindingInfo queueBindingInfo : queueBindingInfos) {
+      for (final QueueBindingInfo queueBindingInfo : queueBindingInfos) {
          queueBindingInfosMap.put(queueBindingInfo.getId(), queueBindingInfo);
-
-         Filter filter = FilterImpl.createFilter(queueBindingInfo.getFilterString());
-
-         boolean isTopicIdentification = filter != null && filter.getFilterString() != null &&
-            filter.getFilterString().toString().equals(ActiveMQServerImpl.GENERIC_IGNORED_FILTER);
 
          if (postOffice.getBinding(queueBindingInfo.getQueueName()) != null) {
 
-            if (isTopicIdentification) {
-               long tx = storageManager.generateID();
+            if (FilterUtils.isTopicIdentification(FilterImpl.createFilter(queueBindingInfo.getFilterString()))) {
+               final long tx = storageManager.generateID();
                storageManager.deleteQueueBinding(tx, queueBindingInfo.getId());
                storageManager.commitBindings(tx);
                continue;
-            }
-            else {
-
-               SimpleString newName = queueBindingInfo.getQueueName().concat("-" + (duplicateID++));
+            } else {
+               final SimpleString newName = queueBindingInfo.getQueueName().concat("-" + (duplicateID++));
                ActiveMQServerLogger.LOGGER.queueDuplicatedRenaming(queueBindingInfo.getQueueName().toString(), newName.toString());
                queueBindingInfo.replaceQueueName(newName);
             }
          }
 
-         PageSubscription subscription = null;
+         final Queue queue = queueFactory.createQueueWith(new QueueConfiguration(queueBindingInfo.getQueueName())
+                                                             .setId(queueBindingInfo.getId())
+                                                             .setAddress(queueBindingInfo.getAddress())
+                                                             .setFilterString(queueBindingInfo.getFilterString())
+                                                             .setUser(queueBindingInfo.getUser())
+                                                             .setDurable(true)
+                                                             .setTemporary(false)
+                                                             .setAutoCreated(queueBindingInfo.isAutoCreated())
+                                                             .setPurgeOnNoConsumers(queueBindingInfo.isPurgeOnNoConsumers())
+                                                             .setEnabled(queueBindingInfo.isEnabled())
+                                                             .setMaxConsumers(queueBindingInfo.getMaxConsumers())
+                                                             .setExclusive(queueBindingInfo.isExclusive())
+                                                             .setGroupRebalance(queueBindingInfo.isGroupRebalance())
+                                                             .setGroupBuckets(queueBindingInfo.getGroupBuckets())
+                                                             .setGroupFirstKey(queueBindingInfo.getGroupFirstKey())
+                                                             .setLastValue(queueBindingInfo.isLastValue())
+                                                             .setLastValueKey(queueBindingInfo.getLastValueKey())
+                                                             .setNonDestructive(queueBindingInfo.isNonDestructive())
+                                                             .setConsumersBeforeDispatch(queueBindingInfo.getConsumersBeforeDispatch())
+                                                             .setDelayBeforeDispatch(queueBindingInfo.getDelayBeforeDispatch())
+                                                             .setAutoDelete(queueBindingInfo.isAutoDelete())
+                                                             .setAutoDeleteDelay(queueBindingInfo.getAutoDeleteDelay())
+                                                             .setAutoDeleteMessageCount(queueBindingInfo.getAutoDeleteMessageCount())
+                                                             .setRoutingType(RoutingType.getType(queueBindingInfo.getRoutingType()))
+                                                             .setConfigurationManaged(queueBindingInfo.isConfigurationManaged())
+                                                             .setRingSize(queueBindingInfo.getRingSize()),
+                                                          pagingManager);
 
-         if (!isTopicIdentification) {
-            subscription = pagingManager.getPageStore(queueBindingInfo.getAddress()).getCursorProvider().createSubscription(queueBindingInfo.getId(), filter, true);
+         queue.setConsumersRefCount(new QueueManagerImpl(((PostOfficeImpl)postOffice).getServer(), queueBindingInfo.getQueueName()));
+
+         if (queueBindingInfo.getQueueStatusEncodings() != null) {
+            for (QueueStatusEncoding encoding : queueBindingInfo.getQueueStatusEncodings()) {
+               if (encoding.getStatus() == AddressQueueStatus.PAUSED)
+               queue.reloadPause(encoding.getId());
+            }
          }
 
-         Queue queue = queueFactory.createQueue(queueBindingInfo.getId(), queueBindingInfo.getAddress(), queueBindingInfo.getQueueName(), filter, subscription, queueBindingInfo.getUser(), true, false, queueBindingInfo.isAutoCreated());
+         final Binding binding = new LocalQueueBinding(queue.getAddress(), queue, nodeManager.getNodeId());
 
-         if (queueBindingInfo.isAutoCreated()) {
-            queue.setConsumersRefCount(new AutoCreatedQueueManagerImpl(((PostOfficeImpl) postOffice).getServer().getJMSQueueDeleter(), queueBindingInfo.getQueueName()));
-         }
-
-         Binding binding = new LocalQueueBinding(queueBindingInfo.getAddress(), queue, nodeManager.getNodeId());
-
-         queues.put(queueBindingInfo.getId(), queue);
-
+         queues.put(queue.getID(), queue);
          postOffice.addBinding(binding);
+         managementService.registerQueue(queue, queue.getAddress(), storageManager);
 
-         managementService.registerAddress(queueBindingInfo.getAddress());
-         managementService.registerQueue(queue, queueBindingInfo.getAddress(), storageManager);
+      }
+   }
 
+   @Override
+   public void initAddresses(List<AddressBindingInfo> addressBindingInfos) throws Exception {
+
+      for (AddressBindingInfo addressBindingInfo : addressBindingInfos) {
+         AddressInfo addressInfo = new AddressInfo(addressBindingInfo.getName()).setRoutingTypes(addressBindingInfo.getRoutingTypes());
+         addressInfo.setId(addressBindingInfo.getId());
+         addressInfo.setAutoCreated(addressBindingInfo.getAutoCreated());
+         if (addressBindingInfo.getAddressStatusEncoding() != null && addressBindingInfo.getAddressStatusEncoding().getStatus() == AddressQueueStatus.PAUSED) {
+            addressInfo.setStorageManager(storageManager);
+            addressInfo.setPostOffice(postOffice);
+            addressInfo.reloadPause(addressBindingInfo.getAddressStatusEncoding().getId());
+         }
+         postOffice.reloadAddressInfo(addressInfo);
       }
    }
 
@@ -192,33 +227,32 @@ public class PostOfficeJournalLoader implements JournalLoader {
 
             if (scheduledDeliveryTime != 0 && scheduledDeliveryTime <= currentTime) {
                scheduledDeliveryTime = 0;
-               record.getMessage().removeProperty(Message.HDR_SCHEDULED_DELIVERY_TIME);
+               record.getMessage().setScheduledDeliveryTime(0L);
             }
 
             if (scheduledDeliveryTime != 0) {
-               record.getMessage().putLongProperty(Message.HDR_SCHEDULED_DELIVERY_TIME, scheduledDeliveryTime);
+               record.getMessage().setScheduledDeliveryTime(scheduledDeliveryTime);
             }
 
-            MessageReference ref = postOffice.reroute(record.getMessage(), queue, null);
+            MessageReference ref = postOffice.reload(record.getMessage(), queue, null);
 
             ref.setDeliveryCount(record.getDeliveryCount());
 
             if (scheduledDeliveryTime != 0) {
-               record.getMessage().removeProperty(Message.HDR_SCHEDULED_DELIVERY_TIME);
+               record.getMessage().setScheduledDeliveryTime(0L);
             }
          }
       }
    }
 
    @Override
-   public void handleNoMessageReferences(Map<Long, ServerMessage> messages) {
-      for (ServerMessage msg : messages.values()) {
-         if (msg.getRefCount() == 0) {
+   public void handleNoMessageReferences(Map<Long, Message> messages) {
+      for (Message msg : messages.values()) {
+         if (msg.getRefCount() == 0 && msg.getDurableCount() == 0) {
             ActiveMQServerLogger.LOGGER.journalUnreferencedMessage(msg.getMessageID());
             try {
                storageManager.deleteMessage(msg.getMessageID());
-            }
-            catch (Exception ignored) {
+            } catch (Exception ignored) {
                ActiveMQServerLogger.LOGGER.journalErrorDeletingMessage(ignored, msg.getMessageID());
             }
          }
@@ -252,7 +286,9 @@ public class PostOfficeJournalLoader implements JournalLoader {
                         ResourceManager resourceManager,
                         Map<SimpleString, List<Pair<byte[], Long>>> duplicateIDMap) throws Exception {
       for (Queue queue : queues.values()) {
-         queue.resume();
+         if (!queue.isPersistedPause()) {
+            queue.resume();
+         }
       }
 
       if (System.getProperty("org.apache.activemq.opt.directblast") != null) {
@@ -261,14 +297,14 @@ public class PostOfficeJournalLoader implements JournalLoader {
    }
 
    @Override
-   public void handlePreparedSendMessage(ServerMessage message, Transaction tx, long queueID) throws Exception {
+   public void handlePreparedSendMessage(Message message, Transaction tx, long queueID) throws Exception {
       Queue queue = queues.get(queueID);
 
       if (queue == null) {
          ActiveMQServerLogger.LOGGER.journalMessageInPreparedTX(queueID);
          return;
       }
-      postOffice.reroute(message, queue, tx);
+      postOffice.reload(message, queue, tx);
    }
 
    @Override
@@ -278,16 +314,14 @@ public class PostOfficeJournalLoader implements JournalLoader {
       Queue queue = queues.get(queueID);
 
       if (queue == null) {
-         throw new IllegalStateException("Cannot find queue with id " + queueID);
-      }
-
-      MessageReference removed = queue.removeReferenceWithID(messageID);
-
-      if (removed == null) {
-         ActiveMQServerLogger.LOGGER.journalErrorRemovingRef(messageID);
-      }
-      else {
-         referencesToAck.add(removed);
+         ActiveMQServerLogger.LOGGER.journalMessageAckMissingQueueInPreparedTX(queueID);
+      } else {
+         MessageReference removed = queue.removeReferenceWithID(messageID);
+         if (removed == null) {
+            ActiveMQServerLogger.LOGGER.journalErrorRemovingRef(messageID);
+         } else {
+            referencesToAck.add(removed);
+         }
       }
    }
 
@@ -302,7 +336,7 @@ public class PostOfficeJournalLoader implements JournalLoader {
 
       tx.setState(Transaction.State.PREPARED);
 
-      resourceManager.putTransaction(xid, tx);
+      resourceManager.putTransaction(xid, tx, null);
    }
 
    /**
@@ -321,9 +355,9 @@ public class PostOfficeJournalLoader implements JournalLoader {
 
       Map<SimpleString, Map<Long, Map<Long, List<PageCountPending>>>> perAddressMap = generateMapsOnPendingCount(queues, pendingNonTXPageCounter, txRecoverCounter);
 
-      for (SimpleString address : perAddressMap.keySet()) {
-         PagingStore store = pagingManager.getPageStore(address);
-         Map<Long, Map<Long, List<PageCountPending>>> perPageMap = perAddressMap.get(address);
+      for (Map.Entry<SimpleString, Map<Long, Map<Long, List<PageCountPending>>>> addressPageMapEntry : perAddressMap.entrySet()) {
+         PagingStore store = pagingManager.getPageStore(addressPageMapEntry.getKey());
+         Map<Long, Map<Long, List<PageCountPending>>> perPageMap = addressPageMapEntry.getValue();
 
          // We have already generated this before, so it can't be null
          assert (perPageMap != null);
@@ -334,23 +368,33 @@ public class PostOfficeJournalLoader implements JournalLoader {
             // This can't be true!
             assert (perQueue != null);
 
-            if (store.checkPageFileExists(pageId.intValue())) {
+            if (store != null && store.checkPageFileExists(pageId.intValue())) {
                // on this case we need to recalculate the records
                Page pg = store.createPage(pageId.intValue());
                pg.open();
 
                List<PagedMessage> pgMessages = pg.read(storageManager);
+               pg.close(false, false);
                Map<Long, AtomicInteger> countsPerQueueOnPage = new HashMap<>();
+               Map<Long, AtomicLong> sizePerQueueOnPage = new HashMap<>();
 
                for (PagedMessage pgd : pgMessages) {
                   if (pgd.getTransactionID() <= 0) {
                      for (long q : pgd.getQueueIDs()) {
                         AtomicInteger countQ = countsPerQueueOnPage.get(q);
+                        AtomicLong sizeQ = sizePerQueueOnPage.get(q);
                         if (countQ == null) {
                            countQ = new AtomicInteger(0);
                            countsPerQueueOnPage.put(q, countQ);
                         }
+                        if (sizeQ == null) {
+                           sizeQ = new AtomicLong(0);
+                           sizePerQueueOnPage.put(q, sizeQ);
+                        }
                         countQ.incrementAndGet();
+                        if (pgd.getPersistentSize() > 0) {
+                           sizeQ.addAndGet(pgd.getPersistentSize());
+                        }
                      }
                   }
                }
@@ -364,19 +408,18 @@ public class PostOfficeJournalLoader implements JournalLoader {
                   PageSubscriptionCounter counter = store.getCursorProvider().getSubscription(entry.getKey()).getCounter();
 
                   AtomicInteger value = countsPerQueueOnPage.get(entry.getKey());
+                  AtomicLong sizeValue = sizePerQueueOnPage.get(entry.getKey());
 
                   if (value == null) {
                      logger.debug("Page " + entry.getKey() + " wasn't open, so we will just ignore");
-                  }
-                  else {
+                  } else {
                      logger.debug("Replacing counter " + value.get());
-                     counter.increment(txRecoverCounter, value.get());
+                     counter.increment(txRecoverCounter, value.get(), sizeValue.get());
                   }
                }
-            }
-            else {
+            } else {
                // on this case the page file didn't exist, we just remove all the records since the page is already gone
-               logger.debug("Page " + pageId + " didn't exist on address " + address + ", so we are just removing records");
+               logger.debug("Page " + pageId + " didn't exist on address " + addressPageMapEntry.getKey() + ", so we are just removing records");
                for (List<PageCountPending> records : perQueue.values()) {
                   for (PageCountPending record : records) {
                      logger.debug("Removing pending page counter " + record.getID());

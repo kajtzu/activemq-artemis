@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.logs;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
+import java.util.regex.Pattern;
 
 import org.jboss.logmanager.ExtHandler;
 import org.jboss.logmanager.ExtLogRecord;
@@ -71,7 +72,7 @@ public class AssertionLoggerHandler extends ExtHandler {
       return false;
    }
 
-   public static boolean findText(long mstimeout, String ... text) {
+   public static boolean findText(long mstimeout, String... text) {
 
       long timeMax = System.currentTimeMillis() + mstimeout;
       do {
@@ -84,6 +85,7 @@ public class AssertionLoggerHandler extends ExtHandler {
       return false;
 
    }
+
    /**
     * Find a line that contains the parameters passed as an argument
     *
@@ -105,8 +107,7 @@ public class AssertionLoggerHandler extends ExtHandler {
                   if (!found) {
                      break;
                   }
-               }
-               else {
+               } else {
                   break;
                }
             }
@@ -114,6 +115,25 @@ public class AssertionLoggerHandler extends ExtHandler {
 
          if (found) {
             return true;
+         }
+      }
+
+      return false;
+   }
+
+   public static boolean matchText(final String pattern) {
+      Pattern r = Pattern.compile(pattern);
+
+      for (Map.Entry<String, ExtLogRecord> entry : messages.entrySet()) {
+         if (r.matcher(entry.getKey()).matches()) {
+            return true;
+         } else {
+            Throwable throwable = entry.getValue().getThrown();
+            if (throwable != null && throwable.getMessage() != null) {
+               if (r.matcher(throwable.getMessage()).matches()) {
+                  return true;
+               }
+            }
          }
       }
 

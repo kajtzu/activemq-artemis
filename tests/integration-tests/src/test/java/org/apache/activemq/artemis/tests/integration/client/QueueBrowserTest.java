@@ -16,13 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.junit.Before;
-
-import org.junit.Test;
-
-import org.junit.Assert;
-
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -32,6 +26,10 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class QueueBrowserTest extends ActiveMQTestBase {
 
@@ -62,7 +60,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
       sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -104,7 +102,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -146,7 +144,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -179,7 +177,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -214,7 +212,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -262,7 +260,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(null, null, false, true, true, preACK, 0);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -294,7 +292,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -330,7 +328,7 @@ public class QueueBrowserTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 

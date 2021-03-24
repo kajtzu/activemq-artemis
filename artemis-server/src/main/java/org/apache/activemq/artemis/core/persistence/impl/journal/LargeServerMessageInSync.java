@@ -33,7 +33,6 @@ public final class LargeServerMessageInSync implements ReplicatedLargeMessage {
 
    private static final Logger logger = Logger.getLogger(LargeServerMessageInSync.class);
 
-
    private final LargeServerMessage mainLM;
    private final StorageManager storageManager;
    private SequentialFile appendFile;
@@ -51,7 +50,7 @@ public final class LargeServerMessageInSync implements ReplicatedLargeMessage {
    public synchronized void joinSyncedData(ByteBuffer buffer) throws Exception {
       if (deleted)
          return;
-      SequentialFile mainSeqFile = mainLM.getFile();
+      SequentialFile mainSeqFile = mainLM.getAppendFile();
       if (!mainSeqFile.isOpen()) {
          mainSeqFile.open();
       }
@@ -64,53 +63,48 @@ public final class LargeServerMessageInSync implements ReplicatedLargeMessage {
 
             FileIOUtil.copyData(appendFile, mainSeqFile, buffer);
             deleteAppendFile();
-         }
-         else {
+         } else {
             if (logger.isTraceEnabled()) {
                logger.trace("joinSyncedData, appendFile is null, ignoring joinSyncedData on " + mainLM);
             }
          }
-      }
-      catch (Throwable e) {
-         logger.warn("Error while sincing data on largeMessageInSync::" + mainLM);
+      } catch (Throwable e) {
+         ActiveMQServerLogger.LOGGER.errorWhileSyncingData(mainLM.toString(), e);
       }
 
       if (logger.isTraceEnabled()) {
          logger.trace("joinedSyncData on " + mainLM + " finished with " + mainSeqFile.size());
       }
 
-
-
       syncDone = true;
    }
 
    public SequentialFile getSyncFile() throws ActiveMQException {
-      return mainLM.getFile();
+      return mainLM.getAppendFile();
    }
 
    @Override
    public Message setDurable(boolean durable) {
       mainLM.setDurable(durable);
-      return mainLM;
+      return mainLM.toMessage();
    }
 
    @Override
    public synchronized Message setMessageID(long id) {
       mainLM.setMessageID(id);
-      return mainLM;
+      return mainLM.toMessage();
    }
 
    @Override
-   public synchronized void releaseResources() {
+   public synchronized void releaseResources(boolean sync, boolean sendEvent) {
       if (logger.isTraceEnabled()) {
          logger.trace("release resources called on " + mainLM, new Exception("trace"));
       }
-      mainLM.releaseResources();
+      mainLM.releaseResources(sync, sendEvent);
       if (appendFile != null && appendFile.isOpen()) {
          try {
             appendFile.close();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             ActiveMQServerLogger.LOGGER.largeMessageErrorReleasingResources(e);
          }
       }
@@ -121,8 +115,7 @@ public final class LargeServerMessageInSync implements ReplicatedLargeMessage {
       deleted = true;
       try {
          mainLM.deleteFile();
-      }
-      finally {
+      } finally {
          deleteAppendFile();
       }
    }
@@ -163,6 +156,26 @@ public final class LargeServerMessageInSync implements ReplicatedLargeMessage {
          appendFile.open();
       }
       storageManager.addBytesToLargeMessage(appendFile, mainLM.getMessageID(), bytes);
+   }
+
+   @Override
+   public void clearPendingRecordID() {
+      mainLM.clearPendingRecordID();
+   }
+
+   @Override
+   public boolean hasPendingRecord() {
+      return mainLM.hasPendingRecord();
+   }
+
+   @Override
+   public void setPendingRecordID(long pendingRecordID) {
+      mainLM.setPendingRecordID(pendingRecordID);
+   }
+
+   @Override
+   public long getPendingRecordID() {
+      return mainLM.getPendingRecordID();
    }
 
 }

@@ -17,9 +17,11 @@
 package org.apache.activemq.artemis.tests.integration.client;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -28,14 +30,13 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.LoaderCallback;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
-import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
@@ -43,8 +44,6 @@ import org.junit.Test;
 public class RedeliveryConsumerTest extends ActiveMQTestBase {
 
    // Constants -----------------------------------------------------
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    // Attributes ----------------------------------------------------
 
@@ -159,8 +158,7 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
                session = factory.createSession(false, false, false);
                session.start();
                consumer = session.createConsumer(ADDRESS);
-            }
-            else {
+            } else {
                session.rollback();
             }
          }
@@ -173,7 +171,7 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
       setUp(strictUpdate);
       ClientSession session = factory.createSession(false, false, false);
 
-      RedeliveryConsumerTest.log.info("created");
+      instanceLog.debug("created");
 
       ClientProducer prod = session.createProducer(ADDRESS);
       prod.send(createTextMessage(session, "Hello"));
@@ -225,7 +223,7 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
       setUp(strict);
       ClientSession session = factory.createSession(false, false, false);
 
-      RedeliveryConsumerTest.log.info("created");
+      instanceLog.debug("created");
 
       ClientProducer prod = session.createProducer(ADDRESS);
       prod.send(createTextMessage(session, "Hello"));
@@ -303,6 +301,103 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
 
    }
 
+   @Test
+   public void testRedeliveryCollisionAvoidance() throws Exception {
+      setUp(false);
+      int numberOfThreads = 10;
+      long redeliveryDelay = 1000;
+      server.getAddressSettingsRepository().getMatch(ADDRESS.toString()).setRedeliveryDelay(redeliveryDelay).setRedeliveryCollisionAvoidanceFactor(0.5);
+
+      ClientSession session = factory.createSession(false, false, false);
+      ClientProducer prod = session.createProducer(ADDRESS);
+      for (int i = 0; i < numberOfThreads; i++) {
+         prod.send(createTextMessage(session, "Hello" + i));
+      }
+      session.commit();
+      session.close();
+
+      final CountDownLatch aligned = new CountDownLatch(numberOfThreads);
+      final CountDownLatch startRollback = new CountDownLatch(1);
+
+      class ConsumerThread extends Thread {
+
+         ConsumerThread(int i) {
+            super("RedeliveryCollisionAvoidance::" + i);
+         }
+
+         long delay = 0;
+         int errors = 0;
+
+         @Override
+         public void run() {
+            try (ServerLocator locator = createInVMNonHALocator()) {
+               locator.setConsumerWindowSize(0);
+               ClientSessionFactory factory = locator.createSessionFactory();
+               ClientSession session = factory.createSession(false, false, false);
+               session.start();
+               ClientConsumer consumer = session.createConsumer(ADDRESS);
+               ClientMessage msg = consumer.receive(5000);
+               assertNotNull(msg);
+               msg.acknowledge();
+               aligned.countDown();
+               startRollback.await();
+               session.rollback();
+               long start = System.currentTimeMillis();
+               msg = consumer.receive(5000);
+               delay = System.currentTimeMillis() - start;
+               assertNotNull(msg);
+               msg.acknowledge();
+               session.commit();
+            } catch (Exception e) {
+               e.printStackTrace();
+               errors++;
+            }
+         }
+      }
+
+      ConsumerThread[] threads = new ConsumerThread[numberOfThreads];
+
+      for (int i = 0; i < numberOfThreads; i++) {
+         threads[i] = new ConsumerThread(i);
+         threads[i].start();
+      }
+
+      aligned.await();
+      startRollback.countDown();
+
+      try {
+         for (ConsumerThread t : threads) {
+            t.join(60000);
+            assertFalse(t.isAlive());
+            assertEquals("There are Errors on the test thread", 0, t.errors);
+         }
+      } finally {
+         for (ConsumerThread t : threads) {
+            if (t.isAlive()) {
+               t.interrupt();
+            }
+            t.join(1000);
+         }
+      }
+
+      long maxDelay = 0;
+      long minDelay = Long.MAX_VALUE;
+
+      for (ConsumerThread t : threads) {
+         if (t.delay < minDelay) {
+            minDelay = t.delay;
+         }
+         if (t.delay > maxDelay) {
+            maxDelay = t.delay;
+         }
+      }
+
+      // make sure the difference between the minimum redelivery delay and the maximum redelivery delay is larger that the expected nominal variance
+      assertTrue((maxDelay - minDelay) > (redeliveryDelay * .05));
+
+      factory.close();
+   }
+
    // Package protected ---------------------------------------------
 
    // Protected -----------------------------------------------------
@@ -322,9 +417,8 @@ public class RedeliveryConsumerTest extends ActiveMQTestBase {
 
       ClientSession session = addClientSession(factory.createSession(false, false, false));
       try {
-         session.createQueue(ADDRESS, ADDRESS, true);
-      }
-      catch (ActiveMQException expected) {
+         session.createQueue(new QueueConfiguration(ADDRESS));
+      } catch (ActiveMQException expected) {
          // in case of restart
       }
 

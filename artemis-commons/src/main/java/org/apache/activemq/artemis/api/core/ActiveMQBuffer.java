@@ -54,7 +54,7 @@ public interface ActiveMQBuffer extends DataInput {
    /**
     * Sets the {@code readerIndex} of this buffer.
     *
-    * @param readerIndex The reader's index The reader infex
+    * @param readerIndex The reader's index
     * @throws IndexOutOfBoundsException if the specified {@code readerIndex} is
     *                                   less than {@code 0} or
     *                                   greater than {@code this.writerIndex}
@@ -678,6 +678,15 @@ public interface ActiveMQBuffer extends DataInput {
    int readInt();
 
    /**
+    * Gets a (potentially {@code null}) 32-bit integer at the current {@code readerIndex}
+    * and increases the {@code readerIndex} by {@code 4} in this buffer.
+    *
+    * @return a (potentially {@code null}) 32-bit integer at the current {@code readerIndex}
+    * @throws IndexOutOfBoundsException if {@code this.readableBytes} is less than {@code 4}
+    */
+   Integer readNullableInt();
+
+   /**
     * Gets an unsigned 32-bit integer at the current {@code readerIndex}
     * and increases the {@code readerIndex} by {@code 4} in this buffer.
     *
@@ -695,6 +704,15 @@ public interface ActiveMQBuffer extends DataInput {
     */
    @Override
    long readLong();
+
+   /**
+    * Gets a (potentially {@code null}) 64-bit integer at the current {@code readerIndex}
+    * and increases the {@code readerIndex} by {@code 8} in this buffer.
+    *
+    * @return a (potentially {@code null}) 64-bit integer at the current {@code readerIndex}
+    * @throws IndexOutOfBoundsException if {@code this.readableBytes} is less than {@code 8}
+    */
+   Long readNullableLong();
 
    /**
     * Gets a char at the current {@code readerIndex}
@@ -737,6 +755,15 @@ public interface ActiveMQBuffer extends DataInput {
    boolean readBoolean();
 
    /**
+    * Gets a (potentially {@code null}) boolean at the current {@code readerIndex}
+    * and increases the {@code readerIndex} by {@code 1} in this buffer.
+    *
+    * @return a (potentially {@code null}) boolean at the current {@code readerIndex}
+    * @throws IndexOutOfBoundsException if {@code this.readableBytes} is less than {@code 1}
+    */
+   Boolean readNullableBoolean();
+
+   /**
     * Gets a SimpleString (potentially {@code null}) at the current {@code readerIndex}
     *
     * @return a SimpleString (potentially {@code null}) at the current {@code readerIndex}
@@ -771,19 +798,6 @@ public interface ActiveMQBuffer extends DataInput {
     */
    @Override
    String readUTF();
-
-   /**
-    * Transfers this buffer's data to a newly created buffer starting at
-    * the current {@code readerIndex} and increases the {@code readerIndex}
-    * by the number of the transferred bytes (= {@code length}).
-    * The returned buffer's {@code readerIndex} and {@code writerIndex} are
-    * {@code 0} and {@code length} respectively.
-    *
-    * @param length the number of bytes to transfer
-    * @return the newly created buffer which contains the transferred bytes
-    * @throws IndexOutOfBoundsException if {@code length} is greater than {@code this.readableBytes}
-    */
-   ActiveMQBuffer readBytes(int length);
 
    /**
     * Returns a new slice of this buffer's sub-region starting at the current
@@ -918,6 +932,15 @@ public interface ActiveMQBuffer extends DataInput {
    void writeInt(int value);
 
    /**
+    * Sets the specified (potentially {@code null}) 32-bit integer at the current {@code writerIndex}
+    * and increases the {@code writerIndex} by {@code 4} in this buffer.
+    *
+    * @param value The specified (potentially {@code null}) 32-bit integer
+    * @throws IndexOutOfBoundsException if {@code this.writableBytes} is less than {@code 4}
+    */
+   void writeNullableInt(Integer value);
+
+   /**
     * Sets the specified 64-bit long integer at the current
     * {@code writerIndex} and increases the {@code writerIndex} by {@code 8}
     * in this buffer.
@@ -926,6 +949,16 @@ public interface ActiveMQBuffer extends DataInput {
     * @throws IndexOutOfBoundsException if {@code this.writableBytes} is less than {@code 8}
     */
    void writeLong(long value);
+
+   /**
+    * Sets the specified (potentially {@code null}) 64-bit long integer at the current
+    * {@code writerIndex} and increases the {@code writerIndex} by {@code 8}
+    * in this buffer.
+    *
+    * @param value The specified (potentially {@code null}) 64-bit long integer
+    * @throws IndexOutOfBoundsException if {@code this.writableBytes} is less than {@code 8}
+    */
+   void writeNullableLong(Long value);
 
    /**
     * Sets the specified char at the current {@code writerIndex}
@@ -960,6 +993,13 @@ public interface ActiveMQBuffer extends DataInput {
     * @param val The specified boolean
     */
    void writeBoolean(boolean val);
+
+   /**
+    * Sets the specified (potentially {@code null}) Boolean at the current {@code writerIndex}
+    *
+    * @param val The specified boolean
+    */
+   void writeNullableBoolean(Boolean val);
 
    /**
     * Sets the specified SimpleString (potentially {@code null}) at the current {@code writerIndex}
@@ -1065,6 +1105,19 @@ public interface ActiveMQBuffer extends DataInput {
     */
    void writeBytes(ByteBuffer src);
 
+
+   /**
+    * Transfers the specified source buffer's data to this buffer starting at
+    * the current {@code writerIndex} until the source buffer's position
+    * reaches its limit, and increases the {@code writerIndex} by the
+    * number of the transferred bytes.
+    *
+    * @param src The source buffer
+    * @throws IndexOutOfBoundsException if {@code src.remaining()} is greater than
+    *                                   {@code this.writableBytes}
+    */
+   void writeBytes(ByteBuf src, int srcIndex, int length);
+
    /**
     * Returns a copy of this buffer's readable bytes.  Modifying the content
     * of the returned buffer or this buffer does not affect each other at all.
@@ -1149,4 +1202,10 @@ public interface ActiveMQBuffer extends DataInput {
     * @return A converted NIO Buffer
     */
    ByteBuffer toByteBuffer(int index, int length);
+
+   /**
+   * Release any underlying resources held by this buffer
+   */
+   void release();
+
 }

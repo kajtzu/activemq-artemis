@@ -16,21 +16,20 @@
  */
 package org.apache.activemq.artemis.tests.integration.replication;
 
-import org.junit.Test;
-
-import org.junit.Assert;
-
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
-import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.tests.integration.cluster.failover.FailoverTestBase;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class ReplicationOrderTest extends FailoverTestBase {
 
@@ -56,12 +55,11 @@ public class ReplicationOrderTest extends FailoverTestBase {
       ClientSession session = null;
       if (transactional) {
          session = csf.createSession(false, false);
-      }
-      else {
+      } else {
          session = csf.createSession(true, true);
       }
       addClientSession(session);
-      session.createQueue(address, queue, true);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address));
       ClientProducer producer = session.createProducer(address);
       boolean durable = false;
       for (int i = 0; i < ReplicationOrderTest.NUM; i++) {
@@ -73,8 +71,7 @@ public class ReplicationOrderTest extends FailoverTestBase {
                session.commit();
                durable = !durable;
             }
-         }
-         else {
+         } else {
             durable = !durable;
          }
       }

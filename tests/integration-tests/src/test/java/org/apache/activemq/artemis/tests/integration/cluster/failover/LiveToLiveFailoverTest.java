@@ -16,6 +16,11 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -27,14 +32,13 @@ import org.apache.activemq.artemis.core.config.ha.ColocatedPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreMasterPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfiguration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
-
-import java.util.Map;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 public class LiveToLiveFailoverTest extends FailoverTest {
 
@@ -88,8 +92,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          }
          try {
             Thread.sleep(100);
-         }
-         catch (InterruptedException e) {
+         } catch (InterruptedException e) {
             fail(e.getMessage());
          }
       }
@@ -118,7 +121,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          sf2 = (ClientSessionFactoryInternal) locator.createSessionFactory(backupServer.getServer().getNodeID().toString());
 
          ClientSession session2 = createSession(sf2, false, false);
-         session2.createQueue(ADDRESS, ADDRESS, null, true);
+         session2.createQueue(new QueueConfiguration(ADDRESS));
          addSessionFactory(sf2);
       }
 
@@ -146,7 +149,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          sf2 = (ClientSessionFactoryInternal) locator.createSessionFactory(backupServer.getServer().getNodeID().toString());
 
          ClientSession session2 = createSession(sf2, false, false);
-         session2.createQueue(ADDRESS, ADDRESS, null, true);
+         session2.createQueue(new QueueConfiguration(ADDRESS));
          addSessionFactory(sf2);
       }
       return sf;
@@ -157,15 +160,14 @@ public class LiveToLiveFailoverTest extends FailoverTest {
       if (liveServer.getServer().isStarted()) {
          sf = (ClientSessionFactoryInternal) createSessionFactory(locator);
          sf = (ClientSessionFactoryInternal) locator.createSessionFactory(liveServer.getServer().getNodeID().toString());
-      }
-      else {
+      } else {
          sf = (ClientSessionFactoryInternal) createSessionFactory(locator);
       }
    }
 
    @Override
    protected void createSessionFactory() throws Exception {
-      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setReconnectAttempts(-1);
+      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setReconnectAttempts(300).setRetryInterval(100);
 
       sf = createSessionFactoryAndWaitForTopology(locator, getConnectorTransportConfiguration(true, 0), 2);
 
@@ -173,7 +175,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          sf2 = (ClientSessionFactoryInternal) locator.createSessionFactory(backupServer.getServer().getNodeID().toString());
          addSessionFactory(sf2);
          ClientSession session2 = createSession(sf2, false, false);
-         session2.createQueue(ADDRESS, ADDRESS, null, true);
+         session2.createQueue(new QueueConfiguration(ADDRESS));
       }
    }
 
@@ -185,13 +187,19 @@ public class LiveToLiveFailoverTest extends FailoverTest {
       return TransportConfigurationUtils.getInVMAcceptor(live, server);
    }
 
+   /**
+    * TODO: https://issues.apache.org/jira/browse/ARTEMIS-2709
+    *       this test has been intermittently failing since its day one.
+    *       Ignoring the test for now until we can fix it.
+    * @throws Exception
+    */
    @Test
    public void scaleDownDelay() throws Exception {
       createSessionFactory();
 
       ClientSession session = createSession(sf, true, true);
 
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -199,6 +207,11 @@ public class LiveToLiveFailoverTest extends FailoverTest {
       sendMessages(session, producer, 1000);
 
       crash(session);
+
+      // Wait for failover to happen
+      Queue serverQueue = backupServer.getServer().locateQueue(ADDRESS);
+
+      Wait.assertEquals(1000, serverQueue::getMessageCount);
 
       ClientConsumer consumer = session.createConsumer(ADDRESS);
 
@@ -219,7 +232,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
    @Override
    @Test
    public void testFailoverOnInitialConnection() throws Exception {
-      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setFailoverOnInitialConnection(true).setReconnectAttempts(-1);
+      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setReconnectAttempts(300).setRetryInterval(100);
 
       sf = createSessionFactoryAndWaitForTopology(locator, 2);
 
@@ -228,7 +241,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
 
       ClientSession session = createSession(sf);
 
-      //session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      //session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -246,7 +259,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
    @Override
    @Test
    public void testCreateNewFactoryAfterFailover() throws Exception {
-      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setFailoverOnInitialConnection(true);
+      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true);
       sf = createSessionFactoryAndWaitForTopology(locator, 2);
 
       ClientSession session = sendAndConsume(sf, true);
@@ -261,8 +274,7 @@ public class LiveToLiveFailoverTest extends FailoverTest {
          try {
             createClientSessionFactory();
             break;
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             // retrying
             Thread.sleep(100);
          }
@@ -271,119 +283,104 @@ public class LiveToLiveFailoverTest extends FailoverTest {
       session = sendAndConsume(sf, false);
    }
 
+   @Override
+   public void testTimeoutOnFailoverTransactionCommitTimeoutCommunication() throws Exception {
+   }
+
+   @Override
+   @Ignore
+   public void testFailBothRestartLive() throws Exception {
+   }
+
    //invalid tests for Live to Live failover
    //all the timeout ones aren't as we don't migrate timeouts, any failback or server restart
    //or replicating tests aren't either
    @Override
+   @Ignore
    public void testLiveAndBackupBackupComesBackNewFactory() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testLiveAndBackupLiveComesBackNewFactory() {
    }
 
    @Override
+   @Ignore
    public void testTimeoutOnFailoverConsumeBlocked() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testFailoverMultipleSessionsWithConsumers() throws Exception {
       //
    }
 
    @Override
+   @Ignore
    public void testTimeoutOnFailover() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testTimeoutOnFailoverTransactionRollback() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testTimeoutOnFailoverConsume() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testTimeoutOnFailoverTransactionCommit() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testFailBack() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testFailBackLiveRestartsBackupIsGone() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testLiveAndBackupLiveComesBack() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testSimpleFailover() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testFailThenReceiveMoreMessagesAfterFailover2() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testWithoutUsingTheBackup() throws Exception {
    }
 
    //todo check to see which failing tests are valid,
    @Override
+   @Ignore
    public void testSimpleSendAfterFailoverDurableNonTemporary() throws Exception {
    }
 
    @Override
+   @Ignore
    public void testCommitOccurredUnblockedAndResendNoDuplicates() throws Exception {
    }
 
-   /*@Override
-   public void testCommitDidNotOccurUnblockedAndResend() throws Exception
-   {
-   }
-
-
-
    @Override
-   public void testLiveAndBackupLiveComesBackNewFactory() throws Exception
-   {
+   @Ignore
+   public void testFailLiveTooSoon() throws Exception {
    }
-
-   @Override
-   public void testXAMessagesSentSoRollbackOnEnd() throws Exception
-   {
-   }
-
-   @Override
-   public void testLiveAndBackupBackupComesBackNewFactory() throws Exception
-   {
-   }
-
-   @Override
-   public void testXAMessagesSentSoRollbackOnEnd2() throws Exception
-   {
-   }
-
-   @Override
-   public void testXAMessagesSentSoRollbackOnCommit() throws Exception
-   {
-   }
-
-   @Override
-   public void testTransactedMessagesSentSoRollback() throws Exception
-   {
-   }
-
-   @Override
-   public void testXAMessagesSentSoRollbackOnPrepare() throws Exception
-   {
-   }
-
-   @Override
-   public void testNonTransactedWithZeroConsumerWindowSize() throws Exception
-   {
-   }*/
 }
+
+

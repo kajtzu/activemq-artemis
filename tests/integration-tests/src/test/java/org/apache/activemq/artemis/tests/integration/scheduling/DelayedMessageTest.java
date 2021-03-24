@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.scheduling;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -25,15 +26,12 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 public class DelayedMessageTest extends ActiveMQTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    private ActiveMQServer server;
 
@@ -69,7 +67,7 @@ public class DelayedMessageTest extends ActiveMQTestBase {
       ClientSessionFactory sessionFactory = createSessionFactory(locator);
       ClientSession session = sessionFactory.createSession(false, false, false);
 
-      session.createQueue(qName, qName, null, true);
+      session.createQueue(new QueueConfiguration(qName));
       session.close();
 
       ClientSession session1 = sessionFactory.createSession(false, true, true);
@@ -119,8 +117,6 @@ public class DelayedMessageTest extends ActiveMQTestBase {
 
          long time = System.currentTimeMillis();
 
-         log.info("delay " + (time - now));
-
          Assert.assertTrue(time - now >= DelayedMessageTest.DELAY);
 
          // Hudson can introduce a large degree of indeterminism
@@ -137,7 +133,7 @@ public class DelayedMessageTest extends ActiveMQTestBase {
       ClientSessionFactory sessionFactory = createSessionFactory(locator);
       ClientSession session = sessionFactory.createSession(false, false, false);
 
-      session.createQueue(qName, qName, null, true);
+      session.createQueue(new QueueConfiguration(qName));
       session.close();
 
       ClientSession session1 = sessionFactory.createSession(false, true, true);
@@ -191,7 +187,7 @@ public class DelayedMessageTest extends ActiveMQTestBase {
       ClientSessionFactory sessionFactory = createSessionFactory(locator);
       ClientSession session = sessionFactory.createSession(false, false, false);
 
-      session.createQueue(qName, qName, null, true);
+      session.createQueue(new QueueConfiguration(qName));
       session.close();
 
       ClientSession session1 = sessionFactory.createSession(false, true, true);

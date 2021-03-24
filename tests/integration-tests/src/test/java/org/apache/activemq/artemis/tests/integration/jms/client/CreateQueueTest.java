@@ -22,15 +22,11 @@ import javax.jms.Queue;
 import javax.jms.Session;
 import javax.jms.Topic;
 
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
-import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.junit.Test;
 
 public class CreateQueueTest extends JMSTestBase {
    // Constants -----------------------------------------------------
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    // Attributes ----------------------------------------------------
 
@@ -50,7 +46,7 @@ public class CreateQueueTest extends JMSTestBase {
 
       String tempQueueName = tempQueue.getQueueName();
 
-      assertFalse(tempQueueName.startsWith(ActiveMQDestination.JMS_QUEUE_ADDRESS_PREFIX));
+//      assertFalse(tempQueueName.startsWith(ActiveMQDestination.JMS_QUEUE_ADDRESS_PREFIX));
 
       Queue replyQueue = session.createQueue(tempQueueName);
 
@@ -74,9 +70,9 @@ public class CreateQueueTest extends JMSTestBase {
 
       String queueName = queue.getQueueName();
 
-      log.info("queue name is " + queueName);
+      instanceLog.debug("queue name is " + queueName);
 
-      assertFalse(queueName.startsWith(ActiveMQDestination.JMS_QUEUE_ADDRESS_PREFIX));
+//      assertFalse(queueName.startsWith(ActiveMQDestination.JMS_QUEUE_ADDRESS_PREFIX));
 
       Queue replyQueue = session.createQueue(queueName);
 
@@ -101,7 +97,7 @@ public class CreateQueueTest extends JMSTestBase {
 
       String topicName = topic.getTopicName();
 
-      assertFalse(topicName.startsWith(ActiveMQDestination.JMS_TOPIC_ADDRESS_PREFIX));
+//      assertFalse(topicName.startsWith(ActiveMQDestination.JMS_TOPIC_ADDRESS_PREFIX));
 
       Topic replyTopic = session.createTopic(topicName);
 
@@ -125,7 +121,7 @@ public class CreateQueueTest extends JMSTestBase {
 
       String tempTopicName = tempTopic.getTopicName();
 
-      assertFalse(tempTopicName.startsWith(ActiveMQDestination.JMS_TOPIC_ADDRESS_PREFIX));
+//      assertFalse(tempTopicName.startsWith(ActiveMQDestination.JMS_TOPIC_ADDRESS_PREFIX));
 
       Topic replyTopic = session.createTopic(tempTopicName);
 

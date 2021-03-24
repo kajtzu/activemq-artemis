@@ -41,6 +41,7 @@ public class StompProtocolManagerFactory extends AbstractProtocolManagerFactory<
                                                 final Map<String, Object> parameters,
                                                 final List<BaseInterceptor> incomingInterceptors,
                                                 List<BaseInterceptor> outgoingInterceptors) throws Exception {
+      BeanSupport.stripPasswords(parameters);
       return BeanSupport.setData(new StompProtocolManager(this, server, filterInterceptors(incomingInterceptors), filterInterceptors(outgoingInterceptors)), parameters);
    }
 

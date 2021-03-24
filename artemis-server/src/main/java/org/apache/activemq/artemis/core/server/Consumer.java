@@ -18,9 +18,20 @@ package org.apache.activemq.artemis.core.server;
 
 import java.util.List;
 
+import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.core.PriorityAware;
 import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.spi.core.protocol.SessionCallback;
 
-public interface Consumer {
+public interface Consumer extends PriorityAware {
+
+   /**
+    *
+    * @see SessionCallback#supportsDirectDelivery()
+    */
+   default boolean supportsDirectDelivery() {
+      return true;
+   }
 
    /**
     * There was a change on semantic during 2.3 here.<br>
@@ -36,6 +47,10 @@ public interface Consumer {
     * @throws Exception
     */
    HandleStatus handle(MessageReference reference) throws Exception;
+
+   /** wakes up internal threads to deliver more messages */
+   default void promptDelivery() {
+   }
 
    /**
     * This will proceed with the actual delivery.
@@ -68,4 +83,16 @@ public interface Consumer {
     * disconnect the consumer
     */
    void disconnect();
+
+   /** an unique sequential ID for this consumer */
+   long sequentialID();
+
+   @Override
+   default int getPriority() {
+      return ActiveMQDefaultConfiguration.getDefaultConsumerPriority();
+   }
+
+   default void errorProcessing(Throwable e, MessageReference reference) {
+
+   }
 }

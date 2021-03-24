@@ -16,19 +16,21 @@
  */
 package org.apache.activemq.artemis.uri;
 
-import org.apache.activemq.artemis.api.core.TransportConfiguration;
-import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
-import org.apache.activemq.artemis.core.remoting.impl.netty.NettyConnectorFactory;
-import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.uri.schema.serverLocator.TCPServerLocatorSchema;
-import org.apache.activemq.artemis.uri.schema.connector.TCPTransportConfigurationSchema;
-import org.apache.activemq.artemis.utils.uri.BeanSupport;
-import org.apache.activemq.artemis.utils.uri.SchemaConstants;
-
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+
+import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
+import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
+import org.apache.activemq.artemis.core.remoting.impl.netty.NettyConnectorFactory;
+import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.uri.schema.connector.TCPTransportConfigurationSchema;
+import org.apache.activemq.artemis.uri.schema.serverLocator.TCPServerLocatorSchema;
+import org.apache.activemq.artemis.utils.uri.BeanSupport;
+import org.apache.activemq.artemis.utils.uri.SchemaConstants;
 
 public class TCPSchema extends AbstractCFSchema {
 
@@ -53,12 +55,37 @@ public class TCPSchema extends AbstractCFSchema {
 
       if (options.isHa()) {
          factory = ActiveMQJMSClient.createConnectionFactoryWithHA(options.getFactoryTypeEnum(), tcs);
-      }
-      else {
+      } else {
          factory = ActiveMQJMSClient.createConnectionFactoryWithoutHA(options.getFactoryTypeEnum(), tcs);
       }
 
-      return BeanSupport.setData(uri, factory, query);
+      setData(uri, query, factory);
+
+      checkIgnoredQueryFields(factory, query);
+
+      return factory;
+   }
+
+   @Override
+   protected void internalPopulateObject(URI uri,
+                                         Map<String, String> query,
+                                         ActiveMQConnectionFactory bean) throws Exception {
+      super.internalPopulateObject(uri, query, bean);
+
+      checkIgnoredQueryFields(bean, query);
+   }
+
+   private void checkIgnoredQueryFields(ActiveMQConnectionFactory factory, Map<String, String> query) throws Exception {
+      Properties factoryProperties = new Properties();
+      BeanSupport.getProperties(factory, factoryProperties);
+
+      for (String key: query.keySet()) {
+         if (!key.equals("ha") && !key.equals("type") &&
+            !TransportConstants.ALLOWABLE_CONNECTOR_KEYS.contains(key) &&
+            !factoryProperties.containsKey(key)) {
+            ActiveMQClientLogger.LOGGER.connectionFactoryParameterIgnored(key);
+         }
+      }
    }
 
    @Override

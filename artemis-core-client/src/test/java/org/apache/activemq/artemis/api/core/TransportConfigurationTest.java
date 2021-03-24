@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -36,19 +36,16 @@ public class TransportConfigurationTest {
       Assert.assertEquals(configuration, configuration2);
       Assert.assertEquals(configuration.hashCode(), configuration2.hashCode());
 
-
       HashMap<String, Object> configMap1 = new HashMap<>();
       configMap1.put("host", "localhost");
       HashMap<String, Object> configMap2 = new HashMap<>();
       configMap2.put("host", "localhost");
 
-      System.out.println("Equals::" + configMap1.equals(configMap2));
       configuration = new TransportConfiguration("SomeClass", configMap1, null);
       configuration2 = new TransportConfiguration("SomeClass", configMap2, null);
       Assert.assertEquals(configuration, configuration2);
       Assert.assertEquals(configuration.hashCode(), configuration2.hashCode());
 
-      System.out.println("Equals::" + configMap1.equals(configMap2));
       configuration = new TransportConfiguration("SomeClass", configMap1, "name1");
       configuration2 = new TransportConfiguration("SomeClass", configMap2, "name2");
       Assert.assertNotEquals(configuration, configuration2);

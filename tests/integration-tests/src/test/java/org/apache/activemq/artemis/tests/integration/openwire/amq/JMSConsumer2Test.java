@@ -16,6 +16,11 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
+import javax.jms.IllegalStateException;
+import javax.jms.Message;
+import javax.jms.MessageConsumer;
+import javax.jms.MessageListener;
+import javax.jms.Session;
 import java.lang.Thread.UncaughtExceptionHandler;
 import java.util.Collections;
 import java.util.HashMap;
@@ -26,15 +31,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import javax.jms.Message;
-import javax.jms.MessageConsumer;
-import javax.jms.MessageListener;
-import javax.jms.Session;
-
 import org.apache.activemq.ActiveMQMessageConsumer;
+import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.command.ActiveMQDestination;
-import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
 import org.junit.Test;
 
 /**
@@ -87,9 +87,11 @@ public class JMSConsumer2Test extends BasicOpenWireTest {
                   // ack every 200
                   message.acknowledge();
                }
-            }
-            catch (Exception e) {
-               exceptions.put(Thread.currentThread(), e);
+            } catch (Exception e) {
+               e.printStackTrace();
+               if (!(e instanceof IllegalStateException)) { // The consumer is closed may happen
+                  exceptions.put(Thread.currentThread(), e);
+               }
             }
          }
       }
@@ -107,6 +109,7 @@ public class JMSConsumer2Test extends BasicOpenWireTest {
       // await possible exceptions
       Thread.sleep(1000);
       assertTrue("no exceptions: " + exceptions, exceptions.isEmpty());
+      executor.shutdown();
    }
 
    @Test
@@ -145,20 +148,17 @@ public class JMSConsumer2Test extends BasicOpenWireTest {
 
       MessageConsumer consumer = session.createConsumer(destination);
       Message m = consumer.receive(1000);
-      System.out.println("m1 received: " + m);
       assertNotNull(m);
       m = consumer.receive(5000);
-      System.out.println("m2 received: " + m);
       assertNotNull(m);
+      assertFalse("redelivered flag set", m.getJMSRedelivered());
 
       // install another consumer while message dispatch is unacked/uncommitted
       Session redispatchSession = connection.createSession(true, Session.SESSION_TRANSACTED);
       MessageConsumer redispatchConsumer = redispatchSession.createConsumer(destination);
-      System.out.println("redispatch consumer: " + redispatchConsumer);
 
       // no commit so will auto rollback and get re-dispatched to
       // redisptachConsumer
-      System.out.println("closing session: " + session);
       session.close();
 
       Message msg = redispatchConsumer.receive(3000);
@@ -174,7 +174,6 @@ public class JMSConsumer2Test extends BasicOpenWireTest {
       redispatchSession.commit();
 
       assertNull(redispatchConsumer.receive(500));
-      System.out.println("closing dispatch session: " + redispatchSession);
       redispatchSession.close();
    }
 

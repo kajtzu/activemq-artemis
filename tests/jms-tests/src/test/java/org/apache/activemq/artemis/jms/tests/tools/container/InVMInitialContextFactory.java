@@ -16,13 +16,12 @@
  */
 package org.apache.activemq.artemis.jms.tests.tools.container;
 
-import java.util.HashMap;
-import java.util.Hashtable;
-import java.util.Map;
-
 import javax.naming.Context;
 import javax.naming.NamingException;
 import javax.naming.spi.InitialContextFactory;
+import java.util.HashMap;
+import java.util.Hashtable;
+import java.util.Map;
 
 /**
  * An in-VM JNDI InitialContextFactory. Lightweight JNDI implementation used for testing.
@@ -32,11 +31,7 @@ public class InVMInitialContextFactory implements InitialContextFactory {
 
    // Static --------------------------------------------------------
 
-   private static Map<Integer, Context> initialContexts;
-
-   static {
-      InVMInitialContextFactory.reset();
-   }
+   private static final Map<Integer, Context> initialContexts = new HashMap<>();
 
    public static Hashtable<String, String> getJNDIEnvironment() {
       return InVMInitialContextFactory.getJNDIEnvironment(0);
@@ -83,8 +78,7 @@ public class InVMInitialContextFactory implements InitialContextFactory {
 
       try {
          serverIndex = Integer.parseInt(s);
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new NamingException("Failure parsing \"" + Constants.SERVER_INDEX_PROPERTY_NAME +
                                       "\". " +
                                       s +
@@ -104,10 +98,6 @@ public class InVMInitialContextFactory implements InitialContextFactory {
 
          return ic;
       }
-   }
-
-   public static void reset() {
-      InVMInitialContextFactory.initialContexts = new HashMap<>();
    }
 
    // Package protected ---------------------------------------------

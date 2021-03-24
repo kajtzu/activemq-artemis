@@ -19,14 +19,25 @@ package org.apache.activemq.artemis.core.config.impl;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.FileDeploymentManager;
+import org.apache.activemq.artemis.core.config.HAPolicyConfiguration;
+import org.apache.activemq.artemis.core.config.ScaleDownConfiguration;
+import org.apache.activemq.artemis.core.config.WildcardConfiguration;
+import org.apache.activemq.artemis.core.config.ha.LiveOnlyPolicyConfiguration;
+import org.apache.activemq.artemis.core.config.ha.SharedStoreMasterPolicyConfiguration;
 import org.apache.activemq.artemis.core.deployers.impl.FileConfigurationParser;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.DefaultSensitiveStringCodec;
+import org.apache.activemq.artemis.utils.PasswordMaskingUtil;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,8 +64,7 @@ public class FileConfigurationParserTest extends ActiveMQTestBase {
          try {
             deploymentManager.readConfiguration();
             fail("parsing should have failed for " + filename);
-         }
-         catch (java.lang.IllegalStateException e) {
+         } catch (java.lang.IllegalStateException e) {
             Throwable cause = e.getCause();
             assertTrue("must have been org.xml.sax.SAXParseException", cause instanceof org.xml.sax.SAXParseException);
          }
@@ -68,6 +78,18 @@ public class FileConfigurationParserTest extends ActiveMQTestBase {
       FileDeploymentManager deploymentManager = new FileDeploymentManager(filename);
       deploymentManager.addDeployable(fc);
       deploymentManager.readConfiguration();
+   }
+
+   @Test
+   public void testDuplicateQueue() throws Exception {
+      String filename = "FileConfigurationParser-duplicateQueue.xml";
+      FileConfiguration fc = new FileConfiguration();
+      FileDeploymentManager deploymentManager = new FileDeploymentManager(filename);
+      deploymentManager.addDeployable(fc);
+      deploymentManager.readConfiguration();
+      ActiveMQServer server = addServer((ActiveMQServer) deploymentManager.buildService(null, null, null).get("core"));
+      server.start();
+      assertEquals(0, server.locateQueue(SimpleString.toSimpleString("q")).getMaxConsumers());
    }
 
    @Test
@@ -85,6 +107,38 @@ public class FileConfigurationParserTest extends ActiveMQTestBase {
 
       Assert.assertEquals("my-discovery-group", config.getClusterConfigurations().get(0).getDiscoveryGroupName());
       Assert.assertEquals(333, config.getClusterConfigurations().get(0).getRetryInterval());
+   }
+
+   @Test
+   public void testWildcardConfiguration() throws Exception {
+      FileConfigurationParser parser = new FileConfigurationParser();
+
+      String configStr = firstPart + "<wildcard-addresses>\n<routing-enabled>true</routing-enabled>\n<delimiter>/</delimiter>\n<any-words>></any-words></wildcard-addresses>" + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+
+      Configuration config = parser.parseMainConfig(input);
+      WildcardConfiguration wildCard = config.getWildcardConfiguration();
+      assertEquals('/', wildCard.getDelimiter());
+      assertTrue(wildCard.isRoutingEnabled());
+      assertEquals('>', wildCard.getAnyWords());
+      assertEquals('*', wildCard.getSingleWord());
+   }
+
+   @Test
+   public void testParsingHaSharedStoreWaitForActivation() throws Exception {
+      FileConfigurationParser parser = new FileConfigurationParser();
+
+      String configStr = firstPart + "<ha-policy><shared-store><master><wait-for-activation>false</wait-for-activation></master></shared-store></ha-policy>" + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+
+      Configuration config = parser.parseMainConfig(input);
+      HAPolicyConfiguration haConfig = config.getHAPolicyConfiguration();
+
+      assertTrue(haConfig instanceof SharedStoreMasterPolicyConfiguration);
+
+      SharedStoreMasterPolicyConfiguration masterConfig = (SharedStoreMasterPolicyConfiguration) haConfig;
+
+      assertFalse(masterConfig.isWaitForActivation());
    }
 
    @Test
@@ -111,7 +165,7 @@ public class FileConfigurationParserTest extends ActiveMQTestBase {
 
       //if we add mask, it should be able to decode correctly
       DefaultSensitiveStringCodec codec = new DefaultSensitiveStringCodec();
-      String mask = (String) codec.encode("helloworld");
+      String mask = codec.encode("helloworld");
 
       String maskPasswordPart = "<mask-password>true</mask-password>";
       clusterPasswordPart = "<cluster-password>" + mask + "</cluster-password>";
@@ -128,7 +182,7 @@ public class FileConfigurationParserTest extends ActiveMQTestBase {
       prop.put("key", "newkey");
       codec.init(prop);
 
-      mask = (String) codec.encode("newpassword");
+      mask = codec.encode("newpassword");
 
       clusterPasswordPart = "<cluster-password>" + mask + "</cluster-password>";
 
@@ -140,6 +194,200 @@ public class FileConfigurationParserTest extends ActiveMQTestBase {
       config = parser.parseMainConfig(new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8)));
 
       assertEquals("newpassword", config.getClusterPassword());
+   }
+
+   @Test
+   public void testParsingDefaultServerConfigWithENCMaskedPwd() throws Exception {
+      FileConfigurationParser parser = new FileConfigurationParser();
+
+      String configStr = firstPart + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+
+      Configuration config = parser.parseMainConfig(input);
+
+      String clusterPassword = config.getClusterPassword();
+
+      assertEquals(ActiveMQDefaultConfiguration.getDefaultClusterPassword(), clusterPassword);
+
+      //if we add cluster-password, it should be default plain text
+      String clusterPasswordPart = "<cluster-password>ENC(5aec0780b12bf225a13ab70c6c76bc8e)</cluster-password>";
+
+      configStr = firstPart + clusterPasswordPart + lastPart;
+
+      config = parser.parseMainConfig(new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8)));
+
+      assertEquals("helloworld", config.getClusterPassword());
+
+      //if we add mask, it should be able to decode correctly
+      DefaultSensitiveStringCodec codec = new DefaultSensitiveStringCodec();
+      String mask = codec.encode("helloworld");
+
+      clusterPasswordPart = "<cluster-password>" + PasswordMaskingUtil.wrap(mask) + "</cluster-password>";
+
+      configStr = firstPart + clusterPasswordPart + lastPart;
+
+      config = parser.parseMainConfig(new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8)));
+
+      assertEquals("helloworld", config.getClusterPassword());
+
+      //if we change key, it should be able to decode correctly
+      codec = new DefaultSensitiveStringCodec();
+      Map<String, String> prop = new HashMap<>();
+      prop.put("key", "newkey");
+      codec.init(prop);
+
+      mask = codec.encode("newpassword");
+
+      clusterPasswordPart = "<cluster-password>" + PasswordMaskingUtil.wrap(mask) + "</cluster-password>";
+
+      String codecPart = "<password-codec>" + "org.apache.activemq.artemis.utils.DefaultSensitiveStringCodec" +
+              ";key=newkey</password-codec>";
+
+      configStr = firstPart + clusterPasswordPart + codecPart + lastPart;
+
+      config = parser.parseMainConfig(new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8)));
+
+      assertEquals("newpassword", config.getClusterPassword());
+
+      configStr = firstPart + bridgePart + lastPart;
+      config = parser.parseMainConfig(new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8)));
+
+      List<BridgeConfiguration> bridgeConfigs = config.getBridgeConfigurations();
+      assertEquals(1, bridgeConfigs.size());
+
+      BridgeConfiguration bconfig = bridgeConfigs.get(0);
+
+      assertEquals("helloworld", bconfig.getPassword());
+   }
+
+   @Test
+   public void testDefaultBridgeProducerWindowSize() throws Exception {
+      FileConfigurationParser parser = new FileConfigurationParser();
+
+      String configStr = firstPart +
+         "<bridges>\n" +
+         "   <bridge name=\"my-bridge\">\n" +
+         "      <queue-name>sausage-factory</queue-name>\n" +
+         "      <forwarding-address>mincing-machine</forwarding-address>\n" +
+         "      <static-connectors>\n" +
+         "         <connector-ref>remote-connector</connector-ref>\n" +
+         "      </static-connectors>\n" +
+         "   </bridge>\n" +
+         "</bridges>\n"
+         + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+
+      Configuration config = parser.parseMainConfig(input);
+
+      List<BridgeConfiguration> bridgeConfigs = config.getBridgeConfigurations();
+      assertEquals(1, bridgeConfigs.size());
+
+      BridgeConfiguration bconfig = bridgeConfigs.get(0);
+
+      assertEquals(ActiveMQDefaultConfiguration.getDefaultBridgeProducerWindowSize(), bconfig.getProducerWindowSize());
+   }
+
+   @Test
+   public void testParsingOverflowPageSize() throws Exception {
+      testParsingOverFlow("<address-settings>" + "\n" + "<address-setting match=\"#\">" + "\n" + "<page-size-bytes>2147483648</page-size-bytes>\n" + "</address-setting>" + "\n" + "</address-settings>" + "\n");
+      testParsingOverFlow("<journal-file-size>2147483648</journal-file-size>");
+      testParsingOverFlow("<journal-buffer-size>2147483648</journal-buffer-size>");
+
+      testParsingOverFlow("<cluster-connections> \n" + "  <cluster-connection name=\"my-cluster\"> \n" + "    <connector-ref>netty</connector-ref>  \n" + "    <min-large-message-size>2147483648</min-large-message-size>\n" + "    <discovery-group-ref discovery-group-name=\"my-discovery-group\"/> \n" + "  </cluster-connection> \n" + "</cluster-connections>");
+      testParsingOverFlow("<cluster-connections> \n" + "  <cluster-connection name=\"my-cluster\"> \n" + "    <connector-ref>netty</connector-ref>  \n" + "    <confirmation-window-size>2147483648</confirmation-window-size>\n" + "    <discovery-group-ref discovery-group-name=\"my-discovery-group\"/> \n" + "  </cluster-connection> \n" + "</cluster-connections>");
+      testParsingOverFlow("<cluster-connections> \n" + "  <cluster-connection name=\"my-cluster\"> \n" + "    <connector-ref>netty</connector-ref>  \n" + "    <producer-window-size>2147483648</producer-window-size>\n" + "    <discovery-group-ref discovery-group-name=\"my-discovery-group\"/> \n" + "  </cluster-connection> \n" + "</cluster-connections>");
+
+      testParsingOverFlow("<bridges> \n" + "  <bridge name=\"price-forward-bridge\"> \n" + "    <queue-name>priceForwarding</queue-name>  \n" + "    <forwarding-address>newYorkPriceUpdates</forwarding-address>\n" + "    <min-large-message-size>2147483648</min-large-message-size>\n" + "    <static-connectors> \n" + "      <connector-ref>netty</connector-ref> \n" + "    </static-connectors> \n" + "  </bridge> \n" + "</bridges>");
+      testParsingOverFlow("<bridges> \n" + "  <bridge name=\"price-forward-bridge\"> \n" + "    <queue-name>priceForwarding</queue-name>  \n" + "    <forwarding-address>newYorkPriceUpdates</forwarding-address>\n" + "    <confirmation-window-size>2147483648</confirmation-window-size>\n" + "    <static-connectors> \n" + "      <connector-ref>netty</connector-ref> \n" + "    </static-connectors> \n" + "  </bridge> \n" + "</bridges>\n");
+      testParsingOverFlow("<bridges> \n" + "  <bridge name=\"price-forward-bridge\"> \n" + "    <queue-name>priceForwarding</queue-name>  \n" + "    <forwarding-address>newYorkPriceUpdates</forwarding-address>\n" + "    <producer-window-size>2147483648</producer-window-size>\n" + "    <static-connectors> \n" + "      <connector-ref>netty</connector-ref> \n" + "    </static-connectors> \n" + "  </bridge> \n" + "</bridges>\n");
+   }
+
+   @Test
+   public void testParsingScaleDownConfig() throws Exception {
+      FileConfigurationParser parser = new FileConfigurationParser();
+
+      String configStr = firstPart + "<ha-policy>\n" +
+               "   <live-only>\n" +
+               "      <scale-down>\n" +
+               "         <connectors>\n" +
+               "            <connector-ref>server0-connector</connector-ref>\n" +
+               "         </connectors>\n" +
+               "      </scale-down>\n" +
+               "   </live-only>\n" +
+               "</ha-policy>\n" + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+
+      Configuration config = parser.parseMainConfig(input);
+
+      HAPolicyConfiguration haConfig = config.getHAPolicyConfiguration();
+      assertTrue(haConfig instanceof LiveOnlyPolicyConfiguration);
+
+      LiveOnlyPolicyConfiguration liveOnlyCfg = (LiveOnlyPolicyConfiguration) haConfig;
+      ScaleDownConfiguration scaledownCfg = liveOnlyCfg.getScaleDownConfiguration();
+      List<String> connectors = scaledownCfg.getConnectors();
+      assertEquals(1, connectors.size());
+      String connector = connectors.get(0);
+      assertEquals("server0-connector", connector);
+   }
+
+
+   private void testParsingOverFlow(String config) throws Exception {
+      FileConfigurationParser parser = new FileConfigurationParser();
+      String firstPartWithoutAddressSettings = firstPart.substring(0, firstPart.indexOf("<address-settings"));
+
+      String configStr = firstPartWithoutAddressSettings + config + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+
+      try {
+         Configuration configuration = parser.parseMainConfig(input);
+         fail("parsing should have failed bcs of overflow page size");
+      } catch (java.lang.IllegalArgumentException e) {
+      }
+   }
+
+   private static String bridgePart = "<bridges>\n" +
+           "            <bridge name=\"my-bridge\">\n" +
+           "               <queue-name>sausage-factory</queue-name>\n" +
+           "               <forwarding-address>mincing-machine</forwarding-address>\n" +
+           "               <filter string=\"name='aardvark'\"/>\n" +
+           "               <transformer-class-name>org.apache.activemq.artemis.jms.example.HatColourChangeTransformer</transformer-class-name>\n" +
+           "               <reconnect-attempts>-1</reconnect-attempts>\n" +
+           "               <user>bridge-user</user>" +
+           "               <password>ENC(5aec0780b12bf225a13ab70c6c76bc8e)</password>" +
+           "               <static-connectors>\n" +
+           "                  <connector-ref>remote-connector</connector-ref>\n" +
+           "               </static-connectors>\n" +
+           "            </bridge>\n" +
+           "</bridges>\n";
+
+   @Test
+   public void testParsingAddressSettings() throws Exception {
+      long expected = 2147483648L;
+      String firstPartWithoutAS = firstPart.substring(0, firstPart.indexOf("<address-settings"));
+      String configStr = firstPartWithoutAS + ("<address-settings>\n"
+                                               + "<address-setting match=\"#\">\n"
+                                               + String.format("<max-size-bytes-reject-threshold>%d</max-size-bytes-reject-threshold>\n",
+                                                               expected)
+                                               + "</address-setting>\n"
+                                               + "</address-settings>"
+                                               + "\n") + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+      Configuration configuration = new FileConfigurationParser().parseMainConfig(input);
+      assertEquals(1, configuration.getAddressesSettings().size());
+      AddressSettings addressSettings = configuration.getAddressesSettings().get("#");
+      assertEquals(expected, addressSettings.getMaxSizeBytesRejectThreshold());
+   }
+
+   @Test
+   public void testParsingPageSyncTimeout() throws Exception {
+      int expected = 1000;
+      FileConfigurationParser parser = new FileConfigurationParser();
+
+      String configStr = firstPart + String.format("<page-sync-timeout>%d</page-sync-timeout>\n", expected) + lastPart;
+      ByteArrayInputStream input = new ByteArrayInputStream(configStr.getBytes(StandardCharsets.UTF_8));
+
+      Configuration config = parser.parseMainConfig(input);
+      assertEquals(expected, config.getPageSyncTimeout());
    }
 
    private static String firstPart = "<core xmlns=\"urn:activemq:core\">" + "\n" +
@@ -171,7 +419,7 @@ public class FileConfigurationParserTest extends ActiveMQTestBase {
       "</security-setting>" + "\n" +
       "</security-settings>" + "\n" +
       "<address-settings>" + "\n" +
-      "<address-setting match=\"#\">" + "\n" + "<dead-letter-address>jms.queue.DLQ\n</dead-letter-address>" + "\n" + "<expiry-address>jms.queue.ExpiryQueue\n</expiry-address>" + "\n" + "<redelivery-delay>0\n</redelivery-delay>" + "\n" + "<max-size-bytes>10485760\n</max-size-bytes>" + "\n" + "<message-counter-history-day-limit>10</message-counter-history-day-limit>" + "\n" + "<address-full-policy>BLOCK</address-full-policy>" + "\n" +
+      "<address-setting match=\"#\">" + "\n" + "<dead-letter-address>DLQ\n</dead-letter-address>" + "\n" + "<expiry-address>ExpiryQueue\n</expiry-address>" + "\n" + "<redelivery-delay>0\n</redelivery-delay>" + "\n" + "<max-size-bytes>10485760\n</max-size-bytes>" + "\n" + "<message-counter-history-day-limit>10</message-counter-history-day-limit>" + "\n" + "<address-full-policy>BLOCK</address-full-policy>" + "\n" +
       "</address-setting>" + "\n" +
       "</address-settings>" + "\n";
 

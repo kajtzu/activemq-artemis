@@ -16,10 +16,9 @@
  */
 package org.apache.activemq.artemis.ra;
 
-import java.io.Serializable;
-
 import javax.jms.Queue;
 import javax.jms.Topic;
+import java.io.Serializable;
 
 /**
  * The MCF default properties - these are set in the tx-connection-factory at the jms-ds.xml
@@ -30,10 +29,6 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * Serial version UID
     */
    static final long serialVersionUID = -5951352236582886862L;
-   /**
-    * Trace enabled
-    */
-   private static boolean trace = ActiveMQRALogger.LOGGER.isTraceEnabled();
 
    /**
     * The queue type
@@ -44,6 +39,7 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * The topic type
     */
    private static final String TOPIC_TYPE = Topic.class.getName();
+   protected boolean allowLocalTransactions;
 
    private String strConnectorClassName;
 
@@ -63,7 +59,7 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * Constructor
     */
    public ActiveMQRAMCFProperties() {
-      if (ActiveMQRAMCFProperties.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("constructor()");
       }
 
@@ -76,7 +72,7 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * @return The type
     */
    public int getType() {
-      if (ActiveMQRAMCFProperties.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("getType()");
       }
 
@@ -88,7 +84,7 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
    }
 
    public void setConnectorClassName(final String connectorClassName) {
-      if (ActiveMQRAMCFProperties.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("setConnectorClassName(" + connectorClassName + ")");
       }
 
@@ -115,17 +111,15 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * @param defaultType either javax.jms.Topic or javax.jms.Queue
     */
    public void setSessionDefaultType(final String defaultType) {
-      if (ActiveMQRAMCFProperties.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("setSessionDefaultType(" + type + ")");
       }
 
       if (defaultType.equals(ActiveMQRAMCFProperties.QUEUE_TYPE)) {
          type = ActiveMQRAConnectionFactory.QUEUE_CONNECTION;
-      }
-      else if (defaultType.equals(ActiveMQRAMCFProperties.TOPIC_TYPE)) {
+      } else if (defaultType.equals(ActiveMQRAMCFProperties.TOPIC_TYPE)) {
          type = ActiveMQRAConnectionFactory.TOPIC_CONNECTION;
-      }
-      else {
+      } else {
          type = ActiveMQRAConnectionFactory.CONNECTION;
       }
    }
@@ -136,17 +130,15 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * @return The default session type
     */
    public String getSessionDefaultType() {
-      if (ActiveMQRAMCFProperties.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("getSessionDefaultType()");
       }
 
       if (type == ActiveMQRAConnectionFactory.CONNECTION) {
          return "BOTH";
-      }
-      else if (type == ActiveMQRAConnectionFactory.QUEUE_CONNECTION) {
+      } else if (type == ActiveMQRAConnectionFactory.QUEUE_CONNECTION) {
          return ActiveMQRAMCFProperties.TOPIC_TYPE;
-      }
-      else {
+      } else {
          return ActiveMQRAMCFProperties.QUEUE_TYPE;
       }
    }
@@ -157,7 +149,7 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * @return the useTryLock.
     */
    public Integer getUseTryLock() {
-      if (ActiveMQRAMCFProperties.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("getUseTryLock()");
       }
 
@@ -170,10 +162,18 @@ public class ActiveMQRAMCFProperties extends ConnectionFactoryProperties impleme
     * @param useTryLock the useTryLock.
     */
    public void setUseTryLock(final Integer useTryLock) {
-      if (ActiveMQRAMCFProperties.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("setUseTryLock(" + useTryLock + ")");
       }
 
       this.useTryLock = useTryLock;
+   }
+
+   public boolean isAllowLocalTransactions() {
+      return allowLocalTransactions;
+   }
+
+   public void setAllowLocalTransactions(boolean allowLocalTransactions) {
+      this.allowLocalTransactions = allowLocalTransactions;
    }
 }

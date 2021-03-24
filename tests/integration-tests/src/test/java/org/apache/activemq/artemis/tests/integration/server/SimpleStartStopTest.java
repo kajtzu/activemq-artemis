@@ -47,7 +47,7 @@ public class SimpleStartStopTest extends ActiveMQTestBase {
          for (int i = 0; i < 50; i++) {
             server = createServer(true, false);
             server.start();
-            server.stop(false);
+            server.fail(false);
          }
 
          // There shouldn't be any error from starting / stopping the server
@@ -64,8 +64,6 @@ public class SimpleStartStopTest extends ActiveMQTestBase {
          assertTrue("The server should cleanup after IDs on the bindings record. It left " + recordCount +
                        " ids on the journal", recordCount.intValue() < 5);
 
-         System.out.println("RecordCount::" + recordCount);
-
          server.start();
 
          records = this.internalCountJournalLivingRecords(server.getConfiguration(), false);
@@ -74,14 +72,11 @@ public class SimpleStartStopTest extends ActiveMQTestBase {
 
          assertNotNull(recordCount);
 
-         System.out.println("Record count with server started: " + recordCount);
-
          assertTrue("If this is zero it means we are removing too many records", recordCount.intValue() != 0);
 
          server.stop();
 
-      }
-      finally {
+      } finally {
          AssertionLoggerHandler.stopCapture();
       }
    }

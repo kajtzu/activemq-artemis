@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.tests.integration.client;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
 import org.apache.activemq.artemis.api.core.ActiveMQObjectClosedException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
@@ -27,6 +28,7 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionInternal;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
@@ -43,7 +45,7 @@ public class SessionClosedOnRemotingConnectionFailureTest extends ActiveMQTestBa
    public void testSessionClosedOnRemotingConnectionFailure() throws Exception {
       ClientSession session = addClientSession(sf.createSession());
 
-      session.createQueue("fooaddress", "fooqueue");
+      session.createQueue(new QueueConfiguration("fooqueue").setAddress("fooaddress").setRoutingType(RoutingType.ANYCAST));
 
       ClientProducer prod = session.createProducer("fooaddress");
 
@@ -73,11 +75,9 @@ public class SessionClosedOnRemotingConnectionFailureTest extends ActiveMQTestBa
          prod.send(session.createMessage(false));
 
          Assert.fail("Should throw exception");
-      }
-      catch (ActiveMQObjectClosedException oce) {
+      } catch (ActiveMQObjectClosedException oce) {
          //ok
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          fail("Invalid Exception type:" + e.getType());
       }
 
@@ -85,11 +85,9 @@ public class SessionClosedOnRemotingConnectionFailureTest extends ActiveMQTestBa
          cons.receive();
 
          Assert.fail("Should throw exception");
-      }
-      catch (ActiveMQObjectClosedException oce) {
+      } catch (ActiveMQObjectClosedException oce) {
          //ok
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          fail("Invalid Exception type:" + e.getType());
       }
 

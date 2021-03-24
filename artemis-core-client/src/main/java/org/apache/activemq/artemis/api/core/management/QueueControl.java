@@ -24,7 +24,26 @@ import java.util.Map;
  * A QueueControl is used to manage a queue.
  */
 public interface QueueControl {
-   // Attributes ----------------------------------------------------
+   String MESSAGE_COUNT_DESCRIPTION = "number of messages currently in this queue (includes scheduled, paged, and in-delivery messages)";
+   String DURABLE_MESSAGE_COUNT_DESCRIPTION = "number of durable messages currently in this queue (includes scheduled, paged, and in-delivery messages)";
+   String PERSISTENT_SIZE_DESCRIPTION = "persistent size of all messages (including durable and non-durable) currently in this queue (includes scheduled, paged, and in-delivery messages)";
+   String DURABLE_PERSISTENT_SIZE_DESCRIPTION = "persistent size of durable messages currently in this queue (includes scheduled, paged, and in-delivery messages)";
+
+   String SCHEDULED_MESSAGE_COUNT_DESCRIPTION = "number of scheduled messages in this queue";
+   String DURABLE_SCHEDULED_MESSAGE_COUNT_DESCRIPTION = "number of durable scheduled messages in this queue";
+   String SCHEDULED_SIZE_DESCRIPTION = "persistent size of scheduled messages in this queue";
+   String DURABLE_SCHEDULED_SIZE_DESCRIPTION = "persistent size of durable scheduled messages in this queue";
+
+   String DELIVERING_MESSAGE_COUNT_DESCRIPTION = "number of messages that this queue is currently delivering to its consumers";
+   String DURABLE_DELIVERING_MESSAGE_COUNT_DESCRIPTION = "number of durable messages that this queue is currently delivering to its consumers";
+   String DELIVERING_SIZE_DESCRIPTION = "persistent size of messages that this queue is currently delivering to its consumers";
+   String DURABLE_DELIVERING_SIZE_DESCRIPTION = "persistent size of durable messages that this queue is currently delivering to its consumers";
+
+   String CONSUMER_COUNT_DESCRIPTION = "number of consumers consuming messages from this queue";
+   String MESSAGES_ADDED_DESCRIPTION = "number of messages added to this queue since it was created";
+   String MESSAGES_ACKNOWLEDGED_DESCRIPTION = "number of messages acknowledged from this queue since it was created";
+   String MESSAGES_EXPIRED_DESCRIPTION = "number of messages expired from this queue since it was created";
+   String MESSAGES_KILLED_DESCRIPTION = "number of messages removed from this queue since it was created due to exceeding the max delivery attempts";
 
    /**
     * Returns the name of this queue.
@@ -51,10 +70,28 @@ public interface QueueControl {
    boolean isTemporary();
 
    /**
+    * Returns whether this queue is used for a retroactive address.
+    */
+   @Attribute(desc = "whether this queue is used for a retroactive address")
+   boolean isRetroactiveResource();
+
+   /**
     * Returns whether this queue is durable.
     */
    @Attribute(desc = "whether this queue is durable")
    boolean isDurable();
+
+   /**
+    * Returns the user that is associated with creating the queue.
+    */
+   @Attribute(desc = "the user that created the queue")
+   String getUser();
+
+   /**
+    * The routing type of this queue.
+    */
+   @Attribute(desc = "routing type of this queue")
+   String getRoutingType();
 
    /**
     * Returns the filter associated with this queue.
@@ -65,49 +102,114 @@ public interface QueueControl {
    /**
     * Returns the number of messages currently in this queue.
     */
-   @Attribute(desc = "number of messages currently in this queue (includes scheduled, paged, and in-delivery messages)")
+   @Attribute(desc = MESSAGE_COUNT_DESCRIPTION)
    long getMessageCount();
+
+   /**
+    * Returns the persistent size of all messages currently in this queue. The persistent size of a message
+    * is the amount of space the message would take up on disk which is used to track how much data there
+    * is to consume on this queue
+    */
+   @Attribute(desc = PERSISTENT_SIZE_DESCRIPTION)
+   long getPersistentSize();
+
+   /**
+    * Returns the number of durable messages currently in this queue.
+    */
+   @Attribute(desc = DURABLE_MESSAGE_COUNT_DESCRIPTION)
+   long getDurableMessageCount();
+
+   /**
+    * Returns the persistent size of durable messages currently in this queue. The persistent size of a message
+    * is the amount of space the message would take up on disk which is used to track how much data there
+    * is to consume on this queue
+    */
+   @Attribute(desc = DURABLE_PERSISTENT_SIZE_DESCRIPTION)
+   long getDurablePersistentSize();
 
    /**
     * Returns the number of scheduled messages in this queue.
     */
-   @Attribute(desc = "number of scheduled messages in this queue")
+   @Attribute(desc = SCHEDULED_MESSAGE_COUNT_DESCRIPTION)
    long getScheduledCount();
+
+   /**
+    * Returns the size of scheduled messages in this queue.
+    */
+   @Attribute(desc = SCHEDULED_SIZE_DESCRIPTION)
+   long getScheduledSize();
+
+   /**
+    * Returns the number of durable scheduled messages in this queue.
+    */
+   @Attribute(desc = DURABLE_SCHEDULED_MESSAGE_COUNT_DESCRIPTION)
+   long getDurableScheduledCount();
+
+   /**
+    * Returns the size of durable scheduled messages in this queue.
+    */
+   @Attribute(desc = DURABLE_SCHEDULED_SIZE_DESCRIPTION)
+   long getDurableScheduledSize();
 
    /**
     * Returns the number of consumers consuming messages from this queue.
     */
-   @Attribute(desc = "number of consumers consuming messages from this queue")
+   @Attribute(desc = CONSUMER_COUNT_DESCRIPTION)
    int getConsumerCount();
 
    /**
     * Returns the number of messages that this queue is currently delivering to its consumers.
     */
-   @Attribute(desc = "number of messages that this queue is currently delivering to its consumers")
+   @Attribute(desc = DELIVERING_MESSAGE_COUNT_DESCRIPTION)
    int getDeliveringCount();
+
+   /**
+    * Returns the persistent size of messages that this queue is currently delivering to its consumers.
+    */
+   @Attribute(desc = DELIVERING_SIZE_DESCRIPTION)
+   long getDeliveringSize();
+
+   /**
+    * Returns the number of durable messages that this queue is currently delivering to its consumers.
+    */
+   @Attribute(desc = DURABLE_DELIVERING_MESSAGE_COUNT_DESCRIPTION)
+   int getDurableDeliveringCount();
+
+   /**
+    * Returns the size of durable messages that this queue is currently delivering to its consumers.
+    */
+   @Attribute(desc = DURABLE_DELIVERING_SIZE_DESCRIPTION)
+   long getDurableDeliveringSize();
 
    /**
     * Returns the number of messages added to this queue since it was created.
     */
-   @Attribute(desc = "number of messages added to this queue since it was created")
+   @Attribute(desc = MESSAGES_ADDED_DESCRIPTION)
    long getMessagesAdded();
 
    /**
     * Returns the number of messages added to this queue since it was created.
     */
-   @Attribute(desc = "number of messages acknowledged from this queue since it was created")
+   @Attribute(desc = MESSAGES_ACKNOWLEDGED_DESCRIPTION)
    long getMessagesAcknowledged();
+
+   /**
+    * Returns the number of messages added to this queue since it was created.
+    */
+   @Attribute(desc = "number of messages acknowledged attempts from this queue since it was created")
+   long getAcknowledgeAttempts();
+
 
    /**
     * Returns the number of messages expired from this queue since it was created.
     */
-   @Attribute(desc = "number of messages expired from this queue since it was created")
+   @Attribute(desc = MESSAGES_EXPIRED_DESCRIPTION)
    long getMessagesExpired();
 
    /**
     * Returns the number of messages removed from this queue since it was created due to exceeding the max delivery attempts.
     */
-   @Attribute(desc = "number of messages removed from this queue since it was created due to exceeding the max delivery attempts")
+   @Attribute(desc = MESSAGES_KILLED_DESCRIPTION)
    long getMessagesKilled();
 
    /**
@@ -139,6 +241,74 @@ public interface QueueControl {
     */
    @Attribute(desc = "dead-letter address associated with this queue")
    String getDeadLetterAddress();
+
+   /**
+    *
+    */
+   @Attribute(desc = "maximum number of consumers allowed on this queue at any one time")
+   int getMaxConsumers();
+
+   /**
+    *
+    */
+   @Attribute(desc = "purge this queue when the last consumer disconnects")
+   boolean isPurgeOnNoConsumers();
+
+   /**
+    *
+    */
+   @Attribute(desc = "if the queue is enabled, default it is enabled, when disabled messages will not be routed to the queue")
+   boolean isEnabled();
+
+   /**
+    * Enables the queue. Messages are now routed to this queue.
+    */
+   @Operation(desc = "Enables routing of messages to the Queue", impact = MBeanOperationInfo.ACTION)
+   void enable() throws Exception;
+
+   /**
+    * Enables the queue. Messages are not routed to this queue.
+    */
+   @Operation(desc = "Disables routing of messages to the Queue", impact = MBeanOperationInfo.ACTION)
+   void disable() throws Exception;
+
+   /**
+    *
+    */
+   @Attribute(desc = "is this queue managed by configuration (broker.xml)")
+   boolean isConfigurationManaged();
+
+   /**
+    *
+    */
+   @Attribute(desc = "If the queue should route exclusively to one consumer")
+   boolean isExclusive();
+
+   /**
+    *
+    */
+   @Attribute(desc = "is this queue a last value queue")
+   boolean isLastValue();
+
+   /**
+    *The key used for the last value queues
+    */
+   @Attribute(desc = "last value key")
+   String getLastValueKey();
+
+   /**
+    *Return the Consumers Before Dispatch
+    * @return
+    */
+   @Attribute(desc = "Return the Consumers Before Dispatch")
+   int getConsumersBeforeDispatch();
+
+   /**
+    *Return the Consumers Before Dispatch
+    * @return
+    */
+   @Attribute(desc = "Return the Consumers Before Dispatch")
+   long getDelayBeforeDispatch();
 
    // Operations ----------------------------------------------------
 
@@ -199,6 +369,35 @@ public interface QueueControl {
    @Operation(desc = "Returns the number of the messages in the queue matching the given filter", impact = MBeanOperationInfo.INFO)
    long countMessages(@Parameter(name = "filter", desc = "A message filter (can be empty)") String filter) throws Exception;
 
+   @Operation(desc = "Returns the number of the messages in the queue", impact = MBeanOperationInfo.INFO)
+   long countMessages() throws Exception;
+
+   /**
+    * Counts the number of messages in this queue matching the specified filter, grouped by the given property field.
+    * In case of null property will be grouped in "null"
+    * <br>
+    * Using {@code null} or an empty filter will count <em>all</em> messages from this queue.
+    */
+   @Operation(desc = "Returns the number of the messages in the queue matching the given filter, grouped by the given property field", impact = MBeanOperationInfo.INFO)
+   String countMessages(@Parameter(name = "filter", desc = "This filter separate account messages") String filter, @Parameter(name = "groupByProperty", desc = "This property to group by") String groupByProperty) throws Exception;
+
+   /**
+    * Counts the number of delivering messages in this queue matching the specified filter.
+    * <br>
+    * Using {@code null} or an empty filter will count <em>all</em> messages from this queue.
+    */
+   @Operation(desc = "Returns the number of the messages in the queue matching the given filter")
+   long countDeliveringMessages(@Parameter(name = "filter", desc = "A message filter (can be empty)") String filter) throws Exception;
+
+   /**
+    * Counts the number of delivering messages in this queue matching the specified filter, grouped by the given property field.
+    * In case of null property will be grouped in "null"
+    * <br>
+    * Using {@code null} or an empty filter will count <em>all</em> messages from this queue.
+    */
+   @Operation(desc = "Returns the number of the messages in the queue matching the given filter, grouped by the given property field")
+   String countDeliveringMessages(@Parameter(name = "filter", desc = "This filter separate account messages") String filter, @Parameter(name = "groupByProperty", desc = "This property to group by") String groupByProperty) throws Exception;
+
    /**
     * Removes the message corresponding to the specified message ID.
     *
@@ -229,6 +428,14 @@ public interface QueueControl {
                       @Parameter(name = "filter", desc = "A message filter (can be empty)") String filter) throws Exception;
 
    /**
+    * Removes all the message from the queue.
+    *
+    * @return the number of removed messages
+    */
+   @Operation(desc = "Remove all the messages from the Queue (and returns the number of removed messages)", impact = MBeanOperationInfo.ACTION)
+   int removeAllMessages() throws Exception;
+
+   /**
     * Expires all the message corresponding to the specified filter.
     * <br>
     * Using {@code null} or an empty filter will expire <em>all</em> messages from this queue.
@@ -245,7 +452,6 @@ public interface QueueControl {
     */
    @Operation(desc = "Remove the message corresponding to the given messageID", impact = MBeanOperationInfo.ACTION)
    boolean expireMessage(@Parameter(name = "messageID", desc = "A message ID") long messageID) throws Exception;
-
 
    /**
     * Retries the message corresponding to the given messageID to the original queue.
@@ -336,25 +542,21 @@ public interface QueueControl {
    int sendMessagesToDeadLetterAddress(@Parameter(name = "filter", desc = "A message filter (can be empty)") String filterStr) throws Exception;
 
    /**
-    *
-    * @param headers the message headers and properties to set. Can only
-    *                container Strings maped to primitive types.
-    * @param body the text to send
-    * @param userID
+    * @param headers  the message headers and properties to set. Can only
+    *                 container Strings maped to primitive types.
+    * @param body     the text to send
     * @param durable
-    *@param user
-    * @param password   @return
+    * @param user
+    * @param password @return
     * @throws Exception
     */
    @Operation(desc = "Sends a TextMessage to a password-protected destination.", impact = MBeanOperationInfo.ACTION)
    String sendMessage(@Parameter(name = "headers", desc = "The headers to add to the message") Map<String, String> headers,
-                      @Parameter(name = "headers", desc = "A type for the message") final int type,
+                      @Parameter(name = "type", desc = "A type for the message") int type,
                       @Parameter(name = "body", desc = "The body (byte[]) of the message encoded as a string using Base64") String body,
-                      @Parameter(name = "body", desc = "The user ID to set on the message") String userID,
                       @Parameter(name = "durable", desc = "Whether the message is durable") boolean durable,
                       @Parameter(name = "user", desc = "The user to authenticate with") String user,
                       @Parameter(name = "password", desc = "The users password to authenticate with") String password) throws Exception;
-
 
    /**
     * Changes the message's priority corresponding to the specified message ID to the specified priority.
@@ -414,10 +616,17 @@ public interface QueueControl {
    void pause() throws Exception;
 
    /**
+    * Pauses the queue. Messages are no longer delivered to its consumers.
+    */
+   @Operation(desc = "Pauses the Queue", impact = MBeanOperationInfo.ACTION)
+   void pause(@Parameter(name = "persist", desc = "if true, the pause state will be persisted.") boolean persist) throws Exception;
+
+   /**
     * Resumes the queue. Messages are again delivered to its consumers.
     */
-   @Operation(desc = "Resumes delivery of queued messages and gets the queue out of paused state.", impact = MBeanOperationInfo.ACTION)
+   @Operation(desc = "Resumes delivery of queued messages and gets the queue out of paused state. It will also affected the state of a persisted pause.", impact = MBeanOperationInfo.ACTION)
    void resume() throws Exception;
+
 
    @Operation(desc = "List all the existent consumers on the Queue")
    String listConsumersAsJSON() throws Exception;
@@ -428,11 +637,20 @@ public interface QueueControl {
    @Attribute(desc = "whether the queue is paused")
    boolean isPaused() throws Exception;
 
-   /**
-    * Resets the MessagesAdded property
-    */
    @Operation(desc = "Browse Messages", impact = MBeanOperationInfo.ACTION)
-   CompositeData[] browse(String filter) throws Exception;
+   CompositeData[] browse() throws Exception;
+
+   @Operation(desc = "Browse Messages", impact = MBeanOperationInfo.ACTION)
+   CompositeData[] browse(@Parameter(name = "filter", desc = "A message filter (can be empty)") String filter) throws Exception;
+
+   @Operation(desc = "Browse Messages", impact = MBeanOperationInfo.ACTION)
+   CompositeData[] browse(@Parameter(name = "page", desc = "Current page") int page,
+                          @Parameter(name = "pageSize", desc = "Page size") int pageSize) throws Exception;
+
+   @Operation(desc = "Browse Messages", impact = MBeanOperationInfo.ACTION)
+   CompositeData[] browse(@Parameter(name = "page", desc = "Current page") int page,
+                          @Parameter(name = "pageSize", desc = "Page size") int pageSize,
+                          @Parameter(name = "filter", desc = "filter") String filter) throws Exception;
 
    /**
     * Resets the MessagesAdded property
@@ -463,6 +681,66 @@ public interface QueueControl {
     * any other measure.
     * It is useful if you need the exact number of counts on a message
     */
+   @Operation(desc = "Flush internal executors", impact = MBeanOperationInfo.ACTION)
    void flushExecutor();
 
+   /**
+    * Will reset the all the groups.
+    * This is useful if you want a complete rebalance of the groups to consumers
+    */
+   @Operation(desc = "Resets all groups", impact = MBeanOperationInfo.ACTION)
+   void resetAllGroups();
+
+   /**
+    * Will reset the group matching the given groupID.
+    * This is useful if you want the given group to be rebalanced to the consumers
+    */
+   @Operation(desc = "Reset the specified group", impact = MBeanOperationInfo.ACTION)
+   void resetGroup(@Parameter(name = "groupID", desc = "ID of group to reset") String groupID);
+
+   /**
+    * Will return the current number of active groups.
+    */
+   @Attribute(desc = "Get the current number of active groups")
+   int getGroupCount();
+
+
+   @Operation(desc = "List all the existent group to consumers mappings on the Queue")
+   String listGroupsAsJSON() throws Exception;
+
+   /**
+    * Will return the ring size.
+    */
+   @Attribute(desc = "Get the ring size")
+   long getRingSize();
+
+   /**
+    * Returns whether the groups of this queue are automatically rebalanced.
+    */
+   @Attribute(desc = "whether the groups of this queue are automatically rebalanced")
+   boolean isGroupRebalance();
+
+   /**
+    * Returns whether the dispatch is paused when groups of this queue are automatically rebalanced.
+    */
+   @Attribute(desc = "whether the dispatch is paused when groups of this queue are automatically rebalanced")
+   boolean isGroupRebalancePauseDispatch();
+
+   /**
+    * Will return the group buckets.
+    */
+   @Attribute(desc = "Get the group buckets")
+   int getGroupBuckets();
+
+   /**
+    * Will return the header key to notify a consumer of a group change.
+    */
+   @Attribute(desc = "Get the header key to notify a consumer of a group change")
+   String getGroupFirstKey();
+
+   /**
+    * Will return the number of messages stuck in prepared transactions
+    */
+   @Attribute(desc = "return how many messages are stuck in prepared transactions")
+   int getPreparedTransactionMessageCount();
 }

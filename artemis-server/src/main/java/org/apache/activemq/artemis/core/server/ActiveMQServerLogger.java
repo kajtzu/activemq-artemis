@@ -16,21 +16,7 @@
  */
 package org.apache.activemq.artemis.core.server;
 
-/**
- * Logger Code 22
- *
- * each message id must be 6 digits long starting with 10, the 3rd digit donates the level so
- *
- * INF0  1
- * WARN  2
- * DEBUG 3
- * ERROR 4
- * TRACE 5
- * FATAL 6
- *
- * so an INFO message would be 101000 to 101999
- */
-
+import javax.naming.NamingException;
 import javax.transaction.xa.Xid;
 import java.io.File;
 import java.net.SocketAddress;
@@ -40,6 +26,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 
 import io.netty.channel.Channel;
+
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
@@ -47,7 +34,6 @@ import org.apache.activemq.artemis.core.client.impl.ServerLocatorInternal;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.io.IOCallback;
 import org.apache.activemq.artemis.core.io.SequentialFile;
-import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.paging.cursor.PagePosition;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
@@ -57,10 +43,10 @@ import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.cluster.Bridge;
 import org.apache.activemq.artemis.core.server.cluster.impl.BridgeImpl;
 import org.apache.activemq.artemis.core.server.cluster.impl.ClusterConnectionImpl;
+import org.apache.activemq.artemis.core.server.cluster.qourum.ServerConnectVote;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.core.server.impl.ServerSessionImpl;
 import org.apache.activemq.artemis.core.server.management.Notification;
-import org.apache.activemq.artemis.utils.FutureLatch;
 import org.jboss.logging.BasicLogger;
 import org.jboss.logging.Logger;
 import org.jboss.logging.annotations.Cause;
@@ -68,6 +54,21 @@ import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageLogger;
 import org.w3c.dom.Node;
+
+/**
+ * Logger Code 22
+ *
+ * each message id must be 6 digits long starting with 22, the 3rd digit donates the level so
+ *
+ * INF0  1
+ * WARN  2
+ * DEBUG 3
+ * ERROR 4
+ * TRACE 5
+ * FATAL 6
+ *
+ * so an INFO message would be 221000 to 221999
+ */
 
 @MessageLogger(projectCode = "AMQ")
 public interface ActiveMQServerLogger extends BasicLogger {
@@ -80,6 +81,10 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.DEBUG)
    @Message(id = 223000, value = "Received Interrupt Exception whilst waiting for component to shutdown: {0}", format = Message.Format.MESSAGE_FORMAT)
    void interruptWhilstStoppingComponent(String componentClassName);
+
+   @LogMessage(level = Logger.Level.DEBUG)
+   @Message(id = 223001, value = "Ignored quorum vote due to quorum reached or vote casted: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void ignoredQuorumVote(ServerConnectVote vote);
 
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 221000, value = "{0} Message Broker is starting with configuration {1}", format = Message.Format.MESSAGE_FORMAT)
@@ -94,8 +99,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void serverStopped(String version, SimpleString nodeId, String uptime);
 
    @LogMessage(level = Logger.Level.INFO)
-   @Message(id = 221003, value = "Deploying queue {0}", format = Message.Format.MESSAGE_FORMAT)
-   void deployQueue(SimpleString queueName);
+   @Message(id = 221003, value = "Deploying {2} queue {0} on address {1}", format = Message.Format.MESSAGE_FORMAT)
+   void deployQueue(String queueName, String addressName, String routingType);
 
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 221004, value = "{0}", format = Message.Format.MESSAGE_FORMAT)
@@ -169,8 +174,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void journalUnreferencedMessage(Long messageID);
 
    @LogMessage(level = Logger.Level.INFO)
-   @Message(id = 221020, value = "Started Acceptor at {0}:{1,number,#} for protocols [{2}]", format = Message.Format.MESSAGE_FORMAT)
-   void startedAcceptor(String host, Integer port, String enabledProtocols);
+   @Message(id = 221020, value = "Started {0} Acceptor at {1}:{2,number,#} for protocols [{3}]", format = Message.Format.MESSAGE_FORMAT)
+   void startedAcceptor(String acceptorType, String host, Integer port, String enabledProtocols);
 
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 221021, value = "failed to remove connection", format = Message.Format.MESSAGE_FORMAT)
@@ -189,13 +194,13 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void backupServerSynched(ActiveMQServerImpl server);
 
    @LogMessage(level = Logger.Level.INFO)
-   @Message(id = 221025, value = "Replication: sending {0} (size={1}) to backup. {2}", format = Message.Format.MESSAGE_FORMAT)
-   void journalSynch(JournalFile jf, Long size, SequentialFile file);
+   @Message(id = 221025, value = "Replication: sending {0} (size={1}) to replica.", format = Message.Format.MESSAGE_FORMAT)
+   void replicaSyncFile(SequentialFile jf, Long size);
 
    @LogMessage(level = Logger.Level.INFO)
    @Message(
       id = 221026,
-      value = "Bridge {0} connected to fowardingAddress={1}. {2} does not have any bindings. Messages will be ignored until a binding is created.",
+      value = "Bridge {0} connected to forwardingAddress={1}. {2} does not have any bindings. Messages will be ignored until a binding is created.",
       format = Message.Format.MESSAGE_FORMAT)
    void bridgeNoBindings(SimpleString name, SimpleString forwardingAddress, SimpleString address);
 
@@ -329,9 +334,122 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void removingBackupData(String path);
 
    @LogMessage(level = Logger.Level.INFO)
-   @Message(id = 221056, value = "Reloading configuration ...{0}",
+   @Message(id = 221056, value = "Reloading configuration: {0}",
       format = Message.Format.MESSAGE_FORMAT)
    void reloadingConfiguration(String module);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221057, value = "Global Max Size is being adjusted to 1/2 of the JVM max size (-Xmx). being defined as {0}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void usingDefaultPaging(long bytes);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221058, value = "resetting Journal File size from {0} to {1} to fit with alignment of {2}", format = Message.Format.MESSAGE_FORMAT)
+   void invalidJournalFileSize(int journalFileSize, int fileSize, int alignment);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221059, value = "Deleting old data directory {0} as the max folders is set to 0", format = Message.Format.MESSAGE_FORMAT)
+   void backupDeletingData(String oldPath);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221060, value = "Sending quorum vote request to {0}: {1}", format = Message.Format.MESSAGE_FORMAT)
+   void sendingQuorumVoteRequest(String remoteAddress, String vote);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221061, value = "Received quorum vote response from {0}: {1}", format = Message.Format.MESSAGE_FORMAT)
+   void receivedQuorumVoteResponse(String remoteAddress, String vote);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221062, value = "Received quorum vote request: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void receivedQuorumVoteRequest(String vote);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221063, value = "Sending quorum vote response: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void sendingQuorumVoteResponse(String vote);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221064, value = "Node {0} found in cluster topology", format = Message.Format.MESSAGE_FORMAT)
+   void nodeFoundInClusterTopology(String nodeId);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221065, value = "Node {0} not found in cluster topology", format = Message.Format.MESSAGE_FORMAT)
+   void nodeNotFoundInClusterTopology(String nodeId);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221066, value = "Initiating quorum vote: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void initiatingQuorumVote(SimpleString vote);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221067, value = "Waiting {0} {1} for quorum vote results.", format = Message.Format.MESSAGE_FORMAT)
+   void waitingForQuorumVoteResults(int timeout, String unit);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221068, value = "Received all quorum votes.", format = Message.Format.MESSAGE_FORMAT)
+   void receivedAllQuorumVotes();
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221069, value = "Timeout waiting for quorum vote responses.", format = Message.Format.MESSAGE_FORMAT)
+   void timeoutWaitingForQuorumVoteResponses();
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221070, value = "Restarting as backup based on quorum vote results.", format = Message.Format.MESSAGE_FORMAT)
+   void restartingAsBackupBasedOnQuorumVoteResults();
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221071, value = "Failing over based on quorum vote results.", format = Message.Format.MESSAGE_FORMAT)
+   void failingOverBasedOnQuorumVoteResults();
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221072, value = "Can't find roles for the subject.", format = Message.Format.MESSAGE_FORMAT)
+   void failedToFindRolesForTheSubject(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221073, value = "Can't add role principal.", format = Message.Format.MESSAGE_FORMAT)
+   void failedAddRolePrincipal(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221074, value = "Debug started : size = {0} bytes, messages = {1}", format = Message.Format.MESSAGE_FORMAT)
+   void debugStarted(Long globalSizeBytes, Long numberOfMessages);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221075, value = "Usage of wildcardRoutingEnabled configuration property is deprecated, please use wildCardConfiguration.enabled instead", format = Message.Format.MESSAGE_FORMAT)
+   void deprecatedWildcardRoutingEnabled();
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221076, value = "{0}", format = Message.Format.MESSAGE_FORMAT)
+   void onDestroyConnectionWithSessionMetadata(String msg);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221077, value = "There is no queue with ID {0}, deleting record {1}", format = Message.Format.MESSAGE_FORMAT)
+   void infoNoQueueWithID(Long id, Long record);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221078, value = "Scaled down {0} messages total.", format = Message.Format.MESSAGE_FORMAT)
+   void infoScaledDownMessages(Long num);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221079, value = "Ignoring prepare on xid as already called : {0}", format = Message.Format.MESSAGE_FORMAT)
+   void ignoringPrepareOnXidAlreadyCalled(String xid);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221080, value = "Deploying address {0} supporting {1}", format = Message.Format.MESSAGE_FORMAT)
+   void deployAddress(String addressName, String routingTypes);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221081, value = "There is no address with ID {0}, deleting record {1}", format = Message.Format.MESSAGE_FORMAT)
+   void infoNoAddressWithID(Long id, Long record);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221082, value = "Initializing metrics plugin {0} with properties: {1}", format = Message.Format.MESSAGE_FORMAT)
+   void initializingMetricsPlugin(String clazz, String properties);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221083, value = "ignoring quorum vote as max cluster size is {0}.", format = Message.Format.MESSAGE_FORMAT)
+   void ignoringQuorumVote(int maxClusterSize);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 221084, value = "Requested {0} quorum votes", format = Message.Format.MESSAGE_FORMAT)
+   void requestedQuorumVotes(int vote);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222000, value = "ActiveMQServer is being finalized and has not been stopped. Please remember to stop the server before letting it go out of scope",
@@ -347,10 +465,6 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void timedOutStoppingThreadpool(ExecutorService service);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222003, value = "Must specify a name for each divert. This one will not be deployed.", format = Message.Format.MESSAGE_FORMAT)
-   void divertWithNoName();
-
-   @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222004, value = "Must specify an address for each divert. This one will not be deployed.", format = Message.Format.MESSAGE_FORMAT)
    void divertWithNoAddress();
 
@@ -360,7 +474,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222006, value = "Binding already exists with name {0}, divert will not be deployed", format = Message.Format.MESSAGE_FORMAT)
-   void divertBindingNotExists(SimpleString bindingName);
+   void divertBindingAlreadyExists(SimpleString bindingName);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222007, value = "Security risk! Apache ActiveMQ Artemis is running with the default cluster admin user and default password. Please see the cluster chapter in the ActiveMQ Artemis User Guide for instructions on how to change this.", format = Message.Format.MESSAGE_FORMAT)
@@ -368,9 +482,6 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222008, value = "unable to restart server, please kill and restart manually", format = Message.Format.MESSAGE_FORMAT)
-   void serverRestartWarning();
-
-   @LogMessage(level = Logger.Level.WARN)
    void serverRestartWarning(@Cause Exception e);
 
    @LogMessage(level = Logger.Level.WARN)
@@ -425,8 +536,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void problemUndeployingNode(@Cause Exception e, Node node);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222022, value = "Timed out waiting for paging cursor to stop {0} {1}", format = Message.Format.MESSAGE_FORMAT)
-   void timedOutStoppingPagingCursor(FutureLatch future, Executor executor);
+   @Message(id = 222022, value = "Timed out waiting for paging cursor to stop {0}", format = Message.Format.MESSAGE_FORMAT)
+   void timedOutStoppingPagingCursor(Executor executor);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222023, value = "problem cleaning page address {0}", format = Message.Format.MESSAGE_FORMAT)
@@ -494,12 +605,12 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void pageStoreStartIOError(@Cause Exception e);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222038, value = "Starting paging on address ''{0}''; size is currently: {1} bytes; max-size-bytes: {2}", format = Message.Format.MESSAGE_FORMAT)
-   void pageStoreStart(SimpleString storeName, long addressSize, long maxSize);
+   @Message(id = 222038, value = "Starting paging on address ''{0}''; size is currently: {1} bytes; max-size-bytes: {2}; global-size-bytes: {3}", format = Message.Format.MESSAGE_FORMAT)
+   void pageStoreStart(SimpleString storeName, long addressSize, long maxSize, long globalMaxSize);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222039, value = "Messages sent to address ''{0}'' are being dropped; size is currently: {1} bytes; max-size-bytes: {2}", format = Message.Format.MESSAGE_FORMAT)
-   void pageStoreDropMessages(SimpleString storeName, long addressSize, long maxSize);
+   @Message(id = 222039, value = "Messages sent to address ''{0}'' are being dropped; size is currently: {1} bytes; max-size-bytes: {2}; global-size-bytes: {3}", format = Message.Format.MESSAGE_FORMAT)
+   void pageStoreDropMessages(SimpleString storeName, long addressSize, long maxSize, long globalMaxSize);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222040, value = "Server is stopped", format = Message.Format.MESSAGE_FORMAT)
@@ -581,12 +692,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void ioErrorAddingReferences(Integer errorCode, String errorMessage);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222058, value = "Duplicate message detected through the bridge - message will not be routed. Message information:\n{0}", format = Message.Format.MESSAGE_FORMAT)
-   void duplicateMessageDetectedThruBridge(ServerMessage message);
-
-   @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222059, value = "Duplicate message detected - message will not be routed. Message information:\n{0}", format = Message.Format.MESSAGE_FORMAT)
-   void duplicateMessageDetected(ServerMessage message);
+   void duplicateMessageDetected(org.apache.activemq.artemis.api.core.Message message);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222060, value = "Error while confirming large message completion on rollback for recordID={0}", format = Message.Format.MESSAGE_FORMAT)
@@ -625,7 +732,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void stompTXAckNorSupported();
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222071, value = "Interrupted while waiting for stomp heart beate to die", format = Message.Format.MESSAGE_FORMAT)
+   @Message(id = 222071, value = "Interrupted while waiting for stomp heartbeat to die", format = Message.Format.MESSAGE_FORMAT)
    void errorOnStompHeartBeat(@Cause InterruptedException e);
 
    @LogMessage(level = Logger.Level.WARN)
@@ -763,11 +870,6 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void ioErrorOnTX(Integer errorCode, String errorMessage);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222105, value = "Could not finish context execution in 10 seconds",
-      format = Message.Format.MESSAGE_FORMAT)
-   void errorCompletingContext(@Cause Exception e);
-
-   @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222106, value = "Replacing incomplete LargeMessage with ID={0}", format = Message.Format.MESSAGE_FORMAT)
    void replacingIncompleteLargeMessage(Long messageID);
 
@@ -780,17 +882,16 @@ public interface ActiveMQServerLogger extends BasicLogger {
       format = Message.Format.MESSAGE_FORMAT)
    void broadcastGroupClosed(@Cause Exception e);
 
-
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222109, value = "Timed out waiting for write lock on consumer. Check the Thread dump", format = Message.Format.MESSAGE_FORMAT)
-   void timeoutLockingConsumer();
+   @Message(id = 222109, value = "Timed out waiting for write lock on consumer {0} from {1}. Check the Thread dump", format = Message.Format.MESSAGE_FORMAT)
+   void timeoutLockingConsumer(String consumer, String remoteAddress);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222110, value = "no queue IDs defined!,  originalMessage  = {0}, copiedMessage = {1}, props={2}",
       format = Message.Format.MESSAGE_FORMAT)
-   void noQueueIdDefined(ServerMessage message, ServerMessage messageCopy, SimpleString idsHeaderName);
+   void noQueueIdDefined(org.apache.activemq.artemis.api.core.Message message, org.apache.activemq.artemis.api.core.Message messageCopy, SimpleString idsHeaderName);
 
-   @LogMessage(level = Logger.Level.WARN)
+   @LogMessage(level = Logger.Level.TRACE)
    @Message(id = 222111, value = "exception while invoking {0} on {1}",
       format = Message.Format.MESSAGE_FORMAT)
    void managementOperationError(@Cause Exception e, String op, String resourceName);
@@ -947,8 +1048,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void errorExpiringReferencesNoBindings(SimpleString expiryAddress);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222147, value = "Message has expired. No expiry queue configured for queue {0} so dropping it", format = Message.Format.MESSAGE_FORMAT)
-   void errorExpiringReferencesNoQueue(SimpleString name);
+   @Message(id = 222147, value = "Messages are being expired on queue {0}, but there is no Expiry Address configured so messages will be dropped.", format = Message.Format.MESSAGE_FORMAT)
+   void errorExpiringReferencesNoAddress(SimpleString name);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222148, value = "Message {0} has exceeded max delivery attempts. No bindings for Dead Letter Address {1} so dropping it",
@@ -961,14 +1062,14 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void messageExceededMaxDeliverySendtoDLA(MessageReference ref, SimpleString name, SimpleString simpleString);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222150, value = "Message has exceeded max delivery attempts. No Dead Letter Address configured for queue {0} so dropping it",
+   @Message(id = 222150, value = "Message {0} has exceeded max delivery attempts. No Dead Letter Address configured for queue {1} so dropping it",
       format = Message.Format.MESSAGE_FORMAT)
-   void messageExceededMaxDeliveryNoDLA(SimpleString name);
+   void messageExceededMaxDeliveryNoDLA(MessageReference ref, SimpleString name);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222151, value = "removing consumer which did not handle a message, consumer={0}, message={1}",
       format = Message.Format.MESSAGE_FORMAT)
-   void removingBadConsumer(@Cause Throwable e, Consumer consumer, MessageReference reference);
+   void removingBadConsumer(@Cause Throwable e, Consumer consumer, Object reference);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222152, value = "Unable to decrement reference counting on queue",
@@ -1001,8 +1102,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void errorCompletingCallbackOnReplicationManager(@Cause Throwable e);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222158, value = "{0} backup activation thread did not finish.", format = Message.Format.MESSAGE_FORMAT)
-   void backupActivationDidntFinish(ActiveMQServer server);
+   @Message(id = 222158, value = "{0} activation thread did not finish.", format = Message.Format.MESSAGE_FORMAT)
+   void activationDidntFinish(ActiveMQServer server);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222159, value = "unable to send notification when broadcast group is stopped", format = Message.Format.MESSAGE_FORMAT)
@@ -1030,6 +1131,16 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void errorStartingReplication(BackupReplicationStartFailedMessage.BackupRegistrationProblem problem);
 
    @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222165, value = "No Dead Letter Address configured for queue {0} in AddressSettings",
+      format = Message.Format.MESSAGE_FORMAT)
+   void AddressSettingsNoDLA(SimpleString name);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222166, value = "No Expiry Address configured for queue {0} in AddressSettings",
+      format = Message.Format.MESSAGE_FORMAT)
+   void AddressSettingsNoExpiryAddress(SimpleString name);
+
+   @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222167, value = "Group Binding not available so deleting {0} groups from {1}, groups will be bound to another node",
       format = Message.Format.MESSAGE_FORMAT)
    void groupingQueueRemoved(int size, SimpleString clusterName);
@@ -1037,7 +1148,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @SuppressWarnings("deprecation")
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222168, value = "The ''" + TransportConstants.PROTOCOL_PROP_NAME + "'' property is deprecated. If you want this Acceptor to support multiple protocols, use the ''" + TransportConstants.PROTOCOLS_PROP_NAME + "'' property, e.g. with value ''CORE,AMQP,STOMP''",
-            format = Message.Format.MESSAGE_FORMAT)
+      format = Message.Format.MESSAGE_FORMAT)
    void warnDeprecatedProtocol();
 
    @LogMessage(level = Logger.Level.WARN)
@@ -1097,8 +1208,8 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void missingClusterConfigForScaleDown(String scaleDownCluster);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 222183, value = "Blocking message production on address ''{0}''; size is currently: {1} bytes; max-size-bytes: {2}", format = Message.Format.MESSAGE_FORMAT)
-   void blockingMessageProduction(SimpleString addressName, long currentSize, long maxSize);
+   @Message(id = 222183, value = "Blocking message production on address ''{0}''; size is currently: {1} bytes; max-size-bytes on address: {2}, global-max-size is {3}", format = Message.Format.MESSAGE_FORMAT)
+   void blockingMessageProduction(SimpleString addressName, long currentSize, long maxSize, long globalMaxSize);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222184,
@@ -1120,7 +1231,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222187,
-      value = "Failed to activate replicata",
+      value = "Failed to activate replicated backup",
       format = Message.Format.MESSAGE_FORMAT)
    void activateReplicatedBackupFailed(@Cause Throwable e);
 
@@ -1162,7 +1273,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222195,
-      value = "Large message {0} wasn't found when dealing with add pending large message",
+      value = "Large message {0} wasn''t found when dealing with add pending large message",
       format = Message.Format.MESSAGE_FORMAT)
    void largeMessageNotFound(long id);
 
@@ -1198,9 +1309,9 @@ public interface ActiveMQServerLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222201,
-      value = "Timed out waiting for backup activation to exit",
+      value = "Timed out waiting for activation to exit",
       format = Message.Format.MESSAGE_FORMAT)
-   void backupActivationTimeout();
+   void activationTimeout();
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 222202,
@@ -1241,6 +1352,383 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @Message(id = 222209, value = "Could not contact group handler coordinator after 10 retries, message being routed without grouping information",
       format = Message.Format.MESSAGE_FORMAT)
    void impossibleToRouteGrouped();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222210, value = "Free storage space is at {0} of {1} total. Usage rate is {2} which is beyond the configured <max-disk-usage>. System will start blocking producers.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void diskBeyondCapacity(String usableSpace, String totalSpace, String usage);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 222211, value = "Free storage space is at {0} of {1} total. Usage rate is {2} which is below the configured <max-disk-usage>.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void diskCapacityRestored(String usableSpace, String totalSpace, String usage);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222212, value = "Disk Full! Blocking message production on address ''{0}''. Clients will report blocked.", format = Message.Format.MESSAGE_FORMAT)
+   void blockingDiskFull(SimpleString addressName);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222213,
+      value = "There was an issue on the network, server is isolated!",
+      format = Message.Format.MESSAGE_FORMAT)
+   void serverIsolatedOnNetwork();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222214,
+      value = "Destination {1} has an inconsistent and negative address size={0}.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void negativeAddressSize(long size, String destination);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222215,
+      value = "Global Address Size has negative and inconsistent value as {0}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void negativeGlobalAddressSize(long size);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222216, value = "Security problem while authenticating: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void securityProblemWhileAuthenticating(String message);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222217, value = "Cannot find connector-ref {0}. The cluster-connection {1} will not be deployed.", format = Message.Format.MESSAGE_FORMAT)
+   void connectorRefNotFound(String connectorRef, String clusterConnection);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222218, value = "Server disconnecting: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void disconnectCritical(String reason, @Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222219, value = "File {0} does not exist",
+           format = Message.Format.MESSAGE_FORMAT)
+   void fileDoesNotExist(String path);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222220, value = "   Error while cleaning paging on queue {0}", format = Message.Format.MESSAGE_FORMAT)
+   void errorCleaningPagingOnQueue(@Cause Exception e, String queue);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222221, value = "Error while cleaning page, during the commit", format = Message.Format.MESSAGE_FORMAT)
+   void errorCleaningPagingDuringCommit(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222222, value = "Error while deleting page-complete-record", format = Message.Format.MESSAGE_FORMAT)
+   void errorDeletingPageCompleteRecord(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222223, value = "Failed to calculate message memory estimate", format = Message.Format.MESSAGE_FORMAT)
+   void errorCalculateMessageMemoryEstimate(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222224, value = "Failed to calculate scheduled delivery time", format = Message.Format.MESSAGE_FORMAT)
+   void errorCalculateScheduledDeliveryTime(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222225, value = "Sending unexpected exception to the client", format = Message.Format.MESSAGE_FORMAT)
+   void sendingUnexpectedExceptionToClient(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222226, value = "Connection configuration is null for connectorName {0}", format = Message.Format.MESSAGE_FORMAT)
+   void connectionConfigurationIsNull(String connectorName);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222227, value = "Failed to process an event", format = Message.Format.MESSAGE_FORMAT)
+   void failedToProcessEvent(@Cause NamingException e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222228, value = "Missing replication token on queue", format = Message.Format.MESSAGE_FORMAT)
+   void missingReplicationTokenOnQueue();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222229, value = "Failed to perform rollback", format = Message.Format.MESSAGE_FORMAT)
+   void failedToPerformRollback(@Cause IllegalStateException e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222230, value = "Failed to send notification", format = Message.Format.MESSAGE_FORMAT)
+   void failedToSendNotification(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222231, value = "Failed to flush outstanding data from the connection", format = Message.Format.MESSAGE_FORMAT)
+   void failedToFlushOutstandingDataFromTheConnection(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222232, value = "Unable to acquire lock", format = Message.Format.MESSAGE_FORMAT)
+   void unableToAcquireLock(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222233, value = "Unable to destroy connection with session metadata", format = Message.Format.MESSAGE_FORMAT)
+   void unableDestroyConnectionWithSessionMetadata(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222234, value = "Unable to invoke a callback", format = Message.Format.MESSAGE_FORMAT)
+   void unableToInvokeCallback(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222235, value = "Unable to inject a monitor", format = Message.Format.MESSAGE_FORMAT)
+   void unableToInjectMonitor(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222236, value = "Unable to flush deliveries", format = Message.Format.MESSAGE_FORMAT)
+   void unableToFlushDeliveries(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222237, value = "Unable to flush deliveries", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCancelRedistributor(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222238, value = "Unable to commit transaction", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCommitTransaction(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222239, value = "Unable to delete Queue status", format = Message.Format.MESSAGE_FORMAT)
+   void unableToDeleteQueueStatus(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222240, value = "Unable to pause a Queue", format = Message.Format.MESSAGE_FORMAT)
+   void unableToPauseQueue(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222241, value = "Unable to resume a Queue", format = Message.Format.MESSAGE_FORMAT)
+   void unableToResumeQueue(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222242, value = "Unable to obtain message priority, using default ", format = Message.Format.MESSAGE_FORMAT)
+   void unableToGetMessagePriority(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222243, value = "Unable to extract GroupID from message", format = Message.Format.MESSAGE_FORMAT)
+   void unableToExtractGroupID(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222244, value = "Unable to check if message expired", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCheckIfMessageExpired(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222245, value = "Unable to perform post acknowledge", format = Message.Format.MESSAGE_FORMAT)
+   void unableToPerformPostAcknowledge(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222246, value = "Unable to rollback on close", format = Message.Format.MESSAGE_FORMAT)
+   void unableToRollbackOnClose(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222247, value = "Unable to close consumer", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCloseConsumer(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222248, value = "Unable to remove consumer", format = Message.Format.MESSAGE_FORMAT)
+   void unableToRemoveConsumer(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222249, value = "Unable to rollback on TX timed out", format = Message.Format.MESSAGE_FORMAT)
+   void unableToRollbackOnTxTimedOut(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222250, value = "Unable to delete heuristic completion from storage manager", format = Message.Format.MESSAGE_FORMAT)
+   void unableToDeleteHeuristicCompletion(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222251, value = "Unable to start replication", format = Message.Format.MESSAGE_FORMAT)
+   void unableToStartReplication(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222252, value = "Unable to calculate file size", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCalculateFileSize(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222253, value = "Error while syncing data on largeMessageInSync:: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void errorWhileSyncingData(String target, @Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222254, value = "Invalid record type {0}", format = Message.Format.MESSAGE_FORMAT)
+   void invalidRecordType(byte type, @Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222255, value = "Unable to calculate file store usage", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCalculateFileStoreUsage(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222256, value = "Failed to unregister acceptors", format = Message.Format.MESSAGE_FORMAT)
+   void failedToUnregisterAcceptors(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222257, value = "Failed to decrement message reference count", format = Message.Format.MESSAGE_FORMAT)
+   void failedToDecrementMessageReferenceCount(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222258, value = "Error on deleting queue {0}", format = Message.Format.MESSAGE_FORMAT)
+   void errorOnDeletingQueue(String queueName, @Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222259, value = "Failed to flush the executor", format = Message.Format.MESSAGE_FORMAT)
+   void failedToFlushExecutor(@Cause InterruptedException e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222260, value = "Failed to perform rollback", format = Message.Format.MESSAGE_FORMAT)
+   void failedToRollback(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222261, value = "Failed to activate a backup", format = Message.Format.MESSAGE_FORMAT)
+   void failedToActivateBackup(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222262, value = "Failed to stop cluster manager", format = Message.Format.MESSAGE_FORMAT)
+   void failedToStopClusterManager(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222263, value = "Failed to stop cluster connection", format = Message.Format.MESSAGE_FORMAT)
+   void failedToStopClusterConnection(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222264, value = "Failed to process message reference after rollback", format = Message.Format.MESSAGE_FORMAT)
+   void failedToProcessMessageReferenceAfterRollback(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222265, value = "Failed to finish delivery, unable to lock delivery", format = Message.Format.MESSAGE_FORMAT)
+   void failedToFinishDelivery(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222266, value = "Failed to send request to the node", format = Message.Format.MESSAGE_FORMAT)
+   void failedToSendRequestToNode(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222267, value = "Failed to disconnect bindings", format = Message.Format.MESSAGE_FORMAT)
+   void failedToDisconnectBindings(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222268, value = "Failed to remove a record", format = Message.Format.MESSAGE_FORMAT)
+   void failedToRemoveRecord(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222269, value = "Please use a fixed value for \"journal-pool-files\". Default changed per https://issues.apache.org/jira/browse/ARTEMIS-1628", format = Message.Format.MESSAGE_FORMAT)
+   void useFixedValueOnJournalPoolFiles();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222270, value = "Unable to create management notification address: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCreateManagementNotificationAddress(SimpleString addressName, @Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 22272, value = "Message ack in prepared tx for queue {0} which does not exist. This ack will be ignored.", format = Message.Format.MESSAGE_FORMAT)
+   void journalMessageAckMissingQueueInPreparedTX(Long queueID);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 22273,  value = "Address \"{0}\" is full. Bridge {1} will disconnect", format = Message.Format.MESSAGE_FORMAT)
+   void bridgeAddressFull(String addressName, String bridgeName);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222274, value = "Failed to deploy address {0}: {1}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void problemDeployingAddress(String addressName, String message);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222275, value = "Failed to deploy queue {0}: {1}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void problemDeployingQueue(String queueName, String message);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222276, value = "Failed to process changes to the logging configuration file: {0}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void loggingReloadFailed(String configFile, @Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222277, value = "Problem initializing automatic logging configuration reload for {0}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void problemAddingConfigReloadCallback(String propertyName, @Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222278, value = "Unable to extract GroupSequence from message", format = Message.Format.MESSAGE_FORMAT)
+   void unableToExtractGroupSequence(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222279, value = "Federation upstream {0} policy ref {1} could not be resolved in federation configuration", format = Message.Format.MESSAGE_FORMAT)
+   void federationCantFindPolicyRef(String upstreamName, String policyRef);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222280, value = "Federation upstream {0} policy ref {1} is of unknown type in federation configuration", format = Message.Format.MESSAGE_FORMAT)
+   void federationUnknownPolicyType(String upstreamName, String policyRef);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222281, value = "Federation upstream {0} policy ref {1} are too self referential, avoiding stack overflow , ", format = Message.Format.MESSAGE_FORMAT)
+   void federationAvoidStackOverflowPolicyRef(String upstreamName, String policyRef);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222282, value = "Federation downstream {0} upstream transport configuration ref {1} could not be resolved in federation configuration", format = Message.Format.MESSAGE_FORMAT)
+   void federationCantFindUpstreamConnector(String downstreamName, String upstreamRef);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 222283, value = "Federation downstream {0} has been deployed", format = Message.Format.MESSAGE_FORMAT)
+   void federationDownstreamDeployed(String downstreamName);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 222284, value = "Federation downstream {0} has been undeployed", format = Message.Format.MESSAGE_FORMAT)
+   void federationDownstreamUnDeployed(String downstreamName);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222285, value = "File {0} at {1} is empty. Delete the empty file to stop this message.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void emptyAddressFile(String addressFile, String directory);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222286, value = "Error executing {0} federation plugin method.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void federationPluginExecutionError(@Cause Throwable e, String pluginMethod);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222287, value = "Error looking up bindings for address {}.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void federationBindingsLookupError(@Cause Throwable e, SimpleString address);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222288, value = "Page {0}, message {1} could not be found on offset {2}, with starting message {3}. This represents a logic error or inconsistency on the data, and the system will try once again from the beggining of the page file.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void pageLookupError(int pageNr, int messageNr, int offset, int startNr);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222289, value = "Did not route to any matching bindings on dead-letter-address {0} and auto-create-dead-letter-resources is true; dropping message: {1}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void noMatchingBindingsOnDLAWithAutoCreateDLAResources(SimpleString address, String message);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222290, value = "Failed to find cluster-connection when handling cluster-connect packet. Ignoring: {0}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void failedToFindClusterConnection(String packet);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222291, value = "The metrics-plugin element is deprecated and replaced by the metrics element", format = Message.Format.MESSAGE_FORMAT)
+   void metricsPluginElementDeprecated();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222292, value = "The metrics-plugin element is ignored because the metrics element is defined", format = Message.Format.MESSAGE_FORMAT)
+   void metricsPluginElementIgnored();
+
+   @LogMessage(level = Logger.Level.WARN) // I really want emphasis on this logger, so adding the stars
+   @Message(id = 222294, value = "\n**************************************************************************************************************************************************************************************************************************************************************\n" +
+                                 "There is a possible split brain on nodeID {0}, coming from connectors {1}. Topology update ignored.\n" +
+                                 "**************************************************************************************************************************************************************************************************************************************************************", format = Message.Format.MESSAGE_FORMAT)
+   void possibleSplitBrain(String nodeID, String connectionPairInformation);
+
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222296, value = "Unable to deploy Hawtio MBeam, console client side RBAC not available",
+         format = Message.Format.MESSAGE_FORMAT)
+   void unableToDeployHawtioMBean(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222297, value = "Unable to start Management Context, RBAC not available",
+         format = Message.Format.MESSAGE_FORMAT)
+   void unableStartManagementContext(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222298, value = "Failed to create bootstrap user \"{0}\". User management may not function.", format = Message.Format.MESSAGE_FORMAT)
+   void failedToCreateBootstrapCredentials(@Cause Exception e, String user);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222299, value = "No bootstrap credentials found. User management may not function.", format = Message.Format.MESSAGE_FORMAT)
+   void noBootstrapCredentialsFound();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 222300, value = "Getting SSL handler failed when serving client from {0}: {1}.",
+      format = Message.Format.MESSAGE_FORMAT)
+   void gettingSslHandlerFailed(String clientAddress, String cause);
 
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224000, value = "Failure in initialisation", format = Message.Format.MESSAGE_FORMAT)
@@ -1339,7 +1827,7 @@ public interface ActiveMQServerLogger extends BasicLogger {
    void errorWritingToInvmConnector(@Cause Exception e, Runnable runnable);
 
    @LogMessage(level = Logger.Level.ERROR)
-   @Message(id = 224028, value = "Failed to stop accepto {0}r", format = Message.Format.MESSAGE_FORMAT)
+   @Message(id = 224028, value = "Failed to stop acceptor {0}", format = Message.Format.MESSAGE_FORMAT)
    void errorStoppingAcceptor(String name);
 
    @LogMessage(level = Logger.Level.ERROR)
@@ -1349,10 +1837,6 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224030, value = "Could not cancel reference {0}", format = Message.Format.MESSAGE_FORMAT)
    void errorCancellingRefOnBridge(@Cause Exception e, MessageReference ref2);
-
-   @LogMessage(level = Logger.Level.ERROR)
-   @Message(id = 224031, value = "-------------------------------Stomp begin tx: {0}", format = Message.Format.MESSAGE_FORMAT)
-   void stompBeginTX(String txID);
 
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224032, value = "Failed to pause bridge", format = Message.Format.MESSAGE_FORMAT)
@@ -1507,4 +1991,154 @@ public interface ActiveMQServerLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 224069, value = "Change detected in broker configuration file, but reload failed", format = Message.Format.MESSAGE_FORMAT)
    void configurationReloadFailed(@Cause Throwable t);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224070, value = "Failed to remove auto-created address {0}", format = Message.Format.MESSAGE_FORMAT)
+   void errorRemovingAutoCreatedAddress(@Cause Exception e, SimpleString addressName);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224072, value = "Message Counter Sample Period too short: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void invalidMessageCounterPeriod(long value);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224073, value = "Using MAPPED Journal", format = Message.Format.MESSAGE_FORMAT)
+   void journalUseMAPPED();
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224074, value = "Failed to purge queue {0} on no consumers", format = Message.Format.MESSAGE_FORMAT)
+   void failedToPurgeQueue(@Cause Exception e, SimpleString bindingName);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224075, value = "Cannot find pageTX id = {0}", format = Message.Format.MESSAGE_FORMAT)
+   void journalCannotFindPageTX(Long id);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224079, value = "The process for the virtual machine will be killed, as component {0} is not responsive", format = Message.Format.MESSAGE_FORMAT)
+   void criticalSystemHalt(Object component);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224080, value = "The server process will now be stopped, as component {0} is not responsive", format = Message.Format.MESSAGE_FORMAT)
+   void criticalSystemShutdown(Object component);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224081, value = "The component {0} is not responsive", format = Message.Format.MESSAGE_FORMAT)
+   void criticalSystemLog(Object component);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224076, value = "Undeploying address {0}", format = Message.Format.MESSAGE_FORMAT)
+   void undeployAddress(SimpleString addressName);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224077, value = "Undeploying queue {0}", format = Message.Format.MESSAGE_FORMAT)
+   void undeployQueue(SimpleString queueName);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224078, value = "The size of duplicate cache detection (<id_cache-size/>) appears to be too large {0}. It should be no greater than the number of messages that can be squeezed into confirmation window buffer (<confirmation-window-size/>) {1}.", format = Message.Format.MESSAGE_FORMAT)
+   void duplicateCacheSizeWarning(int idCacheSize, int confirmationWindowSize);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224082, value = "Failed to invoke an interceptor", format = Message.Format.MESSAGE_FORMAT)
+   void failedToInvokeAnInterceptor(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224083, value = "Failed to close context", format = Message.Format.MESSAGE_FORMAT)
+   void failedToCloseContext(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224084, value = "Failed to open context", format = Message.Format.MESSAGE_FORMAT)
+   void failedToOpenContext(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224085, value = "Failed to load property {0}, reason: {1}", format = Message.Format.MESSAGE_FORMAT)
+   void failedToLoadProperty(@Cause Exception e, String key, String reason);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224086, value = "Caught unexpected exception", format = Message.Format.MESSAGE_FORMAT)
+   void caughtUnexpectedException(@Cause NamingException e);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224087, value = "Error announcing backup: backupServerLocator is null. {0}", format = Message.Format.MESSAGE_FORMAT)
+   void errorAnnouncingBackup(String backupManager);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224088, value = "Timeout ({0} seconds) on acceptor \"{1}\" during protocol handshake with {2} has occurred.", format = Message.Format.MESSAGE_FORMAT)
+   void handshakeTimeout(int timeout, String acceptorName, String remoteAddress);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224089, value = "Failed to calculate persistent size", format = Message.Format.MESSAGE_FORMAT)
+   void errorCalculatePersistentSize(@Cause Throwable e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224090, value = "This node is not configured for Quorum Voting, all nodes must be configured for HA", format = Message.Format.MESSAGE_FORMAT)
+   void noVoteHandlerConfigured();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224091, value = "Bridge {0} is unable to connect to destination. Retrying", format = Message.Format.MESSAGE_FORMAT)
+   void errorConnectingBridgeRetry(Bridge bridge);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224092, value = "Despite disabled persistence, page files will be persisted.", format = Message.Format.MESSAGE_FORMAT)
+   void pageWillBePersisted();
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224093, value = "Reference to message is null", format = Message.Format.MESSAGE_FORMAT)
+   void nullRefMessage();
+
+   @LogMessage(level = Logger.Level.TRACE)
+   @Message(id = 224094, value = "Quorum vote result await is interrupted", format = Message.Format.MESSAGE_FORMAT)
+   void quorumVoteAwaitInterrupted();
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224095, value = "Error updating Consumer Count: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void consumerCountError(String reason);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224096, value = "Error setting up connection from {0} to {1}; protocol {2} not found in map: {3}", format = Message.Format.MESSAGE_FORMAT)
+   void failedToFindProtocolManager(String remoteAddress, String localAddress, String intendedProtocolManager, String protocolMap);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224097, value = "Failed to start server", format = Message.Format.MESSAGE_FORMAT)
+   void failedToStartServer(@Cause Throwable t);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224098, value = "Received a vote saying the backup is live with connector: {0}", format = Message.Format.MESSAGE_FORMAT)
+   void quorumBackupIsLive(String liveConnector);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224099, value = "Message with ID {0} has a header too large. More information available on debug level for class {1}",
+      format = Message.Format.MESSAGE_FORMAT)
+   void messageWithHeaderTooLarge(Long messageID, String loggerClass);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224100, value = "Timed out waiting for large messages deletion with IDs {0}, might not be deleted if broker crashes atm",
+      format = Message.Format.MESSAGE_FORMAT)
+   void timedOutWaitingForLargeMessagesDeletion(List<Long> largeMessageIds);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224101, value = "Apache ActiveMQ Artemis is using a scheduled pool without remove on cancel policy, so a cancelled task could be not automatically removed from the work queue, it may also cause unbounded retention of cancelled tasks.", format = Message.Format.MESSAGE_FORMAT)
+   void scheduledPoolWithNoRemoveOnCancelPolicy();
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224102, value = "unable to undeploy address {0} : reason {1}", format = Message.Format.MESSAGE_FORMAT)
+   void unableToUndeployAddress(SimpleString addressName, String reason);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224103, value = "unable to undeploy queue {0} : reason {1}", format = Message.Format.MESSAGE_FORMAT)
+   void unableToUndeployQueue(SimpleString queueName, String reason);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224104, value = "Error starting the Acceptor {0} {1}", format = Message.Format.MESSAGE_FORMAT)
+   void errorStartingAcceptor(String name, Object configuration);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 224105, value = "Connecting to cluster failed")
+   void failedConnectingToCluster(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.ERROR)
+   @Message(id = 224106, value = "failed to remove transaction, xid:{0}", format = Message.Format.MESSAGE_FORMAT)
+   void errorRemovingTX(@Cause Exception e, Xid xid);
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 224107, value = "The Critical Analyzer detected slow paths on the broker.  It is recommended that you enable trace logs on org.apache.activemq.artemis.utils.critical while you troubleshoot this issue. You should disable the trace logs when you have finished troubleshooting.", format = Message.Format.MESSAGE_FORMAT)
+   void enableTraceForCriticalAnalyzer();
 }

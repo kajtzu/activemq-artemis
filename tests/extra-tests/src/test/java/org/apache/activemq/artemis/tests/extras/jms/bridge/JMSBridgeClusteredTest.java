@@ -24,6 +24,7 @@ import org.apache.activemq.artemis.jms.bridge.ConnectionFactoryFactory;
 import org.apache.activemq.artemis.jms.bridge.DestinationFactory;
 import org.apache.activemq.artemis.jms.bridge.QualityOfServiceMode;
 import org.apache.activemq.artemis.jms.bridge.impl.JMSBridgeImpl;
+import org.jboss.logging.Logger;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -33,6 +34,7 @@ import org.junit.Test;
  * Tests of jms bridge using HA connection factories.
  */
 public class JMSBridgeClusteredTest extends ClusteredBridgeTestBase {
+   private static final Logger log = Logger.getLogger(JMSBridgeClusteredTest.class);
 
    private ServerGroup sourceServer;
    private ServerGroup targetServer;
@@ -103,7 +105,7 @@ public class JMSBridgeClusteredTest extends ClusteredBridgeTestBase {
          //start the bridge
          bridge.start();
 
-         System.out.println("started bridge");
+         log.debug("started bridge");
 
          final int NUM_MESSAGES = batchSize / 2;
 
@@ -130,8 +132,7 @@ public class JMSBridgeClusteredTest extends ClusteredBridgeTestBase {
          //verify bridge still work
          sendMessages(sourceServer, sourceQueueName, NUM_MESSAGES);
          receiveMessages(targetServer, targetQueueName, batchSize);
-      }
-      finally {
+      } finally {
          if (bridge != null) {
             bridge.stop();
          }
@@ -182,8 +183,7 @@ public class JMSBridgeClusteredTest extends ClusteredBridgeTestBase {
          //verify bridge still work
          sendMessages(sourceServer, sourceQueueName, NUM_MESSAGES);
          receiveMessages(targetServer, targetQueueName, NUM_MESSAGES, mode == QualityOfServiceMode.ONCE_AND_ONLY_ONCE);
-      }
-      finally {
+      } finally {
          if (bridge != null) {
             bridge.stop();
          }
@@ -200,8 +200,7 @@ public class JMSBridgeClusteredTest extends ClusteredBridgeTestBase {
                                 boolean checkDup) throws ActiveMQException {
       try {
          server.receiveMessages(queueName, num, checkDup);
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          e.printStackTrace();
          throw e;
       }
@@ -210,8 +209,7 @@ public class JMSBridgeClusteredTest extends ClusteredBridgeTestBase {
    private void receiveMessages(ServerGroup server, String queueName, int num) throws ActiveMQException {
       try {
          server.receiveMessages(queueName, num, false);
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          e.printStackTrace();
          throw e;
       }

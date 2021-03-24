@@ -17,9 +17,9 @@
 package org.apache.activemq.artemis.journal;
 
 import org.apache.activemq.artemis.api.core.ActiveMQIOErrorException;
+import org.jboss.logging.Messages;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageBundle;
-import org.jboss.logging.Messages;
 
 /**
  * Logger Code 14
@@ -39,7 +39,7 @@ public interface ActiveMQJournalBundle {
    @Message(id = 149001, value = "Journal data belong to a different version")
    ActiveMQIOErrorException journalDifferentVersion();
 
-   @Message(id = 149002, value = "Journal files version mismatch. You should export the data from the previous version and import it as explained on the user''s manual")
+   @Message(id = 149002, value = "Journal files version mismatch. You should export the data from the previous version and import it as explained on the user's manual")
    ActiveMQIOErrorException journalFileMisMatch();
 
    @Message(id = 149003, value = "File not opened")
@@ -47,4 +47,7 @@ public interface ActiveMQJournalBundle {
 
    @Message(id = 149004, value = "unable to open file")
    String unableToOpenFile();
+
+   @Message(id = 149005, value = "Message of {0} bytes is bigger than the max record size of {1} bytes. You should try to move large application properties to the message body.", format = Message.Format.MESSAGE_FORMAT)
+   ActiveMQIOErrorException recordLargerThanStoreMax(long recordSize, long maxRecordSize);
 }

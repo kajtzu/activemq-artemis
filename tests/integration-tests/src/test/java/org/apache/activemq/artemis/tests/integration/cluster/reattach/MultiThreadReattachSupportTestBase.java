@@ -16,6 +16,11 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.reattach;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Timer;
+import java.util.TimerTask;
+
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
@@ -24,20 +29,19 @@ import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryInternal
 import org.apache.activemq.artemis.core.client.impl.ClientSessionInternal;
 import org.apache.activemq.artemis.core.protocol.core.impl.RemotingConnectionImpl;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnector;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
-
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import org.junit.Rule;
 
 public abstract class MultiThreadReattachSupportTestBase extends ActiveMQTestBase {
 
-   private final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(MultiThreadReattachSupportTestBase.class);
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    private Timer timer;
 
@@ -72,7 +76,7 @@ public abstract class MultiThreadReattachSupportTestBase extends ActiveMQTestBas
                                                  final boolean failOnCreateConnection,
                                                  final long failDelay) throws Exception {
       for (int its = 0; its < numIts; its++) {
-         log.info("Beginning iteration " + its);
+         log.debug("Beginning iteration " + its);
 
          start();
 
@@ -102,8 +106,7 @@ public abstract class MultiThreadReattachSupportTestBase extends ActiveMQTestBas
             public void run() {
                try {
                   test.run(sf, threadNum);
-               }
-               catch (Throwable t) {
+               } catch (Throwable t) {
                   throwable = t;
 
                   log.error("Failed to run test", t);
@@ -137,7 +140,8 @@ public abstract class MultiThreadReattachSupportTestBase extends ActiveMQTestBas
 
             runnable.checkFail();
 
-         } while (!failer.isExecuted());
+         }
+         while (!failer.isExecuted());
 
          InVMConnector.resetFailures();
 
@@ -190,7 +194,7 @@ public abstract class MultiThreadReattachSupportTestBase extends ActiveMQTestBas
          }
       }
 
-      public abstract void run(final ClientSessionFactory sf, final int threadNum) throws Exception;
+      public abstract void run(ClientSessionFactory sf, int threadNum) throws Exception;
    }
 
    private class Failer extends TimerTask {
@@ -209,19 +213,18 @@ public abstract class MultiThreadReattachSupportTestBase extends ActiveMQTestBas
 
       @Override
       public synchronized void run() {
-         log.info("** Failing connection");
+         log.debug("** Failing connection");
 
          RemotingConnectionImpl conn = (RemotingConnectionImpl) ((ClientSessionInternal) session).getConnection();
 
          if (failOnCreateConnection) {
             InVMConnector.numberOfFailures = 1;
             InVMConnector.failOnCreateConnection = true;
-         }
-         else {
+         } else {
             conn.fail(new ActiveMQNotConnectedException("blah"));
          }
 
-         log.info("** Fail complete");
+         log.debug("** Fail complete");
 
          cancel();
 

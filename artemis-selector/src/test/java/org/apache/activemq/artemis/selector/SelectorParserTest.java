@@ -23,16 +23,16 @@ import org.apache.activemq.artemis.selector.filter.LogicExpression;
 import org.apache.activemq.artemis.selector.filter.PropertyExpression;
 import org.apache.activemq.artemis.selector.filter.XPathExpression;
 import org.apache.activemq.artemis.selector.impl.SelectorParser;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
-/**
- * @version $Revision: 1.2 $
- */
 public class SelectorParserTest {
 
+   private static final Logger log = Logger.getLogger(SelectorParserTest.class);
+
    public void info(String msg) {
-      System.out.println(msg);
+      log.debug(msg);
    }
 
    @Test

@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -23,15 +24,16 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.server.impl.QueueImpl;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.jboss.logging.Logger;
 import org.junit.Before;
 import org.junit.Test;
 
 public class ConsumerFilterTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(ConsumerFilterTest.class);
 
    private ActiveMQServer server;
    private ClientSession session;
@@ -53,7 +55,7 @@ public class ConsumerFilterTest extends ActiveMQTestBase {
       session = sf.createSession();
 
       session.start();
-      session.createQueue("foo", "foo");
+      session.createQueue(new QueueConfiguration("foo").setRoutingType(RoutingType.ANYCAST));
 
       producer = session.createProducer("foo");
       consumer = session.createConsumer("foo", "animal='giraffe'");
@@ -88,7 +90,7 @@ public class ConsumerFilterTest extends ActiveMQTestBase {
 
       message.putStringProperty("animal", "giraffe");
 
-      log.info("sending second msg");
+      log.debug("sending second msg");
 
       producer.send(message);
 
@@ -241,7 +243,7 @@ public class ConsumerFilterTest extends ActiveMQTestBase {
 
       readConsumer("anyConsumer", anyConsumer);
 
-      log.info("### closing consumer ###");
+      log.debug("### closing consumer ###");
 
       anyConsumer.close();
 
@@ -249,7 +251,7 @@ public class ConsumerFilterTest extends ActiveMQTestBase {
 
       readConsumer("redConsumer", redConsumer);
 
-      log.info("### recreating consumer ###");
+      log.debug("### recreating consumer ###");
 
       anyConsumer = session.createConsumer("foo");
 
@@ -271,7 +273,7 @@ public class ConsumerFilterTest extends ActiveMQTestBase {
    private void readConsumer(String consumerName, ClientConsumer consumer) throws Exception {
       ClientMessage message = consumer.receive(5000);
       assertNotNull(message);
-      System.out.println("consumer = " + consumerName + " message, color=" + message.getStringProperty("color") + ", msg = " + message.getStringProperty("value"));
+      instanceLog.debug("consumer = " + consumerName + " message, color=" + message.getStringProperty("color") + ", msg = " + message.getStringProperty("value"));
       message.acknowledge();
    }
 

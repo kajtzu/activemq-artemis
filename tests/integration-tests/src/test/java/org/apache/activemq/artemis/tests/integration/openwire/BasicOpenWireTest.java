@@ -29,9 +29,11 @@ import java.util.Map;
 
 import org.apache.activemq.ActiveMQConnection;
 import org.apache.activemq.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.api.core.ActiveMQNonExistentQueueException;
-import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.ActiveMQXAConnectionFactory;
+import org.apache.activemq.artemis.api.core.ActiveMQNonExistentQueueException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.junit.After;
 import org.junit.Before;
@@ -42,11 +44,9 @@ public class BasicOpenWireTest extends OpenWireTestBase {
 
    @Rule
    public TestName name = new TestName();
-
-   protected static final String urlString = "tcp://" + OWHOST + ":" + OWPORT + "?wireFormat.cacheEnabled=true";
-   protected ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(urlString);
-   protected ActiveMQXAConnectionFactory xaFactory = new ActiveMQXAConnectionFactory(urlString);
-
+   protected ActiveMQConnectionFactory factory;
+   protected ActiveMQConnectionFactory looseFactory;
+   protected ActiveMQXAConnectionFactory xaFactory;
 
    protected ActiveMQConnection connection;
    protected String topicName = "amqTestTopic1";
@@ -64,16 +64,18 @@ public class BasicOpenWireTest extends OpenWireTestBase {
    @Before
    public void setUp() throws Exception {
       super.setUp();
-      SimpleString coreQueue = new SimpleString("jms.queue." + queueName);
-      this.server.createQueue(coreQueue, coreQueue, null, false, false);
+      System.setProperty("org.apache.activemq.transport.AbstractInactivityMonitor.keepAliveTime", "5");
+      createFactories();
+      SimpleString coreQueue = new SimpleString(queueName);
+      this.server.createQueue(new QueueConfiguration(coreQueue).setRoutingType(RoutingType.ANYCAST));
       testQueues.put(queueName, coreQueue);
 
-      SimpleString coreQueue2 = new SimpleString("jms.queue." + queueName2);
-      this.server.createQueue(coreQueue2, coreQueue2, null, false, false);
+      SimpleString coreQueue2 = new SimpleString(queueName2);
+      this.server.createQueue(new QueueConfiguration(coreQueue2).setRoutingType(RoutingType.ANYCAST));
       testQueues.put(queueName2, coreQueue2);
 
-      SimpleString durableQueue = new SimpleString("jms.queue." + durableQueueName);
-      this.server.createQueue(durableQueue, durableQueue, null, true, false);
+      SimpleString durableQueue = new SimpleString(durableQueueName);
+      this.server.createQueue(new QueueConfiguration(durableQueue).setRoutingType(RoutingType.ANYCAST));
       testQueues.put(durableQueueName, durableQueue);
 
       if (!enableSecurity) {
@@ -81,15 +83,23 @@ public class BasicOpenWireTest extends OpenWireTestBase {
       }
    }
 
+   protected void createFactories() {
+      factory = new ActiveMQConnectionFactory(getConnectionUrl());
+      looseFactory = new ActiveMQConnectionFactory(urlStringLoose);
+      xaFactory = new ActiveMQXAConnectionFactory(getConnectionUrl());
+   }
+
+   protected String getConnectionUrl() {
+      return urlString;
+   }
+
    @Override
    @After
    public void tearDown() throws Exception {
-      System.out.println("tear down! " + connection);
+      System.clearProperty("org.apache.activemq.transport.AbstractInactivityMonitor.keepAliveTime");
       try {
          if (connection != null) {
-            System.out.println("closing connection");
             connection.close();
-            System.out.println("connection closed.");
          }
 
          Iterator<SimpleString> iterQueues = testQueues.values().iterator();
@@ -97,25 +107,18 @@ public class BasicOpenWireTest extends OpenWireTestBase {
             SimpleString coreQ = iterQueues.next();
             try {
                this.server.destroyQueue(coreQ, null, false, true);
-            }
-            catch (ActiveMQNonExistentQueueException idontcare) {
+            } catch (ActiveMQNonExistentQueueException idontcare) {
                // i don't care if this failed. it means it didn't find the queue
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                // just print, what else can we do?
                e.printStackTrace();
             }
-            System.out.println("Destroyed queue: " + coreQ);
          }
          testQueues.clear();
-      }
-      catch (Throwable e) {
-         System.out.println("Exception !! " + e);
+      } catch (Throwable e) {
          e.printStackTrace();
-      }
-      finally {
+      } finally {
          super.tearDown();
-         System.out.println("Super done.");
       }
    }
 
@@ -142,8 +145,8 @@ public class BasicOpenWireTest extends OpenWireTestBase {
    public void makeSureCoreQueueExist(String qname) throws Exception {
       SimpleString coreQ = testQueues.get(qname);
       if (coreQ == null) {
-         coreQ = new SimpleString("jms.queue." + qname);
-         this.server.createQueue(coreQ, coreQ, null, false, false);
+         coreQ = new SimpleString(qname);
+         this.server.createQueue(new QueueConfiguration(coreQ).setRoutingType(RoutingType.ANYCAST));
          testQueues.put(qname, coreQ);
       }
    }
@@ -220,8 +223,7 @@ public class BasicOpenWireTest extends OpenWireTestBase {
    protected void safeClose(Session s) {
       try {
          s.close();
-      }
-      catch (Throwable e) {
+      } catch (Throwable e) {
       }
    }
 }

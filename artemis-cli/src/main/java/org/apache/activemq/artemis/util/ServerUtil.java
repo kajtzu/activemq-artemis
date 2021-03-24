@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,6 +23,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
@@ -39,34 +40,16 @@ public class ServerUtil {
       return startServer(artemisInstance, serverName, 0, 0);
    }
 
+   /**
+    * @param artemisInstance
+    * @param serverName      it will be used on logs
+    * @param id              it will be used to add on the port
+    * @param timeout
+    * @return
+    * @throws Exception
+    */
    public static Process startServer(String artemisInstance, String serverName, int id, int timeout) throws Exception {
-      boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().trim().startsWith("win");
-
-      ProcessBuilder builder = null;
-      if (IS_WINDOWS) {
-         builder = new ProcessBuilder("cmd", "/c", "artemis.cmd", "run");
-      }
-      else {
-         builder = new ProcessBuilder("./artemis", "run");
-      }
-
-      builder.directory(new File(artemisInstance + "/bin"));
-
-      final Process process = builder.start();
-      Runtime.getRuntime().addShutdownHook(new Thread() {
-         @Override
-         public void run() {
-            process.destroy();
-         }
-      });
-
-      ProcessLogger outputLogger = new ProcessLogger(true, process.getInputStream(), serverName, false);
-      outputLogger.start();
-
-      // Adding a reader to System.err, so the VM won't hang on a System.err.println as identified on this forum thread:
-      // http://www.jboss.org/index.html?module=bb&op=viewtopic&t=151815
-      ProcessLogger errorLogger = new ProcessLogger(true, process.getErrorStream(), serverName, true);
-      errorLogger.start();
+      final Process process = internalStartServer(artemisInstance, serverName);
 
       // wait for start
       if (timeout != 0) {
@@ -76,34 +59,114 @@ public class ServerUtil {
       return process;
    }
 
-   public static void waitForServerToStart(int id, int timeout) throws InterruptedException {
-      waitForServerToStart("tcp://localhost:" + (61616 + id), timeout);
+   public static Process startServer(String artemisInstance, String serverName, String uri, int timeout) throws Exception {
+      final Process process = internalStartServer(artemisInstance, serverName);
+
+      // wait for start
+      if (timeout != 0) {
+         waitForServerToStart(uri, timeout);
+      }
+
+      return process;
    }
 
-   public static void waitForServerToStart(String uri, long timeout) throws InterruptedException {
+   private static Process internalStartServer(String artemisInstance,
+                                              String serverName) throws IOException, ClassNotFoundException {
+
+      return execute(artemisInstance, serverName, "run");
+   }
+
+   public static Process execute(String artemisInstance, String jobName, String...args) throws IOException, ClassNotFoundException {
+      try {
+         boolean IS_WINDOWS = System.getProperty("os.name").toLowerCase().trim().startsWith("win");
+
+         ArrayList<String> command = new ArrayList<>();
+
+         ProcessBuilder builder = null;
+         if (IS_WINDOWS) {
+            command.add("cmd");
+            command.add("/c");
+            command.add("artemis.cmd");
+         } else {
+            command.add("./artemis");
+         }
+
+         for (String arg: args) {
+            command.add(arg);
+         }
+
+         builder = new ProcessBuilder(command);
+
+         builder.directory(new File(artemisInstance + "/bin"));
+
+         final Process process = builder.start();
+         Runtime.getRuntime().addShutdownHook(new Thread() {
+            @Override
+            public void run() {
+               process.destroy();
+            }
+         });
+
+         ProcessLogger outputLogger = new ProcessLogger(true, process.getInputStream(), jobName, false);
+         outputLogger.start();
+
+         // Adding a reader to System.err, so the VM won't hang on a System.err.println as identified on this forum thread:
+         // http://www.jboss.org/index.html?module=bb&op=viewtopic&t=151815
+         ProcessLogger errorLogger = new ProcessLogger(true, process.getErrorStream(), jobName, true);
+         errorLogger.start();
+         return process;
+      } catch (IOException e) {
+         throw new IOException("Cannot start server at " + artemisInstance, e);
+      }
+   }
+
+   public static boolean waitForServerToStart(int id, int timeout) throws InterruptedException {
+      return waitForServerToStart(id, null, null, timeout);
+   }
+
+   public static boolean waitForServerToStart(int id, String username, String password, int timeout) throws InterruptedException {
+      return waitForServerToStart("tcp://localhost:" + (61616 + id), username, password, timeout);
+   }
+
+   public static boolean waitForServerToStart(String uri, long timeout) throws InterruptedException {
+      return waitForServerToStart(uri, null, null, timeout);
+   }
+
+   public static boolean waitForServerToStart(String uri, String username, String password, long timeout) throws InterruptedException {
       long realTimeout = System.currentTimeMillis() + timeout;
       while (System.currentTimeMillis() < realTimeout) {
          try (ActiveMQConnectionFactory cf = ActiveMQJMSClient.createConnectionFactory(uri, null)) {
-            cf.createConnection().close();
+            cf.createConnection(username, password).close();
             System.out.println("server " + uri + " started");
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             System.out.println("awaiting server " + uri + " start at ");
             Thread.sleep(500);
             continue;
          }
-         break;
+         return true;
       }
+
+      return false;
    }
 
    public static void killServer(final Process server) throws Exception {
+      killServer(server, false);
+   }
+
+   public static void killServer(final Process server, boolean forcibly) throws Exception {
       if (server != null) {
          System.out.println("**********************************");
          System.out.println("Killing server " + server);
          System.out.println("**********************************");
-         server.destroy();
+         if (forcibly) {
+            server.destroyForcibly();
+         } else {
+            server.destroy();
+         }
          server.waitFor();
-         Thread.sleep(1000);
+         if (!forcibly) {
+            Thread.sleep(1000);
+         }
       }
    }
 
@@ -160,14 +223,12 @@ public class ServerUtil {
                if (print) {
                   if (sendToErr) {
                      System.err.println(logName + "-err:" + line);
-                  }
-                  else {
+                  } else {
                      System.out.println(logName + "-out:" + line);
                   }
                }
             }
-         }
-         catch (IOException e) {
+         } catch (IOException e) {
             // ok, stream closed
          }
       }

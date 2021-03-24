@@ -24,6 +24,8 @@ import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageLogger;
 
+import javax.jms.IllegalStateException;
+
 /**
  * Logger Code 15
  * <br>
@@ -77,6 +79,10 @@ public interface ActiveMQRALogger extends BasicLogger {
    @Message(id = 151006, value = "Cluster topology change detected. Re-balancing connections on even {0}.", format = Message.Format.MESSAGE_FORMAT)
    void rebalancingConnections(String event);
 
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 151007, value = "Resource adaptor started", format = Message.Format.MESSAGE_FORMAT)
+   void resourceAdaptorStarted();
+
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 152001, value = "problem resetting xa session after failure", format = Message.Format.MESSAGE_FORMAT)
    void problemResettingXASession(@Cause Throwable t);
@@ -113,6 +119,14 @@ public interface ActiveMQRALogger extends BasicLogger {
    @Message(id = 152009, value = "Unable to validate properties", format = Message.Format.MESSAGE_FORMAT)
    void unableToValidateProperties(@Cause Exception e);
 
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 152010, value = "Unable to clear the transaction", format = Message.Format.MESSAGE_FORMAT)
+   void unableToClearTheTransaction(@Cause Exception e);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 152011, value = "Unable to close the factory", format = Message.Format.MESSAGE_FORMAT)
+   void unableToCloseFactory(@Cause Throwable e);
+
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 154000, value = "Error while creating object Reference.", format = Message.Format.MESSAGE_FORMAT)
    void errorCreatingReference(@Cause Exception e);
@@ -132,4 +146,19 @@ public interface ActiveMQRALogger extends BasicLogger {
    @LogMessage(level = Logger.Level.DEBUG)
    @Message(id = 153001, value = "using different ActiveMQRAConnectionFactory", format = Message.Format.MESSAGE_FORMAT)
    void warnDifferentConnectionfactory();
+
+   @Message(id = 153002, value = "Cannot create a subscriber on the durable subscription since it already has subscriber(s)")
+   IllegalStateException canNotCreatedNonSharedSubscriber();
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 153003, value = "Unsupported acknowledgement mode {0}", format = Message.Format.MESSAGE_FORMAT)
+   void invalidAcknowledgementMode(String mode);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 153004, value = "Invalid number of session (negative) {0}, defaulting to {1}.", format = Message.Format.MESSAGE_FORMAT)
+   void invalidNumberOfMaxSession(int value, int defaultValue);
+
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 153005, value =  "Unable to retrieve \"{0}\" from JNDI. Creating a new \"{1}\" named \"{2}\" to be used by the MDB.", format = Message.Format.MESSAGE_FORMAT)
+   void unableToRetrieveDestinationName(String destinationName, String name, String calculatedDestinationName);
 }

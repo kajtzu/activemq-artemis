@@ -16,25 +16,28 @@
  */
 package org.apache.activemq.artemis.core.protocol.stomp;
 
-public class StompSubscription {
-   // Constants -----------------------------------------------------
+import org.apache.activemq.artemis.api.core.SimpleString;
 
-   // Attributes ----------------------------------------------------
+public class StompSubscription {
 
    private final String subID;
 
    private final String ack;
 
-   // Static --------------------------------------------------------
+   private final SimpleString queueName;
 
-   // Constructors --------------------------------------------------
+   // whether or not this subscription follows multicast semantics (e.g. for a JMS topic)
+   private final boolean multicast;
 
-   public StompSubscription(String subID, String ack) {
+   private final int consumerWindowSize;
+
+   public StompSubscription(String subID, String ack, SimpleString queueName, boolean multicast, int consumerWindowSize) {
       this.subID = subID;
       this.ack = ack;
+      this.queueName = queueName;
+      this.multicast = multicast;
+      this.consumerWindowSize = consumerWindowSize;
    }
-
-   // Public --------------------------------------------------------
 
    public String getAck() {
       return ack;
@@ -44,17 +47,21 @@ public class StompSubscription {
       return subID;
    }
 
-   @Override
-   public String toString() {
-      return "StompSubscription[id=" + subID + ", ack=" + ack + "]";
+   public SimpleString getQueueName() {
+      return queueName;
    }
 
-   // Package protected ---------------------------------------------
+   public boolean isMulticast() {
+      return multicast;
+   }
 
-   // Protected -----------------------------------------------------
+   public int getConsumerWindowSize() {
+      return consumerWindowSize;
+   }
 
-   // Private -------------------------------------------------------
-
-   // Inner classes -------------------------------------------------
+   @Override
+   public String toString() {
+      return "StompSubscription[id=" + subID + ", ack=" + ack + ", queueName=" + queueName + ", multicast=" + multicast + ", consumerWindowSize=" + consumerWindowSize + "]";
+   }
 
 }

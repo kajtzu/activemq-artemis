@@ -25,7 +25,7 @@ public interface DuplicateIDCache {
 
    boolean contains(byte[] duplicateID);
 
-   boolean atomicVerify(final byte[] duplID, final Transaction tx) throws Exception;
+   boolean atomicVerify(byte[] duplID, Transaction tx) throws Exception;
 
    void addToCache(byte[] duplicateID) throws Exception;
 
@@ -40,9 +40,9 @@ public interface DuplicateIDCache {
 
    void deleteFromCache(byte[] duplicateID) throws Exception;
 
-   void load(List<Pair<byte[], Long>> theIds) throws Exception;
+   void load(List<Pair<byte[], Long>> ids) throws Exception;
 
-   void load(final Transaction tx, final byte[] duplID);
+   void load(Transaction tx, byte[] duplID);
 
    void clear() throws Exception;
 

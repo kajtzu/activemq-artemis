@@ -16,6 +16,9 @@
  */
 package org.apache.activemq.artemis.tests.extras.byteman;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreMasterPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfiguration;
@@ -28,17 +31,20 @@ import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.jboss.byteman.contrib.bmunit.BMRule;
 import org.jboss.byteman.contrib.bmunit.BMRules;
 import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
+import org.jboss.logging.Logger;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * This test validates a deadlock identified by https://bugzilla.redhat.com/show_bug.cgi?id=959616
  */
 @RunWith(BMUnitRunner.class)
 public class StartStopDeadlockTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(StartStopDeadlockTest.class);
+
+   private static void debugLog(String message) {
+      log.debug(message);
+   }
 
    /*
    * simple test to make sure connect still works with some network latency  built into netty
@@ -52,7 +58,7 @@ public class StartStopDeadlockTest extends ActiveMQTestBase {
          targetMethod = "initialisePart2",
          targetLocation = "ENTRY",
          condition = "incrementCounter(\"server-Init\") == 2",
-         action = "System.out.println(\"server backup init\"), waitFor(\"start-init\")"), @BMRule(
+         action = "org.apache.activemq.artemis.tests.extras.byteman.StartStopDeadlockTest.debugLog(\"server backup init\"), waitFor(\"start-init\")"), @BMRule(
          name = "JMSServer.stop wait-init",
          targetClass = "org.apache.activemq.artemis.jms.server.impl.JMSServerManagerImpl",
          targetMethod = "stop",
@@ -91,10 +97,9 @@ public class StartStopDeadlockTest extends ActiveMQTestBase {
             try {
                align.countDown();
                startLatch.await();
-               System.out.println("Crashing....");
-               serverLive.stop(true);
-            }
-            catch (Exception e) {
+               log.debug("Crashing....");
+               serverLive.fail(true);
+            } catch (Exception e) {
                errors.incrementAndGet();
                e.printStackTrace();
             }
@@ -108,8 +113,7 @@ public class StartStopDeadlockTest extends ActiveMQTestBase {
                align.countDown();
                startLatch.await();
                jmsServer.stop();
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                errors.incrementAndGet();
                e.printStackTrace();
             }

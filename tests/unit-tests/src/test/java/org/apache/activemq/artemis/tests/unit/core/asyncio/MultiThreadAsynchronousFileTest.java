@@ -16,18 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.unit.core.asyncio;
 
-import org.apache.activemq.artemis.core.io.IOCallback;
-import org.apache.activemq.artemis.core.io.aio.AIOSequentialFile;
-import org.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory;
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
-import org.apache.activemq.artemis.tests.unit.UnitTestLogger;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -35,6 +23,18 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.activemq.artemis.core.io.IOCallback;
+import org.apache.activemq.artemis.core.io.aio.AIOSequentialFile;
+import org.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
+import org.apache.activemq.artemis.tests.unit.UnitTestLogger;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 /**
  * you need to define -Djava.library.path=${project-root}/native/src/.libs when calling the JVM
@@ -94,7 +94,7 @@ public class MultiThreadAsynchronousFileTest extends AIOTestBase {
 
    private void executeTest(final boolean sync) throws Throwable {
       MultiThreadAsynchronousFileTest.debug(sync ? "Sync test:" : "Async test");
-      AIOSequentialFileFactory factory = new AIOSequentialFileFactory(getTestDirfile(), 21000);
+      AIOSequentialFileFactory factory = new AIOSequentialFileFactory(getTestDirfile(), 100);
       factory.start();
       factory.disableBufferReuse();
 
@@ -137,16 +137,11 @@ public class MultiThreadAsynchronousFileTest extends AIOTestBase {
                                                   (endTime - startTime) +
                                                   " total number of records = " +
                                                   MultiThreadAsynchronousFileTest.NUMBER_OF_THREADS * MultiThreadAsynchronousFileTest.NUMBER_OF_LINES);
-      }
-      finally {
+      } finally {
          file.close();
          factory.stop();
       }
 
-   }
-
-   private int getNewPosition() {
-      return position.addAndGet(1);
    }
 
    class ThreadProducer extends Thread {
@@ -211,8 +206,8 @@ public class MultiThreadAsynchronousFileTest extends AIOTestBase {
                addData(libaio, buffer, callback);
                if (sync) {
                   waitForLatch(latchFinishThread);
+                  assertEquals(0, callback.errorCalled);
                   assertTrue(callback.doneCalled);
-                  assertFalse(callback.errorCalled != 0);
                }
             }
             if (!sync) {
@@ -229,12 +224,10 @@ public class MultiThreadAsynchronousFileTest extends AIOTestBase {
                assertFalse(callback.errorCalled != 0);
             }
 
-         }
-         catch (Throwable e) {
+         } catch (Throwable e) {
             e.printStackTrace();
             failed = e;
-         }
-         finally {
+         } finally {
             synchronized (MultiThreadAsynchronousFileTest.class) {
                LibaioContext.freeBuffer(buffer);
             }

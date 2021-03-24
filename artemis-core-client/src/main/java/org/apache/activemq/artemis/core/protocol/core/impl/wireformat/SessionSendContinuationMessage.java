@@ -16,21 +16,20 @@
  */
 package org.apache.activemq.artemis.core.protocol.core.impl.wireformat;
 
-import java.util.Arrays;
-
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.client.SendAcknowledgementHandler;
-import org.apache.activemq.artemis.core.message.impl.MessageInternal;
+import org.apache.activemq.artemis.utils.DataConstants;
 
 /**
  * A SessionSendContinuationMessage<br>
  */
 public class SessionSendContinuationMessage extends SessionContinuationMessage {
 
-   private boolean requiresResponse;
+   protected boolean requiresResponse;
 
    // Used on confirmation handling
-   private MessageInternal message;
+   protected Message message;
    /**
     * In case, we are using a different handler than the one set on the {@link org.apache.activemq.artemis.api.core.client.ClientSession}
     * <br>
@@ -44,7 +43,7 @@ public class SessionSendContinuationMessage extends SessionContinuationMessage {
    /**
     * to be sent on the last package
     */
-   private long messageBodySize = -1;
+   protected long messageBodySize = -1;
 
    // Static --------------------------------------------------------
 
@@ -55,12 +54,17 @@ public class SessionSendContinuationMessage extends SessionContinuationMessage {
       handler = null;
    }
 
+   protected SessionSendContinuationMessage(byte type) {
+      super(type);
+      handler = null;
+   }
+
    /**
     * @param body
     * @param continues
     * @param requiresResponse
     */
-   public SessionSendContinuationMessage(final MessageInternal message,
+   public SessionSendContinuationMessage(final Message message,
                                          final byte[] body,
                                          final boolean continues,
                                          final boolean requiresResponse,
@@ -73,11 +77,31 @@ public class SessionSendContinuationMessage extends SessionContinuationMessage {
       this.messageBodySize = messageBodySize;
    }
 
+   /**
+    * @param body
+    * @param continues
+    * @param requiresResponse
+    */
+   protected SessionSendContinuationMessage(final byte type,
+                                         final Message message,
+                                         final byte[] body,
+                                         final boolean continues,
+                                         final boolean requiresResponse,
+                                         final long messageBodySize,
+                                         SendAcknowledgementHandler handler) {
+      super(type, body, continues);
+      this.requiresResponse = requiresResponse;
+      this.message = message;
+      this.handler = handler;
+      this.messageBodySize = messageBodySize;
+   }
+
    // Public --------------------------------------------------------
 
    /**
     * @return the requiresResponse
     */
+   @Override
    public boolean isRequiresResponse() {
       return requiresResponse;
    }
@@ -89,8 +113,13 @@ public class SessionSendContinuationMessage extends SessionContinuationMessage {
    /**
     * @return the message
     */
-   public MessageInternal getMessage() {
+   public Message getMessage() {
       return message;
+   }
+
+   @Override
+   public int expectedEncodeSize() {
+      return super.expectedEncodeSize() + (!continues ? DataConstants.SIZE_LONG : 0) + DataConstants.SIZE_BOOLEAN;
    }
 
    @Override
@@ -124,7 +153,6 @@ public class SessionSendContinuationMessage extends SessionContinuationMessage {
    @Override
    public String toString() {
       StringBuffer buff = new StringBuffer(getParentString());
-      buff.append(", body=" + Arrays.toString(body));
       buff.append(", continues=" + continues);
       buff.append(", message=" + message);
       buff.append(", messageBodySize=" + messageBodySize);
@@ -145,8 +173,7 @@ public class SessionSendContinuationMessage extends SessionContinuationMessage {
       if (message == null) {
          if (other.message != null)
             return false;
-      }
-      else if (!message.equals(other.message))
+      } else if (!message.equals(other.message))
          return false;
       if (messageBodySize != other.messageBodySize)
          return false;

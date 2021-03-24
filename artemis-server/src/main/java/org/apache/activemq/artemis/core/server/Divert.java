@@ -18,9 +18,11 @@ package org.apache.activemq.artemis.core.server;
 
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
-import org.apache.activemq.artemis.core.server.cluster.Transformer;
+import org.apache.activemq.artemis.core.server.transformer.Transformer;
 
 public interface Divert extends Bindable {
+
+   SimpleString getAddress();
 
    Filter getFilter();
 
@@ -31,4 +33,16 @@ public interface Divert extends Bindable {
    SimpleString getRoutingName();
 
    Transformer getTransformer();
+
+   SimpleString getForwardAddress();
+
+   ComponentConfigurationRoutingType getRoutingType();
+
+   void setFilter(Filter filter);
+
+   void setTransformer(Transformer transformer);
+
+   void setForwardAddress(SimpleString forwardAddress);
+
+   void setRoutingType(ComponentConfigurationRoutingType routingType);
 }

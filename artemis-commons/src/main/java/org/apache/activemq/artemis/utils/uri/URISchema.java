@@ -31,7 +31,7 @@ public abstract class URISchema<T, P> {
    }
 
    public void populateObject(URI uri, T bean) throws Exception {
-      BeanSupport.setData(uri, bean, parseQuery(uri.getQuery(), null));
+      internalPopulateObject(uri, parseQuery(uri.getQuery(), null), bean);
    }
 
    public URI newURI(T bean) throws Exception {
@@ -60,8 +60,7 @@ public abstract class URISchema<T, P> {
       URIFactory<T, P> factory = getFactory();
       if (factory == null) {
          return null;
-      }
-      else {
+      } else {
          return factory.getDefaultURI();
       }
    }
@@ -100,6 +99,10 @@ public abstract class URISchema<T, P> {
 
    }
 
+   protected void internalPopulateObject(URI uri, Map<String, String> query, T bean) throws Exception {
+      BeanSupport.setData(uri, bean, query);
+   }
+
    public static Map<String, String> parseQuery(String uri,
                                                 Map<String, String> propertyOverrides) throws URISyntaxException {
       try {
@@ -112,8 +115,7 @@ public abstract class URISchema<T, P> {
                   String name = BeanSupport.decodeURI(parameter.substring(0, p));
                   String value = BeanSupport.decodeURI(parameter.substring(p + 1));
                   rc.put(name, value);
-               }
-               else {
+               } else {
                   if (!parameter.trim().isEmpty()) {
                      rc.put(parameter, null);
                   }
@@ -127,8 +129,7 @@ public abstract class URISchema<T, P> {
             }
          }
          return rc;
-      }
-      catch (UnsupportedEncodingException e) {
+      } catch (UnsupportedEncodingException e) {
          throw (URISyntaxException) new URISyntaxException(e.toString(), "Invalid encoding").initCause(e);
       }
    }

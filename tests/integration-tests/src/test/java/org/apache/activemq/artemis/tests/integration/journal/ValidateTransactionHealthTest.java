@@ -24,21 +24,25 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.apache.activemq.artemis.ArtemisConstants;
 import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory;
+import org.apache.activemq.artemis.core.io.mapped.MappedSequentialFileFactory;
 import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.LoaderCallback;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.tests.util.SpawnedVMSupport;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
+import org.apache.activemq.artemis.tests.util.SpawnedTestBase;
+import org.apache.activemq.artemis.utils.SpawnedVMSupport;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * This test spawns a remote VM, as we want to "crash" the VM right after the journal is filled with data
  */
-public class ValidateTransactionHealthTest extends ActiveMQTestBase {
+public class ValidateTransactionHealthTest extends SpawnedTestBase {
+
+   private static final Logger log = Logger.getLogger(ValidateTransactionHealthTest.class);
 
    private static final int OK = 10;
 
@@ -102,6 +106,27 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
       internalTest("nio2", getTestDir(), 10000, 0, true, true, 1);
    }
 
+   @Test
+   public void testMMap() throws Exception {
+      internalTest("mmap", getTestDir(), 10000, 100, true, true, 1);
+   }
+
+   @Test
+   public void testMMAPHugeTransaction() throws Exception {
+      internalTest("mmap", getTestDir(), 10000, 10000, true, true, 1);
+   }
+
+   @Test
+   public void testMMAPOMultiThread() throws Exception {
+      internalTest("mmap", getTestDir(), 1000, 100, true, true, 10);
+   }
+
+   @Test
+   public void testMMAPNonTransactional() throws Exception {
+      internalTest("mmap", getTestDir(), 10000, 0, true, true, 1);
+   }
+
+
    // Package protected ---------------------------------------------
 
    private void internalTest(final String type,
@@ -113,8 +138,7 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
                              final int numberOfThreads) throws Exception {
       try {
          if (type.equals("aio") && !LibaioContext.isLoaded()) {
-            // Using System.out as this output will go towards junit report
-            System.out.println("AIO not found, test being ignored on this platform");
+            log.warn("AIO not found, test being ignored on this platform");
             return;
          }
 
@@ -124,16 +148,14 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
                Process process = SpawnedVMSupport.spawnVM(ValidateTransactionHealthTest.class.getCanonicalName(), type, journalDir, Long.toString(numberOfRecords), Integer.toString(transactionSize), Integer.toString(numberOfThreads));
                process.waitFor();
                Assert.assertEquals(ValidateTransactionHealthTest.OK, process.exitValue());
-            }
-            else {
+            } else {
                JournalImpl journal = ValidateTransactionHealthTest.appendData(type, journalDir, numberOfRecords, transactionSize, numberOfThreads);
                journal.stop();
             }
          }
 
          reload(type, journalDir, numberOfRecords, numberOfThreads);
-      }
-      finally {
+      } finally {
          File file = new File(journalDir);
          deleteDirectory(file);
       }
@@ -146,18 +168,21 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
       JournalImpl journal = ValidateTransactionHealthTest.createJournal(type, journalDir);
 
       journal.start();
-      Loader loadTest = new Loader(numberOfRecords);
-      journal.load(loadTest);
-      Assert.assertEquals(numberOfRecords * numberOfThreads, loadTest.numberOfAdds);
-      Assert.assertEquals(0, loadTest.numberOfPreparedTransactions);
-      Assert.assertEquals(0, loadTest.numberOfUpdates);
-      Assert.assertEquals(0, loadTest.numberOfDeletes);
+      try {
+         Loader loadTest = new Loader(numberOfRecords);
+         journal.load(loadTest);
+         Assert.assertEquals(numberOfRecords * numberOfThreads, loadTest.numberOfAdds);
+         Assert.assertEquals(0, loadTest.numberOfPreparedTransactions);
+         Assert.assertEquals(0, loadTest.numberOfUpdates);
+         Assert.assertEquals(0, loadTest.numberOfDeletes);
 
-      journal.stop();
-
-      if (loadTest.ex != null) {
-         throw loadTest.ex;
+         if (loadTest.ex != null) {
+            throw loadTest.ex;
+         }
+      } finally {
+         journal.stop();
       }
+
    }
 
    // Inner classes -------------------------------------------------
@@ -191,7 +216,7 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
       @Override
       public void addRecord(final RecordInfo info) {
          if (info.id == lastID) {
-            System.out.println("id = " + info.id + " last id = " + lastID);
+            log.debug("id = " + info.id + " last id = " + lastID);
          }
 
          ByteBuffer buffer = ByteBuffer.wrap(info.data);
@@ -233,10 +258,9 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
 
       if (args.length != 5) {
          System.err.println("Use: java -cp <classpath> " + ValidateTransactionHealthTest.class.getCanonicalName() +
-                               " aio|nio <journalDirectory> <NumberOfElements> <TransactionSize> <NumberOfThreads>");
+                               " aio|nio|mmap <journalDirectory> <NumberOfElements> <TransactionSize> <NumberOfThreads>");
          System.exit(-1);
       }
-      System.out.println("Running");
       String journalType = args[0];
       String journalDir = args[1];
       long numberOfElements = Long.parseLong(args[2]);
@@ -250,8 +274,7 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
          // The test is making sure that committed data can be reloaded fine...
          // i.e. commits are sync on disk as stated on the transaction.
          // The journal shouldn't leave any state impeding reloading the server
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          e.printStackTrace(System.out);
          System.exit(-1);
       }
@@ -314,22 +337,24 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
          throw e;
       }
 
+      journal.flush();
+
       return journal;
    }
 
    public static JournalImpl createJournal(final String journalType, final String journalDir) {
-      JournalImpl journal = new JournalImpl(10485760, 2, 2, 0, 0, ValidateTransactionHealthTest.getFactory(journalType, journalDir), "journaltst", "tst", 500);
+      JournalImpl journal = new JournalImpl(10485760, 2, 2, 0, 0, ValidateTransactionHealthTest.getFactory(journalType, journalDir, 10485760), "journaltst", "tst", 500);
       return journal;
    }
 
-   public static SequentialFileFactory getFactory(final String factoryType, final String directory) {
+   public static SequentialFileFactory getFactory(final String factoryType, final String directory, int fileSize) {
       if (factoryType.equals("aio")) {
          return new AIOSequentialFileFactory(new File(directory), ArtemisConstants.DEFAULT_JOURNAL_BUFFER_SIZE_AIO, ArtemisConstants.DEFAULT_JOURNAL_BUFFER_TIMEOUT_AIO, 10, false);
-      }
-      else if (factoryType.equals("nio2")) {
+      } else if (factoryType.equals("nio2")) {
          return new NIOSequentialFileFactory(new File(directory), true, 1);
-      }
-      else {
+      } else if (factoryType.equals("mmap")) {
+         return new MappedSequentialFileFactory(new File(directory), fileSize, false, 0, 0, null);
+      } else {
          return new NIOSequentialFileFactory(new File(directory), false, 1);
       }
    }
@@ -375,13 +400,12 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
                   journal.appendAddRecordTransactional(transactionId, id, (byte) 99, buffer.array());
 
                   if (++transactionCounter == transactionSize) {
-                     System.out.println("Commit transaction " + transactionId);
+                     log.debug("Commit transaction " + transactionId);
                      journal.appendCommitRecord(transactionId, true);
                      transactionCounter = 0;
                      transactionId = nextID.incrementAndGet();
                   }
-               }
-               else {
+               } else {
                   journal.appendAddRecord(id, (byte) 99, buffer.array(), false);
                }
             }
@@ -393,8 +417,7 @@ public class ValidateTransactionHealthTest extends ActiveMQTestBase {
             if (transactionSize == 0) {
                journal.debugWait();
             }
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             this.e = e;
          }
 

@@ -16,12 +16,15 @@
  */
 package org.apache.activemq.artemis.core.cluster;
 
+import java.security.AccessController;
+import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadFactory;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
@@ -35,7 +38,8 @@ import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.management.Notification;
 import org.apache.activemq.artemis.core.server.management.NotificationService;
-import org.apache.activemq.artemis.utils.TypedProperties;
+import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
+import org.apache.activemq.artemis.utils.collections.TypedProperties;
 import org.jboss.logging.Logger;
 
 /**
@@ -102,13 +106,22 @@ public final class DiscoveryGroup implements ActiveMQComponent {
          return;
       }
 
+      if (logger.isDebugEnabled()) logger.debug("Starting Discovery Group for " + name);
+
       endpoint.openClient();
 
       started = true;
 
-      thread = new Thread(new DiscoveryRunnable(), "activemq-discovery-group-thread-" + name);
+      ThreadFactory tfactory = AccessController.doPrivileged(new PrivilegedAction<ThreadFactory>() {
+         @Override
+         public ThreadFactory run() {
+            return new ActiveMQThreadFactory("DiscoveryGroup-" + System.identityHashCode(this), "activemq-discovery-group-thread-" + name, true, DiscoveryGroup.class.getClassLoader());
+         }
+      });
 
-      thread.setDaemon(true);
+      thread = tfactory.newThread(new DiscoveryRunnable());
+
+      if (logger.isDebugEnabled()) logger.debug("Starting daemon thread");
 
       thread.start();
 
@@ -136,6 +149,10 @@ public final class DiscoveryGroup implements ActiveMQComponent {
 
    @Override
    public void stop() {
+
+      if (logger.isDebugEnabled()) {
+         logger.debug("Stopping discovery. There's an exception just as a trace where it happened", new Exception("trace"));
+      }
       synchronized (this) {
          if (!started) {
             return;
@@ -150,8 +167,10 @@ public final class DiscoveryGroup implements ActiveMQComponent {
 
       try {
          endpoint.close(false);
-      }
-      catch (Exception e1) {
+         if (logger.isDebugEnabled()) {
+            logger.debug("endpoing closed");
+         }
+      } catch (Exception e1) {
          ActiveMQClientLogger.LOGGER.errorStoppingDiscoveryBroadcastEndpoint(endpoint, e1);
       }
 
@@ -163,12 +182,12 @@ public final class DiscoveryGroup implements ActiveMQComponent {
                ActiveMQClientLogger.LOGGER.timedOutStoppingDiscovery();
             }
          }
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
          throw new ActiveMQInterruptedException(e);
       }
 
       thread = null;
+      received = false;
 
       if (notificationService != null) {
          TypedProperties props = new TypedProperties();
@@ -176,8 +195,7 @@ public final class DiscoveryGroup implements ActiveMQComponent {
          Notification notification = new Notification(nodeID, CoreNotificationType.DISCOVERY_GROUP_STOPPED, props);
          try {
             notificationService.sendNotification(notification);
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             ActiveMQClientLogger.LOGGER.errorSendingNotifOnDiscoveryStop(e);
          }
       }
@@ -193,9 +211,7 @@ public final class DiscoveryGroup implements ActiveMQComponent {
    }
 
    public synchronized List<DiscoveryEntry> getDiscoveryEntries() {
-      List<DiscoveryEntry> list = new ArrayList<>(connectors.values());
-
-      return list;
+      return new ArrayList<>(connectors.values());
    }
 
    public boolean waitForBroadcast(final long timeout) {
@@ -207,8 +223,7 @@ public final class DiscoveryGroup implements ActiveMQComponent {
          while (started && !received && (toWait > 0 || timeout == 0)) {
             try {
                waitLock.wait(toWait);
-            }
-            catch (InterruptedException e) {
+            } catch (InterruptedException e) {
                throw new ActiveMQInterruptedException(e);
             }
 
@@ -238,8 +253,7 @@ public final class DiscoveryGroup implements ActiveMQComponent {
 
       if (currentUniqueID == null) {
          uniqueIDMap.put(originatingNodeID, uniqueID);
-      }
-      else {
+      } else {
          if (!currentUniqueID.equals(uniqueID)) {
             ActiveMQClientLogger.LOGGER.multipleServersBroadcastingSameNode(originatingNodeID);
             uniqueIDMap.put(originatingNodeID, uniqueID);
@@ -260,18 +274,22 @@ public final class DiscoveryGroup implements ActiveMQComponent {
                   data = endpoint.receiveBroadcast();
                   if (data == null) {
                      if (started) {
-                        // This is totally unexpected, so I'm not even bothering on creating
-                        // a log entry for that
-                        ActiveMQClientLogger.LOGGER.warn("Unexpected null data received from DiscoveryEndpoint");
+                        ActiveMQClientLogger.LOGGER.unexpectedNullDataReceived();
+                     }
+
+                     if (logger.isDebugEnabled()) {
+                        logger.debug("Received broadcast data as null");
                      }
                      break;
                   }
-               }
-               catch (Exception e) {
+
+                  if (logger.isDebugEnabled()) {
+                     logger.debug("receiving " + data.length);
+                  }
+               } catch (Exception e) {
                   if (!started) {
                      return;
-                  }
-                  else {
+                  } else {
                      ActiveMQClientLogger.LOGGER.errorReceivingPacketInDiscovery(e);
                   }
                }
@@ -285,11 +303,19 @@ public final class DiscoveryGroup implements ActiveMQComponent {
                checkUniqueID(originatingNodeID, uniqueID);
 
                if (nodeID.equals(originatingNodeID)) {
+
+                  if (logger.isDebugEnabled()) {
+                     logger.debug("ignoring original NodeID" + originatingNodeID + " receivedID = " + nodeID);
+                  }
                   if (checkExpiration()) {
                      callListeners();
                   }
                   // Ignore traffic from own node
                   continue;
+               }
+
+               if (logger.isDebugEnabled()) {
+                  logger.debug("Received nodeID " + nodeID + " with originatingID = " + originatingNodeID);
                }
 
                int size = buffer.readInt();
@@ -306,6 +332,15 @@ public final class DiscoveryGroup implements ActiveMQComponent {
                   entriesRead[i] = new DiscoveryEntry(originatingNodeID, connector, System.currentTimeMillis());
                }
 
+
+               if (logger.isDebugEnabled()) {
+                  logger.debug("Received " + entriesRead.length + " discovery entry elements");
+                  for (DiscoveryEntry entryDisco : entriesRead) {
+                     logger.debug("" + entryDisco);
+                  }
+               }
+
+
                synchronized (DiscoveryGroup.this) {
                   for (DiscoveryEntry entry : entriesRead) {
                      if (connectors.put(originatingNodeID, entry) == null) {
@@ -314,6 +349,10 @@ public final class DiscoveryGroup implements ActiveMQComponent {
                   }
 
                   changed = changed || checkExpiration();
+
+                  if (logger.isDebugEnabled()) {
+                     logger.debug("changed = " + changed);
+                  }
                }
                //only call the listeners if we have changed
                //also make sure that we aren't stopping to avoid deadlock
@@ -324,16 +363,21 @@ public final class DiscoveryGroup implements ActiveMQComponent {
                         logger.trace(connector);
                      }
                   }
+                  if (logger.isDebugEnabled()) {
+                     logger.debug("Calling listeners");
+                  }
                   callListeners();
                }
 
                synchronized (waitLock) {
                   received = true;
 
+                  if (logger.isDebugEnabled()) {
+                     logger.debug("Calling notifyAll");
+                  }
                   waitLock.notifyAll();
                }
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                ActiveMQClientLogger.LOGGER.failedToReceiveDatagramInDiscovery(e);
             }
          }
@@ -357,8 +401,7 @@ public final class DiscoveryGroup implements ActiveMQComponent {
       for (DiscoveryListener listener : listeners) {
          try {
             listener.connectorsChanged(getDiscoveryEntries());
-         }
-         catch (Throwable t) {
+         } catch (Throwable t) {
             // Catch it so exception doesn't prevent other listeners from running
             ActiveMQClientLogger.LOGGER.failedToCallListenerInDiscovery(t);
          }

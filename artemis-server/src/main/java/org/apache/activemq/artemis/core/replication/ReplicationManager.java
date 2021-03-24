@@ -25,21 +25,32 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.channel.EventLoop;
+import io.netty.channel.SingleThreadEventLoop;
+import io.netty.util.internal.PlatformDependent;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
-import org.apache.activemq.artemis.api.core.ActiveMQInterruptedException;
+import org.apache.activemq.artemis.api.core.ActiveMQReplicationTimeooutException;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.SessionFailureListener;
+import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
 import org.apache.activemq.artemis.core.io.SequentialFile;
 import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.paging.PagedMessage;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
+import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.persistence.impl.journal.AbstractJournalStorageManager;
+import org.apache.activemq.artemis.core.persistence.impl.journal.JournalStorageManager;
 import org.apache.activemq.artemis.core.persistence.impl.journal.OperationContextImpl;
 import org.apache.activemq.artemis.core.protocol.core.Channel;
 import org.apache.activemq.artemis.core.protocol.core.ChannelHandler;
@@ -63,10 +74,15 @@ import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.Replicatio
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ReplicationResponseMessageV2;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ReplicationStartSyncMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ReplicationSyncFileMessage;
+import org.apache.activemq.artemis.core.remoting.impl.netty.NettyConnection;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.ActiveMQMessageBundle;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
+import org.apache.activemq.artemis.core.server.cluster.ClusterManager;
+import org.apache.activemq.artemis.core.server.cluster.qourum.QuorumManager;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
+import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.spi.core.remoting.ReadyListener;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
 import org.apache.activemq.artemis.utils.ReusableLatch;
@@ -80,8 +96,7 @@ import org.jboss.logging.Logger;
  *
  * @see ReplicationEndpoint
  */
-public final class ReplicationManager implements ActiveMQComponent, ReadyListener {
-
+public final class ReplicationManager implements ActiveMQComponent {
 
    private static final Logger logger = Logger.getLogger(ReplicationManager.class);
 
@@ -91,8 +106,7 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
          public boolean toBoolean() {
             return true;
          }
-      },
-      ADD {
+      }, ADD {
          @Override
          public boolean toBoolean() {
             return false;
@@ -106,6 +120,8 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
       }
    }
 
+   private final ActiveMQServer server;
+
    private final ResponseHandler responseHandler = new ResponseHandler();
 
    private final Channel replicatingChannel;
@@ -114,41 +130,88 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
 
    private volatile boolean enabled;
 
-   private final AtomicBoolean writable = new AtomicBoolean(true);
-
-   private final Object replicationLock = new Object();
-
    private final Queue<OperationContext> pendingTokens = new ConcurrentLinkedQueue<>();
 
-   private final ExecutorFactory executorFactory;
+   private final ExecutorFactory ioExecutorFactory;
 
    private SessionFailureListener failureListener;
 
    private CoreRemotingConnection remotingConnection;
 
-   private final long timeout;
+   private final long maxAllowedSlownessNanos;
+
+   private final long initialReplicationSyncTimeout;
 
    private volatile boolean inSync = true;
 
    private final ReusableLatch synchronizationIsFinishedAcknowledgement = new ReusableLatch(0);
 
+   private static final class ReplicatePacketRequest {
+
+      final Packet packet;
+      final OperationContext context;
+      // Although this field is needed just during the initial sync,
+      // the JVM field layout would likely left 4 bytes of wasted space without it
+      // so it makes sense to use it instead.
+      final ReusableLatch done;
+
+      ReplicatePacketRequest(Packet packet, OperationContext context, ReusableLatch done) {
+         this.packet = packet;
+         this.context = context;
+         this.done = done;
+      }
+   }
+
+   private final Queue<ReplicatePacketRequest> replicatePacketRequests;
+   private final Executor replicationStream;
+   private final ScheduledExecutorService scheduledExecutorService;
+   private ScheduledFuture<?> slowReplicationChecker;
+   private long notWritableFrom;
+   private boolean checkSlowReplication;
+   private final ReadyListener onResume;
+   private boolean isFlushing;
+   private boolean awaitingResume;
+
    /**
     * @param remotingConnection
     */
-   public ReplicationManager(CoreRemotingConnection remotingConnection, final long timeout, final ExecutorFactory executorFactory) {
-      this.executorFactory = executorFactory;
+   public ReplicationManager(ActiveMQServer server,
+                             CoreRemotingConnection remotingConnection,
+                             final long timeout,
+                             final long initialReplicationSyncTimeout,
+                             final ExecutorFactory ioExecutorFactory) {
+      this.server = server;
+      this.ioExecutorFactory = ioExecutorFactory;
+      this.initialReplicationSyncTimeout = initialReplicationSyncTimeout;
       this.replicatingChannel = remotingConnection.getChannel(CHANNEL_ID.REPLICATION.id, -1);
       this.remotingConnection = remotingConnection;
-      this.timeout = timeout;
+      final Connection transportConnection = this.remotingConnection.getTransportConnection();
+      if (transportConnection instanceof NettyConnection) {
+         final EventLoop eventLoop = ((NettyConnection) transportConnection).getNettyChannel().eventLoop();
+         this.replicationStream = eventLoop;
+         this.scheduledExecutorService = eventLoop;
+      } else {
+         this.replicationStream = ioExecutorFactory.getExecutor();
+         this.scheduledExecutorService = null;
+      }
+      this.maxAllowedSlownessNanos = timeout > 0 ? TimeUnit.MILLISECONDS.toNanos(timeout) : -1;
+      this.replicatePacketRequests = PlatformDependent.newMpscQueue();
+      this.slowReplicationChecker = null;
+      this.notWritableFrom = Long.MAX_VALUE;
+      this.awaitingResume = false;
+      this.onResume = this::resume;
+      this.isFlushing = false;
+      this.checkSlowReplication = false;
    }
 
    public void appendUpdateRecord(final byte journalID,
                                   final ADD_OPERATION_TYPE operation,
                                   final long id,
                                   final byte recordType,
-                                  final EncodingSupport record) throws Exception {
+                                  final Persister persister,
+                                  final Object record) throws Exception {
       if (enabled) {
-         sendReplicatePacket(new ReplicationAddMessage(journalID, operation, id, recordType, record));
+         sendReplicatePacket(new ReplicationAddMessage(journalID, operation, id, recordType, persister, record));
       }
    }
 
@@ -163,9 +226,10 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
                                             final long txID,
                                             final long id,
                                             final byte recordType,
-                                            final EncodingSupport record) throws Exception {
+                                            final Persister persister,
+                                            final Object record) throws Exception {
       if (enabled) {
-         sendReplicatePacket(new ReplicationAddTXMessage(journalID, operation, txID, id, recordType, record));
+         sendReplicatePacket(new ReplicationAddTXMessage(journalID, operation, txID, id, recordType, persister, record));
       }
    }
 
@@ -235,9 +299,17 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
       }
    }
 
-   public void largeMessageDelete(final Long messageId) {
+   //we pass in storageManager to generate ID only if enabled
+   public void largeMessageDelete(final Long messageId, JournalStorageManager storageManager) {
       if (enabled) {
-         sendReplicatePacket(new ReplicationLargeMessageEndMessage(messageId));
+         long pendingRecordID = storageManager.generateID();
+         sendReplicatePacket(new ReplicationLargeMessageEndMessage(messageId, pendingRecordID, true));
+      }
+   }
+
+   public void largeMessageClosed(final Long messageId, JournalStorageManager storageManager) {
+      if (enabled) {
+         sendReplicatePacket(new ReplicationLargeMessageEndMessage(messageId, -1, false));
       }
    }
 
@@ -261,6 +333,25 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
       replicatingChannel.setHandler(responseHandler);
       failureListener = new ReplicatedSessionFailureListener();
       remotingConnection.addFailureListener(failureListener);
+      // only Netty connections can enable slow replication checker
+      if (scheduledExecutorService != null && maxAllowedSlownessNanos >= 0) {
+         long periodNanos = maxAllowedSlownessNanos / 10;
+         if (periodNanos > TimeUnit.SECONDS.toNanos(1)) {
+            periodNanos = TimeUnit.SECONDS.toNanos(1);
+         } else if (periodNanos < TimeUnit.MILLISECONDS.toNanos(100)) {
+            logger.warnf("The cluster call timeout is too low ie %d ms: consider raising it to save CPU",
+                         TimeUnit.NANOSECONDS.toMillis(maxAllowedSlownessNanos));
+            periodNanos = TimeUnit.MILLISECONDS.toNanos(100);
+         }
+         logger.debugf("Slow replication checker is running with a period of %d ms", TimeUnit.NANOSECONDS.toMillis(periodNanos));
+         // The slow detection has been implemented by using an always-on timer task
+         // instead of triggering one each time we detect an un-writable channel because:
+         // - getting temporarily an un-writable channel is rather common under load and scheduling/cancelling a
+         //   timed task is a CPU and GC intensive operation
+         // - choosing a period of 100-1000 ms lead to a reasonable and constant CPU utilization while idle too
+         slowReplicationChecker = scheduledExecutorService.scheduleAtFixedRate(this::checkSlowReplication,
+                                                                               periodNanos, periodNanos, TimeUnit.NANOSECONDS);
+      }
 
       started = true;
 
@@ -269,11 +360,21 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
 
    @Override
    public void stop() throws Exception {
+      stop(true);
+   }
+
+   public void stop(boolean clearTokens) throws Exception {
       synchronized (this) {
          if (!started) {
             logger.trace("Stopping being ignored as it hasn't been started");
             return;
          }
+
+         started = false;
+      }
+
+      if (logger.isTraceEnabled()) {
+         logger.trace("stop(clearTokens=" + clearTokens + ")", new Exception("Trace"));
       }
 
       // This is to avoid the write holding a lock while we are trying to close it
@@ -282,19 +383,23 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
          replicatingChannel.getConnection().getTransportConnection().fireReady(true);
       }
 
-      synchronized (replicationLock) {
-         enabled = false;
-         writable.set(true);
-         replicationLock.notifyAll();
+      if (slowReplicationChecker != null) {
+         slowReplicationChecker.cancel(false);
+         slowReplicationChecker = null;
+      }
+
+      enabled = false;
+
+      if (clearTokens) {
          clearReplicationTokens();
       }
 
       RemotingConnection toStop = remotingConnection;
       if (toStop != null) {
          toStop.removeFailureListener(failureListener);
+         toStop.destroy();
       }
       remotingConnection = null;
-      started = false;
    }
 
    /**
@@ -305,17 +410,13 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
     */
    public void clearReplicationTokens() {
       logger.trace("clearReplicationTokens initiating");
-      synchronized (replicationLock) {
-         logger.trace("clearReplicationTokens entered the lock");
-         while (!pendingTokens.isEmpty()) {
-            OperationContext ctx = pendingTokens.poll();
-            logger.trace("Calling ctx.replicationDone()");
-            try {
-               ctx.replicationDone();
-            }
-            catch (Throwable e) {
-               ActiveMQServerLogger.LOGGER.errorCompletingCallbackOnReplicationManager(e);
-            }
+      while (!pendingTokens.isEmpty()) {
+         OperationContext ctx = pendingTokens.poll();
+         logger.trace("Calling ctx.replicationDone()");
+         try {
+            ctx.replicationDone();
+         } catch (Throwable e) {
+            ActiveMQServerLogger.LOGGER.errorCompletingCallbackOnReplicationManager(e);
          }
       }
       logger.trace("clearReplicationTokens finished");
@@ -344,81 +445,146 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
    }
 
    private OperationContext sendReplicatePacket(final Packet packet, boolean lineUp) {
-      if (!enabled)
-         return null;
-      boolean runItNow = false;
+      return sendReplicatePacket(packet, lineUp, null);
+   }
 
-      OperationContext repliToken = OperationContextImpl.getContext(executorFactory);
+   private OperationContext sendReplicatePacket(final Packet packet, boolean lineUp, ReusableLatch done) {
+      if (!enabled) {
+         packet.release();
+         return null;
+      }
+
+      final OperationContext repliToken = OperationContextImpl.getContext(ioExecutorFactory);
       if (lineUp) {
          repliToken.replicationLineUp();
       }
-
-      synchronized (replicationLock) {
+      final ReplicatePacketRequest request = new ReplicatePacketRequest(packet, repliToken, done);
+      replicatePacketRequests.add(request);
+      replicationStream.execute(() -> {
          if (enabled) {
-            pendingTokens.add(repliToken);
-            if (!flowControl()) {
-               return repliToken;
-            }
-            replicatingChannel.send(packet);
+            sendReplicatedPackets(false);
+         } else {
+            releaseReplicatedPackets(replicatePacketRequests);
          }
-         else {
-            // Already replicating channel failed, so just play the action now
-            runItNow = true;
-         }
-      }
-
-      // Execute outside lock
-
-      if (runItNow) {
-         repliToken.replicationDone();
-      }
+      });
 
       return repliToken;
    }
 
-   /** This was written as a refactoring of sendReplicatePacket.
-    *  In case you refactor this in any way, this method must hold a lock on replication lock. .*/
-   private boolean flowControl() {
-      // synchronized (replicationLock) { -- I'm not adding this because the caller already has it
-      // future maintainers of this code please be aware that the intention here is hold the lock on replication lock
-      if (!replicatingChannel.getConnection().isWritable(this)) {
-         try {
-            logger.trace("flowControl waiting on writable");
-            writable.set(false);
-            //don't wait for ever as this may hang tests etc, we've probably been closed anyway
-            long now = System.currentTimeMillis();
-            long deadline = now + timeout;
-            while (!writable.get() && now < deadline)  {
-               replicationLock.wait(deadline - now);
-               now = System.currentTimeMillis();
-            }
-            logger.trace("flow control done");
-
-            if (!writable.get()) {
-               ActiveMQServerLogger.LOGGER.slowReplicationResponse();
-               logger.tracef("There was no response from replication backup after %s seconds, server being stopped now", System.currentTimeMillis() - now);
-               try {
-                  stop();
-               }
-               catch (Exception e) {
-                  logger.warn(e.getMessage(), e);
-               }
-               return false;
-            }
-         }
-         catch (InterruptedException e) {
-            throw new ActiveMQInterruptedException(e);
+   private void releaseReplicatedPackets(Queue<ReplicatePacketRequest> requests) {
+      assert checkEventLoop();
+      ReplicatePacketRequest req;
+      while ((req = requests.poll()) != null) {
+         req.packet.release();
+         req.context.replicationDone();
+         if (req.done != null) {
+            req.done.countDown();
          }
       }
-      return true;
    }
 
-   @Override
-   public void readyForWriting() {
-      synchronized (replicationLock) {
-         writable.set(true);
-         replicationLock.notifyAll();
+   private void checkSlowReplication() {
+      if (!enabled) {
+         return;
       }
+      assert checkEventLoop();
+      if (!checkSlowReplication) {
+         return;
+      }
+      final boolean isWritable = replicatingChannel.getConnection().blockUntilWritable(0);
+      if (isWritable) {
+         checkSlowReplication = false;
+         return;
+      }
+      final long elapsedNanosNotWritable = System.nanoTime() - notWritableFrom;
+      if (elapsedNanosNotWritable >= maxAllowedSlownessNanos) {
+         checkSlowReplication = false;
+         releaseReplicatedPackets(replicatePacketRequests);
+         try {
+            ActiveMQServerLogger.LOGGER.slowReplicationResponse();
+            stop();
+         } catch (Exception e) {
+            logger.warn(e.getMessage(), e);
+         }
+      }
+   }
+
+   private void resume() {
+      sendReplicatedPackets(true);
+   }
+
+   private void sendReplicatedPackets(boolean resume) {
+      assert checkEventLoop();
+      if (resume) {
+         awaitingResume = false;
+      }
+      // We try to:
+      // - save recursive calls of resume due to flushConnection
+      // - saving flush pending writes *if* the OS hasn't notified that's writable again
+      if (awaitingResume || isFlushing || !enabled) {
+         return;
+      }
+      if (replicatePacketRequests.isEmpty()) {
+         return;
+      }
+      isFlushing = true;
+      final CoreRemotingConnection connection = replicatingChannel.getConnection();
+      try {
+         while (connection.blockUntilWritable(0)) {
+            checkSlowReplication = false;
+            final ReplicatePacketRequest request = replicatePacketRequests.poll();
+            if (request == null) {
+               replicatingChannel.flushConnection();
+               // given that there isn't any more work to do, we're not interested
+               // to check writability state to trigger the slow connection check
+               return;
+            }
+            pendingTokens.add(request.context);
+            final Packet pack = request.packet;
+            final ReusableLatch done = request.done;
+            if (done != null) {
+               done.countDown();
+            }
+            replicatingChannel.send(pack, false);
+         }
+         replicatingChannel.flushConnection();
+         assert !awaitingResume;
+         // we care about writability just if there is some work to do
+         if (!replicatePacketRequests.isEmpty()) {
+            if (!connection.isWritable(onResume)) {
+               checkSlowReplication = true;
+               notWritableFrom = System.nanoTime();
+               awaitingResume = true;
+            } else {
+               // submit itself again to continue draining:
+               // we're not trying it again here to save read starvation
+               // NOTE: maybe it's redundant because there are already others in-flights requests
+               replicationStream.execute(() -> sendReplicatedPackets(false));
+            }
+         }
+      } catch (Throwable t) {
+         assert !(t instanceof AssertionError) : t.getMessage();
+         if (!connection.getTransportConnection().isOpen()) {
+            // that's an handled state: right after this cleanup is expected to be stopped/closed
+            // or get the failure listener to be called!
+            logger.trace("Transport connection closed: cleaning up replicate tokens", t);
+            releaseReplicatedPackets(replicatePacketRequests);
+            // cleanup ReadyListener without triggering any further write/flush
+            connection.getTransportConnection().fireReady(true);
+         } else {
+            logger.warn("Unexpected error while flushing replicate packets", t);
+         }
+      } finally {
+         isFlushing = false;
+      }
+   }
+
+   private boolean checkEventLoop() {
+      if (!(replicationStream instanceof SingleThreadEventLoop)) {
+         return true;
+      }
+      final SingleThreadEventLoop eventLoop = (SingleThreadEventLoop) replicationStream;
+      return eventLoop.inEventLoop();
    }
 
    /**
@@ -427,12 +593,13 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
     *                               packets were not sent with {@link #sendReplicatePacket(Packet)}.
     */
    private void replicated() {
+      assert checkEventLoop();
       OperationContext ctx = pendingTokens.poll();
 
       if (ctx == null) {
-         throw new IllegalStateException("Missing replication token on the queue.");
+         ActiveMQServerLogger.LOGGER.missingReplicationTokenOnQueue();
+         return;
       }
-
       ctx.replicationDone();
    }
 
@@ -445,15 +612,13 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
          if (me.getType() == ActiveMQExceptionType.DISCONNECTED) {
             // Backup has shut down - no need to log a stack trace
             ActiveMQServerLogger.LOGGER.replicationStopOnBackupShutdown();
-         }
-         else {
+         } else {
             ActiveMQServerLogger.LOGGER.replicationStopOnBackupFail(me);
          }
 
          try {
             stop();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             ActiveMQServerLogger.LOGGER.errorStoppingReplication(e);
          }
       }
@@ -515,10 +680,9 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
       }
       SequentialFile file = jf.getFile().cloneFile();
       try {
-         ActiveMQServerLogger.LOGGER.journalSynch(jf, file.size(), file);
+         ActiveMQServerLogger.LOGGER.replicaSyncFile(file, file.size());
          sendLargeFile(content, null, jf.getFileID(), file, Long.MAX_VALUE);
-      }
-      finally {
+      } finally {
          if (file.isOpen())
             file.close();
       }
@@ -555,39 +719,61 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
       if (!file.isOpen()) {
          file.open();
       }
+      final int size = 32 * 1024;
+
+      int flowControlSize = 10;
+
+      int packetsSent = 0;
+      final ReusableLatch flushed = new ReusableLatch(1);
+
       try {
-         try (final FileInputStream fis = new FileInputStream(file.getJavaFile());
-              final FileChannel channel = fis.getChannel()) {
+         try (FileInputStream fis = new FileInputStream(file.getJavaFile()); FileChannel channel = fis.getChannel()) {
+
             // We can afford having a single buffer here for this entire loop
             // because sendReplicatePacket will encode the packet as a NettyBuffer
             // through ActiveMQBuffer class leaving this buffer free to be reused on the next copy
-            final ByteBuffer buffer = ByteBuffer.allocate(1 << 17); // 1 << 17 == 131072 == 128 * 1024
             while (true) {
+               final ByteBuf buffer = PooledByteBufAllocator.DEFAULT.directBuffer(size, size);
                buffer.clear();
-               final int bytesRead = channel.read(buffer);
+               ByteBuffer byteBuffer = buffer.writerIndex(size).readerIndex(0).nioBuffer();
+               final int bytesRead = channel.read(byteBuffer);
                int toSend = bytesRead;
                if (bytesRead > 0) {
                   if (bytesRead >= maxBytesToSend) {
                      toSend = (int) maxBytesToSend;
                      maxBytesToSend = 0;
-                  }
-                  else {
+                  } else {
                      maxBytesToSend = maxBytesToSend - bytesRead;
                   }
-                  buffer.limit(toSend);
                }
-               buffer.rewind();
-
+               if (logger.isDebugEnabled()) {
+                  logger.debugf("sending %d bytes on file %s", buffer.writerIndex(), file.getFileName());
+               }
                // sending -1 or 0 bytes will close the file at the backup
-               sendReplicatePacket(new ReplicationSyncFileMessage(content, pageStore, id, toSend, buffer));
-               if (bytesRead == -1 || bytesRead == 0 || maxBytesToSend == 0)
+               final boolean lastPacket = bytesRead == -1 || bytesRead == 0 || maxBytesToSend == 0;
+               final boolean flowControlCheck = (packetsSent % flowControlSize == 0) || lastPacket;
+               if (flowControlCheck) {
+                  flushed.setCount(1);
+                  sendReplicatePacket(new ReplicationSyncFileMessage(content, pageStore, id, toSend, buffer), true, flushed);
+                  awaitFlushOfReplicationStream(flushed);
+               } else {
+                  sendReplicatePacket(new ReplicationSyncFileMessage(content, pageStore, id, toSend, buffer), true);
+               }
+               packetsSent++;
+
+               if (lastPacket)
                   break;
             }
          }
-      }
-      finally {
+      } finally {
          if (file.isOpen())
             file.close();
+      }
+   }
+
+   private void awaitFlushOfReplicationStream(ReusableLatch flushed) throws Exception {
+      if (!flushed.await(this.initialReplicationSyncTimeout, TimeUnit.MILLISECONDS)) {
+         throw ActiveMQMessageBundle.BUNDLE.replicationSynchronizationTimeout(initialReplicationSyncTimeout);
       }
    }
 
@@ -614,7 +800,7 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
     *
     * @param nodeID
     */
-   public void sendSynchronizationDone(String nodeID, long initialReplicationSyncTimeout) {
+   public void sendSynchronizationDone(String nodeID, long initialReplicationSyncTimeout, IOCriticalErrorListener criticalErrorListener) throws ActiveMQReplicationTimeooutException {
       if (enabled) {
 
          if (logger.isTraceEnabled()) {
@@ -625,11 +811,27 @@ public final class ReplicationManager implements ActiveMQComponent, ReadyListene
          sendReplicatePacket(new ReplicationStartSyncMessage(nodeID));
          try {
             if (!synchronizationIsFinishedAcknowledgement.await(initialReplicationSyncTimeout)) {
+               ActiveMQReplicationTimeooutException exception = ActiveMQMessageBundle.BUNDLE.replicationSynchronizationTimeout(initialReplicationSyncTimeout);
+
+               if (server != null) {
+                  try {
+                     ClusterManager clusterManager = server.getClusterManager();
+                     if (clusterManager != null) {
+                        QuorumManager manager = clusterManager.getQuorumManager();
+                        if (criticalErrorListener != null && manager != null && manager.getMaxClusterSize() <= 2) {
+                           criticalErrorListener.onIOException(exception, exception.getMessage(), null);
+                        }
+                     }
+                  } catch (Throwable e) {
+                     // if NPE or anything else, continue as nothing changed
+                     logger.warn(e.getMessage(), e);
+                  }
+               }
+
                logger.trace("sendSynchronizationDone wasn't finished in time");
-               throw ActiveMQMessageBundle.BUNDLE.replicationSynchronizationTimeout(initialReplicationSyncTimeout);
+               throw exception;
             }
-         }
-         catch (InterruptedException e) {
+         } catch (InterruptedException e) {
             logger.debug(e);
          }
          inSync = false;

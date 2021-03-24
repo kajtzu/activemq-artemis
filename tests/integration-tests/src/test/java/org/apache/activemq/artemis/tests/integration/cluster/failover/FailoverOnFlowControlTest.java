@@ -16,13 +16,12 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
-import org.apache.activemq.artemis.api.core.ActiveMQException;
-import org.junit.Test;
-
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -34,16 +33,16 @@ import org.apache.activemq.artemis.core.protocol.core.Packet;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionProducerCreditsMessage;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnection;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
+import org.jboss.logging.Logger;
+import org.junit.Test;
 
 public class FailoverOnFlowControlTest extends FailoverTestBase {
 
-   private static IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
-
+   private static final Logger log = Logger.getLogger(FailoverOnFlowControlTest.class);
    @Test
    public void testOverflowSend() throws Exception {
-      ServerLocator locator = getServerLocator().setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setReconnectAttempts(-1).setProducerWindowSize(1000).setRetryInterval(123);
+      ServerLocator locator = getServerLocator().setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setReconnectAttempts(300).setProducerWindowSize(1000).setRetryInterval(100);
       final ArrayList<ClientSession> sessionList = new ArrayList<>();
       Interceptor interceptorClient = new Interceptor() {
          AtomicInteger count = new AtomicInteger(0);
@@ -61,11 +60,9 @@ public class FailoverOnFlowControlTest extends FailoverTestBase {
                   try {
                      InVMConnection.setFlushEnabled(false);
                      crash(false, sessionList.get(0));
-                  }
-                  catch (Exception e) {
+                  } catch (Exception e) {
                      e.printStackTrace();
-                  }
-                  finally {
+                  } finally {
                      InVMConnection.setFlushEnabled(true);
                   }
                   return false;
@@ -81,7 +78,7 @@ public class FailoverOnFlowControlTest extends FailoverTestBase {
       ClientSession session = sf.createSession(true, true);
       sessionList.add(session);
 
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 

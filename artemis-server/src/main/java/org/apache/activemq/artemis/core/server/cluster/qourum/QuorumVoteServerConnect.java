@@ -16,55 +16,61 @@
  */
 package org.apache.activemq.artemis.core.server.cluster.qourum;
 
-import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.core.client.impl.Topology;
-import org.apache.activemq.artemis.core.persistence.StorageManager;
-
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.client.impl.Topology;
+import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
+
 /**
- * A Qourum Vote for deciding if a replicated backup should become live.
+ * A Quorum Vote for deciding if a replicated backup should become live.
  */
-public class QuorumVoteServerConnect extends QuorumVote<BooleanVote, Boolean> {
+public class QuorumVoteServerConnect extends QuorumVote<ServerConnectVote, Boolean> {
 
-   private static final SimpleString LIVE_FAILOVER_VOTE = new SimpleString("LIVE_FAILOVER)VOTE");
-   private final CountDownLatch latch;
+   public static final SimpleString LIVE_FAILOVER_VOTE = new SimpleString("LiveFailoverQuorumVote");
+   // this flag mark the end of the vote
+   private final CountDownLatch voteCompleted;
+   private final String targetNodeId;
+   private final String liveConnector;
+   private int votesNeeded;
 
-   private double votesNeeded;
-
-   private int total = 0;
-
-   private boolean decision = false;
+   // Is this the live requesting to stay live, or a backup requesting to become live.
+   private final boolean requestToStayLive;
 
    /**
-    * vote the remaining nodes not including ourself., so
-    * 1 remaining nodes would be 0/2 = 0 vote needed
-    * 2 remaining nodes would be 1/2 = 0 vote needed
-    * 3 remaining nodes would be 2/2 = 1 vote needed
-    * 4 remaining nodes would be 3/2 = 2 vote needed
-    * 5 remaining nodes would be 4/2 = 3 vote needed
-    * 6 remaining nodes would be 5/2 = 3 vote needed
+    * live nodes | remaining nodes |  majority   | votes needed
+    * 1      |       0         |     0       |      0
+    * 2      |       1         |     1       |      1
+    * n      |    r = n-1      |   n/2 + 1   |   n/2 + 1 rounded
+    * 3      |       2         |     2.5     |      2
+    * 4      |       3         |      3      |      3
+    * 5      |       4         |     3.5     |      3
+    * 6      |       5         |      4      |      4
     */
-   public QuorumVoteServerConnect(int size, StorageManager storageManager) {
+   public QuorumVoteServerConnect(int size, String targetNodeId, boolean requestToStayLive, String liveConnector) {
       super(LIVE_FAILOVER_VOTE);
-      //we don't count ourself
-      int actualSize = size - 1;
-      if (actualSize <= 2) {
-         votesNeeded = actualSize / 2;
-      }
-      else {
+      this.targetNodeId = targetNodeId;
+      this.liveConnector = liveConnector;
+      double majority;
+      if (size <= 2) {
+         majority = ((double) size) / 2;
+      } else {
          //even
-         votesNeeded = actualSize / 2 + 1;
+         majority = ((double) size) / 2 + 1;
       }
       //votes needed could be say 2.5 so we add 1 in this case
-      int latchSize = votesNeeded > (int) votesNeeded ? (int) votesNeeded + 1 : (int) votesNeeded;
-      latch = new CountDownLatch(latchSize);
+      votesNeeded = (int) majority;
+      voteCompleted = new CountDownLatch(1);
       if (votesNeeded == 0) {
-         decision = true;
+         voteCompleted.countDown();
       }
+      this.requestToStayLive = requestToStayLive;
    }
 
+   public QuorumVoteServerConnect(int size, String targetNodeId) {
+      this(size, targetNodeId, false, null);
+   }
    /**
     * if we can connect to a node
     *
@@ -72,9 +78,8 @@ public class QuorumVoteServerConnect extends QuorumVote<BooleanVote, Boolean> {
     */
    @Override
    public Vote connected() {
-      return new BooleanVote(true);
+      return new ServerConnectVote(targetNodeId, requestToStayLive, null);
    }
-
    /**
     * if we cant connect to the node
     *
@@ -86,45 +91,65 @@ public class QuorumVoteServerConnect extends QuorumVote<BooleanVote, Boolean> {
    }
 
    /**
-    * vote the remaining nodes not including ourself., so
-    * 1 remaining nodes would be 0/2 = 0 vote needed
-    * 2 remaining nodes would be 1/2 = 0 vote needed
-    * 3 remaining nodes would be 2/2 = 1 vote needed
-    * 4 remaining nodes would be 3/2 = 2 vote needed
-    * 5 remaining nodes would be 4/2 = 3 vote needed
-    * 6 remaining nodes would be 5/2 = 3 vote needed
+    * live nodes | remaining nodes |  majority   | votes needed
+    * 1      |       0         |     0       |      0
+    * 2      |       1         |     1       |      1
+    * n      |    r = n-1      |   n/2 + 1   |   n/2 + 1 rounded
+    * 3      |       2         |     2.5     |      2
+    * 4      |       3         |      3      |      3
+    * 5      |       4         |     3.5     |      3
+    * 6      |       5         |      4      |      4
     *
     * @param vote the vote to make.
     */
    @Override
-   public synchronized void vote(BooleanVote vote) {
-      if (decision)
+   public synchronized void vote(ServerConnectVote vote) {
+      if (voteCompleted.getCount() == 0) {
+         ActiveMQServerLogger.LOGGER.ignoredQuorumVote(vote);
          return;
+      }
       if (vote.getVote()) {
-         total++;
-         if (total >= votesNeeded) {
-            decision = true;
-            latch.countDown();
+         if (!requestToStayLive) {
+            acceptPositiveVote();
+         } else if (liveConnector.equals(vote.getTransportConfiguration())) {
+            acceptPositiveVote();
+         } else {
+            ActiveMQServerLogger.LOGGER.quorumBackupIsLive(vote.getTransportConfiguration());
          }
       }
    }
 
-   @Override
-   public void allVotesCast(Topology voteTopology) {
-
+   private synchronized void acceptPositiveVote() {
+      if (voteCompleted.getCount() == 0) {
+         throw new IllegalStateException("Cannot accept any new positive vote if the vote is completed or the decision is already taken");
+      }
+      votesNeeded--;
+      if (votesNeeded == 0) {
+         voteCompleted.countDown();
+      }
    }
 
    @Override
-   public Boolean getDecision() {
-      return decision;
+   public synchronized void allVotesCast(Topology voteTopology) {
+      if (voteCompleted.getCount() > 0) {
+         voteCompleted.countDown();
+      }
    }
 
    @Override
-   public SimpleString getName() {
-      return null;
+   public synchronized Boolean getDecision() {
+      return votesNeeded == 0;
    }
 
    public void await(int latchTimeout, TimeUnit unit) throws InterruptedException {
-      latch.await(latchTimeout, unit);
+      ActiveMQServerLogger.LOGGER.waitingForQuorumVoteResults(latchTimeout, unit.toString().toLowerCase());
+      if (voteCompleted.await(latchTimeout, unit))
+         ActiveMQServerLogger.LOGGER.receivedAllQuorumVotes();
+      else
+         ActiveMQServerLogger.LOGGER.timeoutWaitingForQuorumVoteResponses();
+   }
+
+   public boolean isRequestToStayLive() {
+      return requestToStayLive;
    }
 }

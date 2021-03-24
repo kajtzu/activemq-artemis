@@ -17,13 +17,15 @@
 
 package org.apache.activemq.artemis.tests.integration;
 
+import java.util.UUID;
+
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.tests.util.SingleServerTestBase;
 import org.junit.Test;
-
-import java.util.UUID;
 
 /**
  * A simple test-case used for documentation purposes.
@@ -43,7 +45,7 @@ public class SingleServerSimpleTest extends SingleServerTestBase {
       final String addressName = "simpleAddress";
 
       // Create a queue bound to a particular address where the test will send to & consume from.
-      session.createQueue(addressName, queueName);
+      session.createQueue(new QueueConfiguration(queueName).setAddress(addressName).setRoutingType(RoutingType.ANYCAST));
 
       // Create a producer to send a message to the previously created address.
       ClientProducer producer = session.createProducer(addressName);

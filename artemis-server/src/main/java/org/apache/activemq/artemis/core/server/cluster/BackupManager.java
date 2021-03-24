@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryInternal;
 import org.apache.activemq.artemis.core.client.impl.ServerLocatorImpl;
 import org.apache.activemq.artemis.core.client.impl.ServerLocatorInternal;
@@ -71,6 +72,12 @@ public class BackupManager implements ActiveMQComponent {
       this.clusterManager = clusterManager;
    }
 
+   /** This is meant for testing and assertions, please don't do anything stupid with it!
+    *  I mean, please don't use it outside of testing context */
+   public List<BackupConnector> getBackupConnectors() {
+      return backupConnectors;
+   }
+
    /*
    * Start the backup manager if not already started. This entails deploying a backup connector based on a cluster
    * configuration, informing the cluster manager so that it can add it to its topology and announce itself to the cluster.
@@ -81,11 +88,15 @@ public class BackupManager implements ActiveMQComponent {
          return;
       //deploy the backup connectors using the cluster configuration
       for (ClusterConnectionConfiguration config : configuration.getClusterConfigurations()) {
+         logger.debug("deploy backup config " + config);
          deployBackupConnector(config);
       }
-      //start each connector and if we are backup and shared store announce ourselves. NB with replication we dont do this
-      //as we wait for replication to start and be notififed by the replication manager.
+      //start each connector and if we are backup and shared store announce ourselves. NB with replication we don't do this
+      //as we wait for replication to start and be notified by the replication manager.
       for (BackupConnector conn : backupConnectors) {
+         if (logger.isDebugEnabled()) {
+            logger.debugf("****** BackupManager connecting to %s", conn);
+         }
          conn.start();
          if (server.getHAPolicy().isBackup() && server.getHAPolicy().isSharedStore()) {
             conn.informTopology();
@@ -139,8 +150,7 @@ public class BackupManager implements ActiveMQComponent {
          DiscoveryBackupConnector backupConnector = new DiscoveryBackupConnector(dg, config.getName(), connector, config.getRetryInterval(), clusterManager);
 
          backupConnectors.add(backupConnector);
-      }
-      else {
+      } else {
          TransportConfiguration[] tcConfigs = config.getTransportConfigurations(configuration);
 
          StaticBackupConnector backupConnector = new StaticBackupConnector(tcConfigs, config.getName(), connector, config.getRetryInterval(), clusterManager);
@@ -175,16 +185,21 @@ public class BackupManager implements ActiveMQComponent {
    /*
    * A backup connector will connect to the cluster and announce that we are a backup server ready to fail over.
    * */
-   private abstract class BackupConnector {
+   public abstract class BackupConnector {
 
       private volatile ServerLocatorInternal backupServerLocator;
       private String name;
       private TransportConfiguration connector;
-      private long retryInterval;
+      protected long retryInterval;
       private ClusterManager clusterManager;
-      private boolean stopping = false;
-      private boolean announcingBackup;
-      private boolean backupAnnounced = false;
+      private volatile boolean stopping = false;
+      private volatile boolean announcingBackup;
+      private volatile boolean backupAnnounced = false;
+
+      @Override
+      public String toString() {
+         return "BackupConnector{" + "name='" + name + '\'' + ", connector=" + connector + '}';
+      }
 
       private BackupConnector(String name,
                               TransportConfiguration connector,
@@ -201,6 +216,11 @@ public class BackupManager implements ActiveMQComponent {
       * */
       abstract ServerLocatorInternal createServerLocator(Topology topology);
 
+      /** This is for test assertions, please be careful, don't use outside of testing! */
+      public ServerLocator getBackupServerLocator() {
+         return backupServerLocator;
+      }
+
       /*
       * start the connector by creating the server locator to use.
       * */
@@ -216,7 +236,7 @@ public class BackupManager implements ActiveMQComponent {
             backupServerLocator.setIdentity("backupLocatorFor='" + server + "'");
             backupServerLocator.setReconnectAttempts(-1);
             backupServerLocator.setInitialConnectAttempts(-1);
-            backupServerLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(backupServerLocator));
+            backupServerLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(backupServerLocator, server.getStorageManager()));
          }
       }
 
@@ -236,7 +256,7 @@ public class BackupManager implements ActiveMQComponent {
                   ServerLocatorInternal localBackupLocator = backupServerLocator;
                   if (localBackupLocator == null) {
                      if (!stopping)
-                        ActiveMQServerLogger.LOGGER.error("Error announcing backup: backupServerLocator is null. " + this);
+                        ActiveMQServerLogger.LOGGER.errorAnnouncingBackup(this.toString());
                      return;
                   }
                   if (logger.isDebugEnabled()) {
@@ -253,30 +273,32 @@ public class BackupManager implements ActiveMQComponent {
                      ActiveMQServerLogger.LOGGER.backupAnnounced();
                      backupAnnounced = true;
                   }
-               }
-               catch (RejectedExecutionException e) {
+               } catch (RejectedExecutionException e) {
                   // assumption is that the whole server is being stopped. So the exception is ignored.
-               }
-               catch (Exception e) {
+               } catch (Exception e) {
                   if (scheduledExecutor.isShutdown())
                      return;
                   if (stopping)
                      return;
                   ActiveMQServerLogger.LOGGER.errorAnnouncingBackup(e);
 
-                  scheduledExecutor.schedule(new Runnable() {
-                     @Override
-                     public void run() {
-                        announceBackup();
-                     }
-
-                  }, retryInterval, TimeUnit.MILLISECONDS);
-               }
-               finally {
+                  retryConnection();
+               } finally {
                   announcingBackup = false;
                }
             }
          });
+      }
+
+      /** it will re-schedule the connection after a timeout, using a scheduled executor */
+      protected void retryConnection() {
+         scheduledExecutor.schedule(new Runnable() {
+            @Override
+            public void run() {
+               announceBackup();
+            }
+
+         }, retryInterval, TimeUnit.MILLISECONDS);
       }
 
       /*
@@ -345,7 +367,8 @@ public class BackupManager implements ActiveMQComponent {
             }
             ServerLocatorImpl locator = new ServerLocatorImpl(topology, true, tcConfigs);
             locator.setClusterConnection(true);
-            locator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(locator));
+            locator.setRetryInterval(retryInterval);
+            locator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(locator, server.getStorageManager()));
             return locator;
          }
          return null;
@@ -376,7 +399,7 @@ public class BackupManager implements ActiveMQComponent {
 
       @Override
       public ServerLocatorInternal createServerLocator(Topology topology) {
-         return new ServerLocatorImpl(topology, true, discoveryGroupConfiguration);
+         return new ServerLocatorImpl(topology, true, discoveryGroupConfiguration).setRetryInterval(retryInterval);
       }
 
       @Override

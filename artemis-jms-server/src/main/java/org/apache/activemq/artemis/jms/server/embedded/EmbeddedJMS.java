@@ -30,12 +30,17 @@ import org.apache.activemq.artemis.jms.server.impl.JMSServerManagerImpl;
 import org.apache.activemq.artemis.spi.core.naming.BindingRegistry;
 
 /**
+ * Deprecated in favor of org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ. Since Artemis 2.0 all JMS
+ * specific broker management classes, interfaces, and methods have been deprecated in favor of their more general
+ * counter-parts.
+ *
  * Simple bootstrap class that parses activemq config files (server and jms and security) and starts
  * an ActiveMQServer instance and populates it with configured JMS endpoints.
  * <p>
  * JMS Endpoints are registered with a simple MapBindingRegistry.  If you want to use a different registry
  * you must set the registry property of this class or call the setRegistry() method if you want to use JNDI
  */
+@Deprecated
 public class EmbeddedJMS extends EmbeddedActiveMQ {
 
    protected JMSServerManagerImpl serverManager;
@@ -81,20 +86,19 @@ public class EmbeddedJMS extends EmbeddedActiveMQ {
       return this;
    }
 
-
    @Override
    public EmbeddedJMS setConfiguration(Configuration configuration) {
       super.setConfiguration(configuration);
       return this;
    }
 
-      /**
-       * Lookup in the registry for registered object, i.e. a ConnectionFactory.
-       * <p>
-       * This is a convenience method.
-       *
-       * @param name
-       */
+   /**
+    * Lookup in the registry for registered object, i.e. a ConnectionFactory.
+    * <p>
+    * This is a convenience method.
+    *
+    * @param name
+    */
    public Object lookup(String name) {
       return serverManager.getRegistry().lookup(name);
    }
@@ -104,14 +108,12 @@ public class EmbeddedJMS extends EmbeddedActiveMQ {
       super.initStart();
       if (jmsConfiguration != null) {
          serverManager = new JMSServerManagerImpl(activeMQServer, jmsConfiguration);
-      }
-      else {
+      } else {
          FileJMSConfiguration fileConfiguration = new FileJMSConfiguration();
          FileDeploymentManager deploymentManager;
          if (configResourcePath != null) {
             deploymentManager = new FileDeploymentManager(configResourcePath);
-         }
-         else {
+         } else {
             deploymentManager = new FileDeploymentManager();
          }
          deploymentManager.addDeployable(fileConfiguration);

@@ -29,16 +29,17 @@ import org.junit.Test;
 
 public class MultipleThreadsOpeningTest extends JMSClusteredTestBase {
 
-   /** created for https://issues.apache.org/jira/browse/ARTEMIS-385 */
+   /**
+    * created for https://issues.apache.org/jira/browse/ARTEMIS-385
+    */
    @Test
    public void testRepetitions() throws Exception {
       // This test was eventually failing with way over more iterations.
       // you might increase it for debugging
       final int ITERATIONS = 50;
 
-
       for (int i = 0; i < ITERATIONS; i++) {
-         System.out.println("#test " + i);
+         instanceLog.info("#test " + i);
          internalMultipleOpen(200, 1);
          tearDown();
          setUp();
@@ -74,14 +75,13 @@ public class MultipleThreadsOpeningTest extends JMSClusteredTestBase {
 
                for (int i = 0; i < numberOfOpens; i++) {
                   if (i > 0 && i % 100 == 0)
-                     System.out.println("connections created on Thread " + Thread.currentThread() + " " + i);
+                     instanceLog.debug("connections created on Thread " + Thread.currentThread() + " " + i);
                   Connection conn = cf1.createConnection();
                   Session sess = conn.createSession(true, Session.AUTO_ACKNOWLEDGE);
                   sess.close();
                   conn.close();
                }
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
                errors++;
             }
@@ -104,8 +104,7 @@ public class MultipleThreadsOpeningTest extends JMSClusteredTestBase {
             assertFalse(t.isAlive());
             assertEquals("There are Errors on the test thread", 0, t.errors);
          }
-      }
-      finally {
+      } finally {
          for (ThreadOpen t : threads) {
             if (t.isAlive()) {
                t.interrupt();

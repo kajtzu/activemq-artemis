@@ -58,7 +58,7 @@ public class ActiveMQJMSContext implements JMSContext {
    private volatile Message lastMessagesWaitingAck;
 
    private final ActiveMQConnectionForContext connection;
-   private Session session;
+   private volatile Session session;
    private boolean autoStart = ActiveMQJMSContext.DEFAULT_AUTO_START;
    private MessageProducer innerProducer;
    private boolean xa;
@@ -91,6 +91,7 @@ public class ActiveMQJMSContext implements JMSContext {
    }
 
    public Session getSession() {
+      checkSession();
       return session;
    }
 
@@ -111,8 +112,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return new ActiveMQJMSProducer(this, getInnerProducer());
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -137,12 +137,10 @@ public class ActiveMQJMSContext implements JMSContext {
                try {
                   if (xa) {
                      session = ((XAConnection) connection).createXASession();
-                  }
-                  else {
+                  } else {
                      session = connection.createSession(sessionMode);
                   }
-               }
-               catch (JMSException e) {
+               } catch (JMSException e) {
                   throw JmsExceptionUtils.convertToRuntimeException(e);
                }
             }
@@ -154,8 +152,7 @@ public class ActiveMQJMSContext implements JMSContext {
    public String getClientID() {
       try {
          return connection.getClientID();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -164,8 +161,7 @@ public class ActiveMQJMSContext implements JMSContext {
    public void setClientID(String clientID) {
       try {
          connection.setClientID(clientID);
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -174,8 +170,7 @@ public class ActiveMQJMSContext implements JMSContext {
    public ConnectionMetaData getMetaData() {
       try {
          return connection.getMetaData();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -184,8 +179,7 @@ public class ActiveMQJMSContext implements JMSContext {
    public ExceptionListener getExceptionListener() {
       try {
          return connection.getExceptionListener();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -194,8 +188,7 @@ public class ActiveMQJMSContext implements JMSContext {
    public void setExceptionListener(ExceptionListener listener) {
       try {
          connection.setExceptionListener(listener);
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -204,8 +197,7 @@ public class ActiveMQJMSContext implements JMSContext {
    public void start() {
       try {
          connection.start();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -215,8 +207,7 @@ public class ActiveMQJMSContext implements JMSContext {
       threadAwareContext.assertNotMessageListenerThreadRuntime();
       try {
          connection.stop();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -242,8 +233,7 @@ public class ActiveMQJMSContext implements JMSContext {
             connection.closeFromContext();
             closed = true;
          }
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -253,8 +243,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createBytesMessage();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -264,8 +253,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createMapMessage();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -275,8 +263,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createMessage();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -286,8 +273,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createObjectMessage();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -297,8 +283,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createObjectMessage(object);
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -308,8 +293,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createStreamMessage();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -319,8 +303,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createTextMessage();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -330,8 +313,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createTextMessage(text);
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -341,8 +323,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.getTransacted();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -358,8 +339,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          session.commit();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -370,8 +350,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          session.rollback();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -381,8 +360,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          session.recover();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -394,8 +372,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createConsumer(destination));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -407,8 +384,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createConsumer(destination, messageSelector));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -420,8 +396,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createConsumer(destination, messageSelector, noLocal));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -431,8 +406,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createQueue(queueName);
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -442,8 +416,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createTopic(topicName);
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -455,8 +428,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createDurableConsumer(topic, name));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -468,8 +440,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createDurableConsumer(topic, name, messageSelector, noLocal));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -481,8 +452,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createSharedDurableConsumer(topic, name));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -494,8 +464,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createSharedDurableConsumer(topic, name, messageSelector));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -507,8 +476,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createSharedConsumer(topic, sharedSubscriptionName));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -520,8 +488,7 @@ public class ActiveMQJMSContext implements JMSContext {
          ActiveMQJMSConsumer consumer = new ActiveMQJMSConsumer(this, session.createSharedConsumer(topic, sharedSubscriptionName, messageSelector));
          checkAutoStart();
          return consumer;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -533,8 +500,7 @@ public class ActiveMQJMSContext implements JMSContext {
          QueueBrowser browser = session.createBrowser(queue);
          checkAutoStart();
          return browser;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -546,8 +512,7 @@ public class ActiveMQJMSContext implements JMSContext {
          QueueBrowser browser = session.createBrowser(queue, messageSelector);
          checkAutoStart();
          return browser;
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -557,8 +522,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createTemporaryQueue();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -568,8 +532,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          return session.createTemporaryTopic();
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -579,8 +542,7 @@ public class ActiveMQJMSContext implements JMSContext {
       checkSession();
       try {
          session.unsubscribe(name);
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }
@@ -594,8 +556,7 @@ public class ActiveMQJMSContext implements JMSContext {
          if (lastMessagesWaitingAck != null) {
             lastMessagesWaitingAck.acknowledge();
          }
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          throw JmsExceptionUtils.convertToRuntimeException(e);
       }
    }

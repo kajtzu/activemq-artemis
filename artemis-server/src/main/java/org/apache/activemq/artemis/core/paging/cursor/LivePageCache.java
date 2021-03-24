@@ -18,7 +18,7 @@ package org.apache.activemq.artemis.core.paging.cursor;
 
 import org.apache.activemq.artemis.core.paging.PagedMessage;
 
-public interface LivePageCache extends PageCache {
+public interface LivePageCache extends BulkPageCache {
 
    void addLiveMessage(PagedMessage message);
 }

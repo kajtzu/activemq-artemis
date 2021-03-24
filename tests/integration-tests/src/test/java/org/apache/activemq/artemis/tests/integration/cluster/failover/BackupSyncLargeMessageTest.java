@@ -16,8 +16,17 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
+import java.io.File;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -26,14 +35,6 @@ import org.apache.activemq.artemis.core.client.impl.ServerLocatorInternal;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.io.File;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class BackupSyncLargeMessageTest extends BackupSyncJournalTest {
 
@@ -110,7 +111,7 @@ public class BackupSyncLargeMessageTest extends BackupSyncJournalTest {
    @Test
    public void testBackupStartsWhenLiveIsReceivingLargeMessage() throws Exception {
       final ClientSession session = addClientSession(sessionFactory.createSession(true, true));
-      session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS));
       final ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
       final ClientMessage message = session.createMessage(true);
       final int largeMessageSize = 1000 * MIN_LARGE_MESSAGE;
@@ -128,12 +129,10 @@ public class BackupSyncLargeMessageTest extends BackupSyncJournalTest {
                producer.send(message);
                sendMessages(session, producer, 20);
                session.commit();
-            }
-            catch (ActiveMQException e) {
+            } catch (ActiveMQException e) {
                e.printStackTrace();
                caughtException.set(true);
-            }
-            finally {
+            } finally {
                latch2.countDown();
             }
          }

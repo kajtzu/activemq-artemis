@@ -20,13 +20,16 @@ import java.security.AccessControlContext;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class ActiveMQThreadFactory implements ThreadFactory {
 
-   private final ThreadGroup group;
+   private String groupName;
 
    private final AtomicInteger threadCount = new AtomicInteger(0);
+
+   private final ReusableLatch active = new ReusableLatch(0);
 
    private final int threadPriority;
 
@@ -36,16 +39,32 @@ public final class ActiveMQThreadFactory implements ThreadFactory {
 
    private final AccessControlContext acc;
 
+   private final String prefix;
+
    /**
     * Construct a new instance.  The access control context of the calling thread will be the one used to create
     * new threads if a security manager is installed.
     *
     * @param groupName the name of the thread group to assign threads to by default
-    * @param daemon whether the created threads should be daemon threads
-    * @param tccl the context class loader of newly created threads
+    * @param daemon    whether the created threads should be daemon threads
+    * @param tccl      the context class loader of newly created threads
     */
    public ActiveMQThreadFactory(final String groupName, final boolean daemon, final ClassLoader tccl) {
-      group = new ThreadGroup(groupName + "-" + System.identityHashCode(this));
+      this(groupName, "Thread-", daemon, tccl);
+   }
+
+   /**
+    * Construct a new instance.  The access control context of the calling thread will be the one used to create
+    * new threads if a security manager is installed.
+    *
+    * @param groupName the name of the thread group to assign threads to by default
+    * @param daemon    whether the created threads should be daemon threads
+    * @param tccl      the context class loader of newly created threads
+    */
+   public ActiveMQThreadFactory(final String groupName, String prefix, final boolean daemon, final ClassLoader tccl) {
+      this.groupName = groupName;
+
+      this.prefix = prefix;
 
       this.threadPriority = Thread.NORM_PRIORITY;
 
@@ -61,8 +80,7 @@ public final class ActiveMQThreadFactory implements ThreadFactory {
       // create a thread in a privileged block if running with Security Manager
       if (acc != null) {
          return AccessController.doPrivileged(new ThreadCreateAction(command), acc);
-      }
-      else {
+      } else {
          return createThread(command);
       }
    }
@@ -81,8 +99,28 @@ public final class ActiveMQThreadFactory implements ThreadFactory {
       }
    }
 
+   /** It will wait all threads to finish */
+   public boolean join(int timeout, TimeUnit timeUnit) {
+      try {
+         return active.await(timeout, timeUnit);
+      } catch (InterruptedException e) {
+         Thread.currentThread().interrupt();
+         return false;
+      }
+   }
+
    private Thread createThread(final Runnable command) {
-      final Thread t = new Thread(group, command, "Thread-" + threadCount.getAndIncrement() + " (" + group.getName() + ")");
+      active.countUp();
+      final Thread t = new Thread(command, prefix + threadCount.getAndIncrement() + " (" + groupName + ")") {
+         @Override
+         public void run() {
+            try {
+               command.run();
+            } finally {
+               active.countDown();
+            }
+         }
+      };
       t.setDaemon(daemon);
       t.setPriority(threadPriority);
       t.setContextClassLoader(tccl);

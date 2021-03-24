@@ -27,11 +27,13 @@ import javax.jms.TextMessage;
 
 import org.apache.activemq.command.ActiveMQDestination;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
  * adapted from: org.apache.activemq.JmsTopicWildcardSendReceiveTest
  */
+@Ignore
 public class JmsTopicWildcardSendReceiveTest extends JmsTopicSendReceiveTest {
 
    private String destination1String = "TEST.ONE.ONE";
@@ -156,31 +158,6 @@ public class JmsTopicWildcardSendReceiveTest extends JmsTopicSendReceiveTest {
       }
       assertNull(consumer.receiveNoWait());
 
-   }
-
-   @Test
-   public void testReceiveWildcardTopicMatchDoubleWildcard() throws Exception {
-      connection.start();
-      Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-
-      ActiveMQDestination destination1 = (ActiveMQDestination) session.createTopic("a.*.>.>");
-      ActiveMQDestination destination2 = (ActiveMQDestination) session.createTopic("a.b");
-
-      Message m = null;
-      MessageConsumer consumer = null;
-      String text = null;
-
-      consumer = session.createConsumer(destination1);
-      sendMessage(session, destination2, destination3String);
-
-      m = consumer.receive(1000);
-      assertNotNull(m);
-      text = ((TextMessage) m).getText();
-      if (!(text.equals(destination1String) || text.equals(destination3String))) {
-         fail("unexpected message:" + text);
-      }
-
-      assertNull(consumer.receiveNoWait());
    }
 
    @Test

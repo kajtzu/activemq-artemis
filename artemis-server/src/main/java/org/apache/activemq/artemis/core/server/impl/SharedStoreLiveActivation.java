@@ -16,8 +16,16 @@
  */
 package org.apache.activemq.artemis.core.server.impl;
 
+import java.io.IOException;
+import java.nio.channels.ClosedChannelException;
+
+import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
+import org.apache.activemq.artemis.core.server.ActiveMQLockAcquisitionTimeoutException;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.NodeManager;
+import org.apache.activemq.artemis.core.server.NodeManager.LockListener;
+import org.apache.activemq.artemis.core.server.NodeManager.NodeManagerException;
 import org.apache.activemq.artemis.core.server.cluster.ha.SharedStoreMasterPolicy;
 import org.jboss.logging.Logger;
 
@@ -25,14 +33,23 @@ public final class SharedStoreLiveActivation extends LiveActivation {
 
    private static final Logger logger = Logger.getLogger(SharedStoreLiveActivation.class);
 
-   //this is how we act when we initially start as live
-   private SharedStoreMasterPolicy sharedStoreMasterPolicy;
+   // this is how we act when we initially start as live
+   private final SharedStoreMasterPolicy sharedStoreMasterPolicy;
 
-   private ActiveMQServerImpl activeMQServer;
+   private final ActiveMQServerImpl activeMQServer;
 
-   public SharedStoreLiveActivation(ActiveMQServerImpl server, SharedStoreMasterPolicy sharedStoreMasterPolicy) {
+   private volatile LockListener activeLockListener;
+
+   private volatile ActivateCallback nodeManagerActivateCallback;
+
+   private final IOCriticalErrorListener ioCriticalErrorListener;
+
+   public SharedStoreLiveActivation(ActiveMQServerImpl server,
+                                    SharedStoreMasterPolicy sharedStoreMasterPolicy,
+                                    IOCriticalErrorListener ioCriticalErrorListener) {
       this.activeMQServer = server;
       this.sharedStoreMasterPolicy = sharedStoreMasterPolicy;
+      this.ioCriticalErrorListener = ioCriticalErrorListener;
    }
 
    @Override
@@ -51,31 +68,68 @@ public final class SharedStoreLiveActivation extends LiveActivation {
 
          if (activeMQServer.getNodeManager().isBackupLive()) {
             /*
-             * looks like we've failed over at some point need to inform that we are the backup
-             * so when the current live goes down they failover to us
+             * looks like we've failed over at some point need to inform that we are the
+             * backup so when the current live goes down they failover to us
              */
             if (logger.isDebugEnabled()) {
                logger.debug("announcing backup to the former live" + this);
             }
             activeMQServer.getBackupManager().start();
+
+            if (!sharedStoreMasterPolicy.isWaitForActivation())
+               activeMQServer.setState(ActiveMQServerImpl.SERVER_STATE.STARTED);
+
             activeMQServer.getBackupManager().announceBackup();
          }
 
-         activeMQServer.registerActivateCallback(activeMQServer.getNodeManager().startLiveNode());
+         registerActiveLockListener(activeMQServer.getNodeManager());
+         nodeManagerActivateCallback = activeMQServer.getNodeManager().startLiveNode();
+         activeMQServer.registerActivateCallback(nodeManagerActivateCallback);
 
-         if (activeMQServer.getState() == ActiveMQServerImpl.SERVER_STATE.STOPPED || activeMQServer.getState() == ActiveMQServerImpl.SERVER_STATE.STOPPING) {
+         if (activeMQServer.getState() == ActiveMQServerImpl.SERVER_STATE.STOPPED
+               || activeMQServer.getState() == ActiveMQServerImpl.SERVER_STATE.STOPPING) {
             return;
          }
 
          activeMQServer.initialisePart2(false);
 
-         activeMQServer.completeActivation();
+         activeMQServer.completeActivation(false);
 
          ActiveMQServerLogger.LOGGER.serverIsLive();
+      } catch (NodeManagerException nodeManagerException) {
+         if (nodeManagerException.getCause() instanceof ClosedChannelException) {
+            // this is ok, we are being stopped
+            return;
+         }
+         if (nodeManagerException.getCause() instanceof ActiveMQLockAcquisitionTimeoutException) {
+            onActivationFailure((ActiveMQLockAcquisitionTimeoutException) nodeManagerException.getCause());
+            return;
+         }
+         unregisterActiveLockListener(activeMQServer.getNodeManager());
+         ioCriticalErrorListener.onIOException(nodeManagerException, nodeManagerException.getMessage(), null);
+      } catch (Exception e) {
+         onActivationFailure(e);
       }
-      catch (Exception e) {
-         ActiveMQServerLogger.LOGGER.initializationError(e);
-         activeMQServer.callActivationFailureListeners(e);
+   }
+
+   private void onActivationFailure(Exception e) {
+      unregisterActiveLockListener(activeMQServer.getNodeManager());
+      ActiveMQServerLogger.LOGGER.initializationError(e);
+      activeMQServer.callActivationFailureListeners(e);
+   }
+
+   private void registerActiveLockListener(NodeManager nodeManager) {
+      LockListener lockListener = () ->
+         ioCriticalErrorListener.onIOException(new IOException("lost lock"), "Lost NodeManager lock", null);
+      activeLockListener = lockListener;
+      nodeManager.registerLockListener(lockListener);
+   }
+
+   private void unregisterActiveLockListener(NodeManager nodeManager) {
+      LockListener activeLockListener = this.activeLockListener;
+      if (activeLockListener != null) {
+         nodeManager.unregisterLockListener(activeLockListener);
+         this.activeLockListener = null;
       }
    }
 
@@ -85,12 +139,24 @@ public final class SharedStoreLiveActivation extends LiveActivation {
       NodeManager nodeManagerInUse = activeMQServer.getNodeManager();
 
       if (nodeManagerInUse != null) {
-         if (sharedStoreMasterPolicy.isFailoverOnServerShutdown() || permanently) {
-            nodeManagerInUse.crashLiveServer();
+         unregisterActiveLockListener(nodeManagerInUse);
+         ActivateCallback activateCallback = nodeManagerActivateCallback;
+         if (activateCallback != null) {
+            activeMQServer.unregisterActivateCallback(activateCallback);
          }
-         else {
+         if (sharedStoreMasterPolicy.isFailoverOnServerShutdown() || permanently) {
+            try {
+               nodeManagerInUse.crashLiveServer();
+            } catch (Throwable t) {
+               if (!permanently) {
+                  throw t;
+               }
+               logger.warn("Errored while closing activation: can be ignored because of permanent close", t);
+            }
+         } else {
             nodeManagerInUse.pauseLiveServer();
          }
+
       }
    }
 }

@@ -17,16 +17,13 @@
 package org.apache.activemq.artemis.tests.unit.core.remoting;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
-import org.junit.Before;
 import org.junit.After;
-
-import org.junit.Test;
-
 import org.junit.Assert;
-
-import org.apache.activemq.artemis.api.core.SimpleString;
+import org.junit.Before;
+import org.junit.Test;
 
 public abstract class ActiveMQBufferTestBase extends ActiveMQTestBase {
    // Constants -----------------------------------------------------
@@ -162,6 +159,27 @@ public abstract class ActiveMQBufferTestBase extends ActiveMQTestBase {
    }
 
    @Test
+   public void testPutNullableTrueBoolean() throws Exception {
+      wrapper.writeNullableBoolean(true);
+
+      Assert.assertTrue(wrapper.readNullableBoolean());
+   }
+
+   @Test
+   public void testPutNullableFalseBoolean() throws Exception {
+      wrapper.writeNullableBoolean(false);
+
+      Assert.assertFalse(wrapper.readNullableBoolean());
+   }
+
+   @Test
+   public void testNullBoolean() throws Exception {
+      wrapper.writeNullableBoolean(null);
+
+      Assert.assertNull(wrapper.readNullableBoolean());
+   }
+
+   @Test
    public void testChar() throws Exception {
       wrapper.writeChar('a');
 
@@ -196,6 +214,21 @@ public abstract class ActiveMQBufferTestBase extends ActiveMQTestBase {
       wrapper.writeLong(l);
 
       Assert.assertEquals(l, wrapper.readLong());
+   }
+
+   @Test
+   public void testNullableLong() throws Exception {
+      Long l = RandomUtil.randomLong();
+      wrapper.writeNullableLong(l);
+
+      Assert.assertEquals(l, wrapper.readNullableLong());
+   }
+
+   @Test
+   public void testNullLong() throws Exception {
+      wrapper.writeNullableLong(null);
+
+      Assert.assertNull(wrapper.readNullableLong());
    }
 
    @Test

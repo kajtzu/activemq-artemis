@@ -63,22 +63,20 @@ public class URIParserTest {
       myFruit.setFluentName("apples&bananas with &host=3344");
       URI uri = parser.createSchema("fruit", myFruit);
 
-      Fruit newFruit = (Fruit)parser.newObject(uri, "something");
+      Fruit newFruit = (Fruit) parser.newObject(uri, "something");
 
       Assert.assertEquals(myFruit.getHost(), newFruit.getHost());
       Assert.assertEquals(myFruit.getFluentName(), newFruit.getFluentName());
 
-
-
    }
 
    /**
-    * Even thought there's no host Poperty on FruitBase.. this should still work fine without throwing any exceptions
+    * Even thought there's no host Property on FruitBase.. this should still work fine without throwing any exceptions
     *
     * @throws Throwable
     */
    @Test
-   public void testSchemaNoHosPropertyt() throws Throwable {
+   public void testSchemaNoHosProperty() throws Throwable {
       FruitParser parser = new FruitParser();
       FruitBase fruit = parser.newObject(new URI("base://some:guy@fair-market:3030?color=green&fluentName=something"), null);
       Assert.assertEquals("base", fruit.getName());
@@ -87,7 +85,7 @@ public class URIParserTest {
    }
 
    /**
-    * Even thought there's no host Poperty on FruitBase.. this should still work fine without throwing any exceptions
+    * Even thought there's no host Property on FruitBase.. this should still work fine without throwing any exceptions
     *
     * @throws Throwable
     */
@@ -96,7 +94,6 @@ public class URIParserTest {
       FruitParser parser = new FruitParser();
       Fruit fruit = (Fruit) parser.newObject(new URI("fruit://some:guy@port?color=green&fluentName=something"), null);
 
-      System.out.println("fruit:" + fruit);
       Assert.assertEquals("fruit", fruit.getName());
       Assert.assertEquals("green", fruit.getColor());
       Assert.assertEquals("something", fruit.getFluentName());
@@ -106,22 +103,18 @@ public class URIParserTest {
    public void testQueryConversion() throws Exception {
       Map<String, String> query = new HashMap<>();
       String queryString = URISupport.createQueryString(query);
-      System.out.println("queryString1: " + queryString);
       Assert.assertTrue(queryString.isEmpty());
 
       query.put("key1", "value1");
       queryString = URISupport.createQueryString(query);
-      System.out.println("queryString2: " + queryString);
       Assert.assertEquals("key1=value1", queryString);
 
       query.put("key3", "value3");
       queryString = URISupport.createQueryString(query);
-      System.out.println("queryString3: " + queryString);
       Assert.assertEquals("key1=value1&key3=value3", queryString);
 
       query.put("key2", "value2");
       queryString = URISupport.createQueryString(query);
-      System.out.println("queryString4: " + queryString);
       Assert.assertEquals("key1=value1&key2=value2&key3=value3", queryString);
 
    }

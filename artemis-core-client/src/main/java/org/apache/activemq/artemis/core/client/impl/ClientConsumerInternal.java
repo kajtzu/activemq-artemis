@@ -29,6 +29,8 @@ public interface ClientConsumerInternal extends ClientConsumer {
 
    SimpleString getFilterString();
 
+   int getPriority();
+
    boolean isBrowseOnly();
 
    void handleMessage(ClientMessageInternal message) throws Exception;
@@ -37,9 +39,11 @@ public interface ClientConsumerInternal extends ClientConsumer {
 
    void handleLargeMessageContinuation(byte[] chunk, int flowControlSize, boolean isContinues) throws Exception;
 
-   void flowControl(final int messageBytes, final boolean discountSlowConsumer) throws ActiveMQException;
+   void flowControl(int messageBytes, boolean discountSlowConsumer) throws ActiveMQException;
 
    void clear(boolean waitForOnMessage) throws ActiveMQException;
+
+   Thread getCurrentThread();
 
    /**
     * To be called by things like MDBs during shutdown of the server
@@ -52,6 +56,8 @@ public interface ClientConsumerInternal extends ClientConsumer {
    void clearAtFailover();
 
    int getClientWindowSize();
+
+   int getInitialWindowSize();
 
    int getBufferSize();
 
@@ -68,4 +74,6 @@ public interface ClientConsumerInternal extends ClientConsumer {
    void start();
 
    ClientSession.QueueQuery getQueueInfo();
+
+   long getForceDeliveryCount();
 }

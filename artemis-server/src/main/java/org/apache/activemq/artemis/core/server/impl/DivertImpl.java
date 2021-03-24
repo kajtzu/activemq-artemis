@@ -16,14 +16,16 @@
  */
 package org.apache.activemq.artemis.core.server.impl;
 
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
 import org.apache.activemq.artemis.core.server.Divert;
+import org.apache.activemq.artemis.core.server.ComponentConfigurationRoutingType;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.core.server.ServerMessage;
-import org.apache.activemq.artemis.core.server.cluster.Transformer;
+import org.apache.activemq.artemis.core.server.transformer.Transformer;
 import org.jboss.logging.Logger;
 
 /**
@@ -35,7 +37,9 @@ public class DivertImpl implements Divert {
 
    private final PostOffice postOffice;
 
-   private final SimpleString forwardAddress;
+   private final SimpleString address;
+
+   private volatile SimpleString forwardAddress;
 
    private final SimpleString uniqueName;
 
@@ -43,20 +47,26 @@ public class DivertImpl implements Divert {
 
    private final boolean exclusive;
 
-   private final Filter filter;
+   private volatile Filter filter;
 
-   private final Transformer transformer;
+   private volatile Transformer transformer;
 
    private final StorageManager storageManager;
 
-   public DivertImpl(final SimpleString forwardAddress,
-                     final SimpleString uniqueName,
+   private volatile ComponentConfigurationRoutingType routingType;
+
+   public DivertImpl(final SimpleString uniqueName,
+                     final SimpleString address,
+                     final SimpleString forwardAddress,
                      final SimpleString routingName,
                      final boolean exclusive,
                      final Filter filter,
                      final Transformer transformer,
                      final PostOffice postOffice,
-                     final StorageManager storageManager) {
+                     final StorageManager storageManager,
+                     final ComponentConfigurationRoutingType routingType) {
+      this.address = address;
+
       this.forwardAddress = forwardAddress;
 
       this.uniqueName = uniqueName;
@@ -72,10 +82,12 @@ public class DivertImpl implements Divert {
       this.postOffice = postOffice;
 
       this.storageManager = storageManager;
+
+      this.routingType = routingType;
    }
 
    @Override
-   public void route(final ServerMessage message, final RoutingContext context) throws Exception {
+   public void route(final Message message, final RoutingContext context) throws Exception {
       // We must make a copy of the message, otherwise things like returning credits to the page won't work
       // properly on ack, since the original address will be overwritten
 
@@ -83,34 +95,51 @@ public class DivertImpl implements Divert {
          logger.trace("Diverting message " + message + " into " + this);
       }
 
-      long id = storageManager.generateID();
+      context.setReusable(false);
 
-      ServerMessage copy = null;
+      Message copy = null;
 
       // Shouldn't copy if it's not routed anywhere else
-      if (!forwardAddress.equals(message.getAddress())) {
+      if (!forwardAddress.equals(context.getAddress(message))) {
+         long id = storageManager.generateID();
          copy = message.copy(id);
 
          // This will set the original MessageId, and the original address
-         copy.setOriginalHeaders(message, null, false);
+         copy.referenceOriginalMessage(message, this.getUniqueName().toString());
 
          copy.setAddress(forwardAddress);
 
          copy.setExpiration(message.getExpiration());
 
+         switch (routingType) {
+            case ANYCAST:
+               copy.setRoutingType(RoutingType.ANYCAST);
+               break;
+            case MULTICAST:
+               copy.setRoutingType(RoutingType.MULTICAST);
+               break;
+            case STRIP:
+               copy.setRoutingType(null);
+               break;
+            case PASS:
+               break;
+         }
+
          if (transformer != null) {
             copy = transformer.transform(copy);
          }
-      }
-      else {
+
+         // We call reencode at the end only, in a single call.
+         copy.reencode();
+      } else {
          copy = message;
       }
 
-      postOffice.route(copy, null, context.getTransaction(), false);
+      postOffice.route(copy, new RoutingContextImpl(context.getTransaction()).setReusable(false).setRoutingType(copy.getRoutingType()), false);
    }
 
    @Override
-   public void routeWithAck(ServerMessage message, RoutingContext context) throws Exception {
+   public void routeWithAck(Message message, RoutingContext context) throws Exception {
       route(message, context);
    }
 
@@ -130,6 +159,11 @@ public class DivertImpl implements Divert {
    }
 
    @Override
+   public SimpleString getAddress() {
+      return address;
+   }
+
+   @Override
    public Filter getFilter() {
       return filter;
    }
@@ -137,6 +171,36 @@ public class DivertImpl implements Divert {
    @Override
    public Transformer getTransformer() {
       return transformer;
+   }
+
+   @Override
+   public SimpleString getForwardAddress() {
+      return forwardAddress;
+   }
+
+   @Override
+   public ComponentConfigurationRoutingType getRoutingType() {
+      return routingType;
+   }
+
+   @Override
+   public void setFilter(Filter filter) {
+      this.filter = filter;
+   }
+
+   @Override
+   public void setTransformer(Transformer transformer) {
+      this.transformer = transformer;
+   }
+
+   @Override
+   public void setForwardAddress(SimpleString forwardAddress) {
+      this.forwardAddress = forwardAddress;
+   }
+
+   @Override
+   public void setRoutingType(ComponentConfigurationRoutingType routingType) {
+      this.routingType = routingType;
    }
 
    /* (non-Javadoc)

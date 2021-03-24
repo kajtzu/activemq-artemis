@@ -24,7 +24,6 @@ import java.nio.ByteBuffer;
 
 import io.netty.buffer.ByteBuf;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
-import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
@@ -102,8 +101,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
             InputStream input = new ActiveMQBufferInputStream(bufferDelegate);
 
             dataInput = new DataInputStream(new InflaterReader(input));
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             throw new RuntimeException(e.getMessage(), e);
          }
 
@@ -119,8 +117,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    public byte readByte() {
       try {
          return getStream().readByte();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new RuntimeException(e.getMessage(), e);
       }
    }
@@ -202,6 +199,11 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    @Override
    public ByteBuffer toByteBuffer(final int index, final int length) {
       throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
+   }
+
+   @Override
+   public void release() {
+      //no-op
    }
 
    @Override
@@ -340,8 +342,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    public int readUnsignedByte() {
       try {
          return getStream().readUnsignedByte();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new IllegalStateException(e.getMessage(), e);
       }
    }
@@ -350,8 +351,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    public short readShort() {
       try {
          return getStream().readShort();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new IllegalStateException(e.getMessage(), e);
       }
    }
@@ -360,8 +360,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    public int readUnsignedShort() {
       try {
          return getStream().readUnsignedShort();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new IllegalStateException(e.getMessage(), e);
       }
    }
@@ -370,9 +369,18 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    public int readInt() {
       try {
          return getStream().readInt();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new IllegalStateException(e.getMessage(), e);
+      }
+   }
+
+   @Override
+   public Integer readNullableInt() {
+      int b = readByte();
+      if (b == DataConstants.NULL) {
+         return null;
+      } else {
+         return readInt();
       }
    }
 
@@ -385,9 +393,18 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    public long readLong() {
       try {
          return getStream().readLong();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new IllegalStateException(e.getMessage(), e);
+      }
+   }
+
+   @Override
+   public Long readNullableLong() {
+      int b = readByte();
+      if (b == DataConstants.NULL) {
+         return null;
+      } else {
+         return readLong();
       }
    }
 
@@ -398,8 +415,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
          if (nReadBytes < length) {
             ActiveMQClientLogger.LOGGER.compressedLargeMessageError(length, nReadBytes);
          }
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new IllegalStateException(e.getMessage(), e);
       }
    }
@@ -445,32 +461,35 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
             getStream().read();
          }
          return length;
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new IllegalStateException(e.getMessage(), e);
       }
    }
 
-
-   /** from {@link java.io.DataInput} interface */
+   /**
+    * from {@link java.io.DataInput} interface
+    */
    @Override
    public void readFully(byte[] b) throws IOException {
       readBytes(b);
    }
 
-   /** from {@link java.io.DataInput} interface */
+   /**
+    * from {@link java.io.DataInput} interface
+    */
    @Override
    public void readFully(byte[] b, int off, int len) throws IOException {
       readBytes(b, off, len);
    }
 
-   /** from {@link java.io.DataInput} interface */
+   /**
+    * from {@link java.io.DataInput} interface
+    */
    @Override
    @SuppressWarnings("deprecation")
    public String readLine() throws IOException {
       return getStream().readLine();
    }
-
 
    @Override
    public void writeByte(final byte value) {
@@ -488,7 +507,17 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    }
 
    @Override
+   public void writeNullableInt(final Integer value) {
+      throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
+   }
+
+   @Override
    public void writeLong(final long value) {
+      throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
+   }
+
+   @Override
+   public void writeNullableLong(final Long value) {
       throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
    }
 
@@ -513,6 +542,12 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    }
 
    @Override
+   public void writeBytes(ByteBuf src, int srcIndex, int length) {
+      throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
+   }
+
+
+   @Override
    public ByteBuffer toByteBuffer() {
       throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
    }
@@ -524,6 +559,16 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    @Override
    public boolean readBoolean() {
       return readByte() != 0;
+   }
+
+   @Override
+   public Boolean readNullableBoolean() {
+      int b = readByte();
+      if (b == DataConstants.NULL) {
+         return null;
+      } else {
+         return readBoolean();
+      }
    }
 
    @Override
@@ -547,13 +592,6 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
    }
 
    @Override
-   public ActiveMQBuffer readBytes(final int length) {
-      byte[] bytesToGet = new byte[length];
-      readBytes(bytesToGet);
-      return ActiveMQBuffers.wrappedBuffer(bytesToGet);
-   }
-
-   @Override
    public double readDouble() {
       return Double.longBitsToDouble(readLong());
    }
@@ -568,8 +606,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
       int b = readByte();
       if (b == DataConstants.NULL) {
          return null;
-      }
-      else {
+      } else {
          return readSimpleString();
       }
    }
@@ -579,8 +616,7 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
       int b = readByte();
       if (b == DataConstants.NULL) {
          return null;
-      }
-      else {
+      } else {
          return readString();
       }
    }
@@ -603,11 +639,9 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
             chars[i] = (char) readShort();
          }
          return new String(chars);
-      }
-      else if (len < 0xfff) {
+      } else if (len < 0xfff) {
          return readUTF();
-      }
-      else {
+      } else {
          return readSimpleString().toString();
       }
    }
@@ -619,6 +653,11 @@ final class CompressedLargeMessageControllerImpl implements LargeMessageControll
 
    @Override
    public void writeBoolean(final boolean val) {
+      throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
+   }
+
+   @Override
+   public void writeNullableBoolean(final Boolean val) {
       throw new IllegalAccessError(OPERATION_NOT_SUPPORTED);
    }
 

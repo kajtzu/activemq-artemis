@@ -16,21 +16,20 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
-import org.apache.activemq.artemis.api.core.ActiveMQException;
-import org.junit.Before;
-
-import org.junit.Test;
-
 import java.util.Arrays;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Interceptor;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.core.protocol.core.Packet;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
+import org.apache.activemq.artemis.tests.util.Wait;
+import org.junit.Before;
+import org.junit.Test;
 
 public class BackupAuthenticationTest extends FailoverTestBase {
 
@@ -45,7 +44,8 @@ public class BackupAuthenticationTest extends FailoverTestBase {
    }
 
    @Test
-   public void testPasswordSetting() throws Exception {
+   public void testWrongPasswordSetting() throws Exception {
+      Wait.assertTrue(liveServer.getServer()::isActive);
       waitForServerToStart(liveServer.getServer());
       backupServer.start();
       assertTrue(latch.await(5, TimeUnit.SECONDS));
@@ -53,11 +53,10 @@ public class BackupAuthenticationTest extends FailoverTestBase {
        * can't intercept the message at the backup, so we intercept the registration message at the
        * live.
        */
-      Thread.sleep(2000);
+      Wait.waitFor(() -> !backupServer.isStarted());
       assertFalse("backup should have stopped", backupServer.isStarted());
-      backupConfig.setClusterPassword(CLUSTER_PASSWORD);
-      backupServer.start();
-      waitForRemoteBackup(null, 5, true, backupServer.getServer());
+      backupServer.stop();
+      liveServer.stop();
    }
 
    @Override
@@ -85,8 +84,7 @@ public class BackupAuthenticationTest extends FailoverTestBase {
       public boolean intercept(Packet packet, RemotingConnection connection) throws ActiveMQException {
          if (packet.getType() == PacketImpl.BACKUP_REGISTRATION) {
             latch.countDown();
-         }
-         else if (packet.getType() == PacketImpl.CLUSTER_CONNECT) {
+         } else if (packet.getType() == PacketImpl.CLUSTER_CONNECT) {
             latch.countDown();
          }
          return true;

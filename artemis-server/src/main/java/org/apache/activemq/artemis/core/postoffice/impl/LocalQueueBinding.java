@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.core.postoffice.impl;
 
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.postoffice.BindingType;
@@ -23,40 +24,44 @@ import org.apache.activemq.artemis.core.postoffice.QueueBinding;
 import org.apache.activemq.artemis.core.server.Bindable;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.api.core.RoutingType;
+import org.jboss.logging.Logger;
 
 public class LocalQueueBinding implements QueueBinding {
+
+   private static final Logger logger = Logger.getLogger(LocalQueueBinding.class);
 
    private final SimpleString address;
 
    private final Queue queue;
 
-   private final Filter filter;
-
-   private final SimpleString name;
-
    private final SimpleString clusterName;
+
+   private SimpleString name;
 
    public LocalQueueBinding(final SimpleString address, final Queue queue, final SimpleString nodeID) {
       this.address = address;
 
       this.queue = queue;
 
-      filter = queue.getFilter();
+      this.name = queue.getName();
 
-      name = queue.getName();
-
-      clusterName = name.concat(nodeID);
+      clusterName = queue.getName().concat(nodeID);
    }
 
    @Override
-   public long getID() {
+   public boolean isLocal() {
+      return true;
+   }
+
+   @Override
+   public Long getID() {
       return queue.getID();
    }
 
    @Override
    public Filter getFilter() {
-      return filter;
+      return queue.getFilter();
    }
 
    @Override
@@ -76,12 +81,15 @@ public class LocalQueueBinding implements QueueBinding {
 
    @Override
    public SimpleString getRoutingName() {
+      if (queue.getRoutingType() == RoutingType.ANYCAST) {
+         return address;
+      }
       return name;
    }
 
    @Override
    public SimpleString getUniqueName() {
-      return name;
+      return queue.getName();
    }
 
    @Override
@@ -100,7 +108,7 @@ public class LocalQueueBinding implements QueueBinding {
    }
 
    @Override
-   public boolean isHighAcceptPriority(final ServerMessage message) {
+   public boolean isHighAcceptPriority(final Message message) {
       // It's a high accept priority if the queue has at least one matching consumer
 
       return queue.hasMatchingConsumer(message);
@@ -112,13 +120,31 @@ public class LocalQueueBinding implements QueueBinding {
    }
 
    @Override
-   public void route(final ServerMessage message, final RoutingContext context) throws Exception {
-      queue.route(message, context);
+   public void route(final Message message, final RoutingContext context) throws Exception {
+      if (isMatchRoutingType(context)) {
+         if (logger.isTraceEnabled()) {
+            logger.trace("adding routing " + queue.getID() + " on message " + message);
+         }
+         queue.route(message, context);
+      } else {
+         if (logger.isTraceEnabled()) {
+            logger.trace("routing " + queue.getID() + " is ignored as routing type did not match");
+         }
+      }
    }
 
    @Override
-   public void routeWithAck(ServerMessage message, RoutingContext context) throws Exception {
-      queue.routeWithAck(message, context);
+   public void routeWithAck(Message message, RoutingContext context) throws Exception {
+      if (isMatchRoutingType(context)) {
+         if (logger.isTraceEnabled()) {
+            logger.trace("Message " + message + " routed with ack on queue " + queue.getID());
+         }
+         queue.routeWithAck(message, context);
+      }
+   }
+
+   private boolean isMatchRoutingType(RoutingContext context) {
+      return (context.getRoutingType() == null || context.getRoutingType() == queue.getRoutingType());
    }
 
    public boolean isQueueBinding() {
@@ -146,7 +172,7 @@ public class LocalQueueBinding implements QueueBinding {
          ", queue=" +
          queue +
          ", filter=" +
-         filter +
+         getFilter() +
          ", name=" +
          name +
          ", clusterName=" +

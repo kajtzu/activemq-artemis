@@ -20,7 +20,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
 /*
  * ActiveMQThreadPoolExecutor: a special ThreadPoolExecutor that combines
@@ -41,9 +41,19 @@ import java.util.concurrent.atomic.AtomicInteger;
  * executor is not limited. Only the offer method checks the configured limit.
  */
 public class ActiveMQThreadPoolExecutor extends ThreadPoolExecutor {
+
    @SuppressWarnings("serial")
    private static class ThreadPoolQueue extends LinkedBlockingQueue<Runnable> {
+
       private ActiveMQThreadPoolExecutor executor = null;
+
+      // keep track of the difference between the number of idle threads and
+      // the number of queued tasks. If the delta is > 0, we have more
+      // idle threads than queued tasks and can add more tasks into the queue.
+      // The delta is incremented if a thread becomes idle or if a task is taken from the queue.
+      // The delta is decremented if a thread leaves idle state or if a task is added to the queue.
+      private static final AtomicIntegerFieldUpdater<ThreadPoolQueue> DELTA_UPDATER = AtomicIntegerFieldUpdater.newUpdater(ThreadPoolQueue.class, "threadTaskDelta");
+      private volatile int threadTaskDelta = 0;
 
       public void setExecutor(ActiveMQThreadPoolExecutor executor) {
          this.executor = executor;
@@ -51,38 +61,84 @@ public class ActiveMQThreadPoolExecutor extends ThreadPoolExecutor {
 
       @Override
       public boolean offer(Runnable runnable) {
-         int poolSize = executor.getPoolSize();
+         boolean retval = false;
 
-         // If the are less threads than the configured maximum, then the tasks is
-         // only queued if there are some idle threads that can run that tasks.
-         // We have to add the queue size, since some tasks might just have been queued
-         // but not yet taken by an idle thread.
-         if (poolSize < executor.getMaximumPoolSize() && (size() + executor.getActive()) >= poolSize)
-            return false;
+         if (threadTaskDelta > 0 || (executor.getPoolSize() >= executor.getMaximumPoolSize())) {
+            // A new task will be added to the queue if the maximum number of threads has been reached
+            // or if the delta is > 0, which means that there are enough idle threads.
 
-         return super.offer(runnable);
+            retval = super.offer(runnable);
+
+            // Only decrement the delta if the task has actually been added to the queue
+            if (retval)
+               DELTA_UPDATER.decrementAndGet(this);
+         }
+
+         return retval;
+      }
+
+      @Override
+      public Runnable take() throws InterruptedException {
+         // Increment the delta as a thread becomes idle
+         // by waiting for a task to take from the queue
+         DELTA_UPDATER.incrementAndGet(this);
+
+
+         Runnable runnable = null;
+
+         try {
+            runnable = super.take();
+            return runnable;
+         } finally {
+            // Now the thread is no longer idle waiting for a task
+            // If it had taken a task, the delta remains the same
+            // (decremented by the thread and incremented by the taken task)
+            // Only if no task had been taken, we have to decrement the delta.
+            if (runnable == null) {
+               DELTA_UPDATER.decrementAndGet(this);
+            }
+         }
+      }
+
+      @Override
+      public Runnable poll(long arg0, TimeUnit arg2) throws InterruptedException {
+         // Increment the delta as a thread becomes idle
+         // by waiting for a task to poll from the queue
+         DELTA_UPDATER.incrementAndGet(this);
+
+         Runnable runnable = null;
+
+         try {
+            runnable = super.poll(arg0, arg2);
+         } finally {
+            // Now the thread is no longer idle waiting for a task
+            // If it had taken a task, the delta remains the same
+            // (decremented by the thread and incremented by the taken task)
+            if (runnable == null) {
+               DELTA_UPDATER.decrementAndGet(this);
+            }
+         }
+
+         return runnable;
       }
    }
 
    private int maxPoolSize;
-
-   // count the active threads with before-/afterExecute, since the .getActiveCount is not very
-   // efficient.
-   private final AtomicInteger active = new AtomicInteger(0);
 
    public ActiveMQThreadPoolExecutor(int coreSize, int maxSize, long keep, TimeUnit keepUnits, ThreadFactory factory) {
       this(coreSize, maxSize, keep, keepUnits, new ThreadPoolQueue(), factory);
    }
 
    // private constructor is needed to inject 'this' into the ThreadPoolQueue instance
-   private ActiveMQThreadPoolExecutor(int coreSize, int maxSize, long keep, TimeUnit keepUnits, ThreadPoolQueue myQueue, ThreadFactory factory) {
+   private ActiveMQThreadPoolExecutor(int coreSize,
+                                      int maxSize,
+                                      long keep,
+                                      TimeUnit keepUnits,
+                                      ThreadPoolQueue myQueue,
+                                      ThreadFactory factory) {
       super(coreSize, Integer.MAX_VALUE, keep, keepUnits, myQueue, factory);
       maxPoolSize = maxSize;
       myQueue.setExecutor(this);
-   }
-
-   private int getActive() {
-      return active.get();
    }
 
    @Override
@@ -93,17 +149,5 @@ public class ActiveMQThreadPoolExecutor extends ThreadPoolExecutor {
    @Override
    public void setMaximumPoolSize(int maxSize) {
       maxPoolSize = maxSize;
-   }
-
-   @Override
-   protected void beforeExecute(Thread thread, Runnable runnable) {
-      super.beforeExecute(thread, runnable);
-      active.incrementAndGet();
-   }
-
-   @Override
-   protected void afterExecute(Runnable runnable, Throwable throwable) {
-      active.decrementAndGet();
-      super.afterExecute(runnable, throwable);
    }
 }

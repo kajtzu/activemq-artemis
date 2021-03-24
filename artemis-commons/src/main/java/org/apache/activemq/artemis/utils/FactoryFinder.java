@@ -75,8 +75,7 @@ public class FactoryFinder {
          if (loader != null) {
             try {
                clazz = loader.loadClass(className);
-            }
-            catch (ClassNotFoundException e) {
+            } catch (ClassNotFoundException e) {
                // ignore
             }
          }
@@ -102,19 +101,10 @@ public class FactoryFinder {
          }
 
          // lets load the file
-         BufferedInputStream reader = null;
-         try {
-            reader = new BufferedInputStream(in);
+         try (BufferedInputStream reader = new BufferedInputStream(in)) {
             Properties properties = new Properties();
             properties.load(reader);
             return properties;
-         }
-         finally {
-            try {
-               reader.close();
-            }
-            catch (Exception e) {
-            }
          }
       }
    }

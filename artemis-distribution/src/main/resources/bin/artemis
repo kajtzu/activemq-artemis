@@ -45,7 +45,7 @@ if [ -z "$ARTEMIS_HOME" ] ; then
 fi
 
 # Set Defaults Properties
-JAVA_ARGS="-XX:+UseParallelGC -XX:+AggressiveOpts -XX:+UseFastAccessorMethods -Xms512M -Xmx1024M"
+JAVA_ARGS="-XX:+UseParallelGC -Xms512M -Xmx1024M"
 CLASSPATH="$ARTEMIS_HOME/lib/artemis-boot.jar"
 
 # OS specific support.
@@ -93,6 +93,6 @@ fi
 exec "$JAVACMD" $JAVA_ARGS $ARTEMIS_CLUSTER_PROPS \
     -classpath "$CLASSPATH" \
     -Dartemis.home="$ARTEMIS_HOME" \
-    -Djava.library.path="$ARTEMIS_HOME/bin/lib/linux-i686:$ARTEMIS_HOME/bin/lib/linux-x86_64" \
+    -Djava.library.path="$ARTEMIS_HOME/bin/lib/linux-$(uname -m)" \
     $DEBUG_ARGS \
     org.apache.activemq.artemis.boot.Artemis "$@"

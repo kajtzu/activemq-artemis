@@ -16,19 +16,18 @@
  */
 package org.apache.activemq.artemis.tests.unit.core.postoffice.impl;
 
-import org.apache.activemq.artemis.api.core.ActiveMQException;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.core.server.impl.RefsOperation;
-import org.junit.Test;
-
+import javax.transaction.xa.Xid;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
-import javax.transaction.xa.Xid;
-
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
+import org.apache.activemq.artemis.core.message.impl.CoreMessage;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.BindingType;
 import org.apache.activemq.artemis.core.postoffice.Bindings;
@@ -36,11 +35,14 @@ import org.apache.activemq.artemis.core.postoffice.impl.BindingsImpl;
 import org.apache.activemq.artemis.core.server.Bindable;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.core.server.impl.AckReason;
+import org.apache.activemq.artemis.core.server.impl.RefsOperation;
 import org.apache.activemq.artemis.core.server.impl.RoutingContextImpl;
-import org.apache.activemq.artemis.core.server.impl.ServerMessageImpl;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.core.transaction.TransactionOperation;
+import org.apache.activemq.artemis.selector.filter.Filterable;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.junit.Test;
 
 public class BindingsImplTest extends ActiveMQTestBase {
    // Constants -----------------------------------------------------
@@ -72,7 +74,7 @@ public class BindingsImplTest extends ActiveMQTestBase {
    private void internalTest(final boolean route) throws Exception {
       final FakeBinding fake = new FakeBinding(new SimpleString("a"));
 
-      final Bindings bind = new BindingsImpl(null, null, null);
+      final Bindings bind = new BindingsImpl(null, null);
       bind.addBinding(fake);
       bind.addBinding(new FakeBinding(new SimpleString("a")));
       bind.addBinding(new FakeBinding(new SimpleString("a")));
@@ -81,9 +83,8 @@ public class BindingsImplTest extends ActiveMQTestBase {
          @Override
          public void run() {
             try {
-               bind.removeBinding(fake);
-            }
-            catch (Exception e) {
+               bind.removeBindingByUniqueName(fake.getUniqueName());
+            } catch (Exception e) {
                e.printStackTrace();
             }
          }
@@ -94,10 +95,9 @@ public class BindingsImplTest extends ActiveMQTestBase {
 
       for (int i = 0; i < 100; i++) {
          if (route) {
-            bind.route(new ServerMessageImpl(i, 100), new RoutingContextImpl(new FakeTransaction()));
-         }
-         else {
-            bind.redistribute(new ServerMessageImpl(i, 100), queue, new RoutingContextImpl(new FakeTransaction()));
+            bind.route(new CoreMessage(i, 100), new RoutingContextImpl(new FakeTransaction()));
+         } else {
+            bind.redistribute(new CoreMessage(i, 100), queue, new RoutingContextImpl(new FakeTransaction()));
          }
       }
    }
@@ -136,6 +136,11 @@ public class BindingsImplTest extends ActiveMQTestBase {
 
       @Override
       public void commit() throws Exception {
+
+      }
+
+      @Override
+      public void rollbackIfPossible() {
 
       }
 
@@ -252,7 +257,7 @@ public class BindingsImplTest extends ActiveMQTestBase {
       }
 
       @Override
-      public RefsOperation createRefsOperation(Queue queue) {
+      public RefsOperation createRefsOperation(Queue queue, AckReason reason) {
          // TODO Auto-generated method stub
          return null;
       }
@@ -277,7 +282,18 @@ public class BindingsImplTest extends ActiveMQTestBase {
        * @see org.apache.activemq.artemis.core.filter.Filter#match(org.apache.activemq.artemis.core.server.ServerMessage)
        */
       @Override
-      public boolean match(final ServerMessage message) {
+      public boolean match(final Message message) {
+         return false;
+      }
+
+      @Override
+      public boolean match(Map<String, String> map) {
+         return false;
+
+      }
+
+      @Override
+      public boolean match(Filterable filterable) {
          return false;
       }
 
@@ -296,6 +312,7 @@ public class BindingsImplTest extends ActiveMQTestBase {
       }
 
       final SimpleString name;
+      final SimpleString uniqueName = SimpleString.toSimpleString(UUID.randomUUID().toString());
 
       FakeBinding(final SimpleString name) {
          this.name = name;
@@ -341,8 +358,8 @@ public class BindingsImplTest extends ActiveMQTestBase {
       }
 
       @Override
-      public long getID() {
-         return 0;
+      public Long getID() {
+         return Long.valueOf(0L);
       }
 
       /* (non-Javadoc)
@@ -367,7 +384,7 @@ public class BindingsImplTest extends ActiveMQTestBase {
        */
       @Override
       public SimpleString getUniqueName() {
-         return null;
+         return uniqueName;
       }
 
       @Override
@@ -376,12 +393,12 @@ public class BindingsImplTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean isHighAcceptPriority(final ServerMessage message) {
+      public boolean isHighAcceptPriority(final Message message) {
          return false;
       }
 
       @Override
-      public void route(final ServerMessage message, final RoutingContext context) throws Exception {
+      public void route(final Message message, final RoutingContext context) throws Exception {
 
       }
 
@@ -399,7 +416,7 @@ public class BindingsImplTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void routeWithAck(ServerMessage message, RoutingContext context) {
+      public void routeWithAck(Message message, RoutingContext context) {
 
       }
 

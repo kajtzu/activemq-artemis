@@ -20,6 +20,10 @@ import org.apache.activemq.artemis.spi.core.naming.BindingRegistry;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 
+/**
+ * This has been deprecated since org.apache.activemq.artemis.integration.spring.SpringJmsBootstrap was also deprecated.
+ */
+@Deprecated
 public class SpringBindingRegistry implements BindingRegistry {
 
    private ConfigurableBeanFactory factory;
@@ -33,8 +37,7 @@ public class SpringBindingRegistry implements BindingRegistry {
       Object obj = null;
       try {
          obj = factory.getBean(name);
-      }
-      catch (NoSuchBeanDefinitionException e) {
+      } catch (NoSuchBeanDefinitionException e) {
          //ignore
       }
       return obj;

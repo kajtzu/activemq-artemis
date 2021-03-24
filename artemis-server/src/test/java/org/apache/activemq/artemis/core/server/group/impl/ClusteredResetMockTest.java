@@ -16,15 +16,24 @@
  */
 package org.apache.activemq.artemis.core.server.group.impl;
 
+import javax.management.ObjectName;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
+import org.apache.activemq.artemis.api.core.ICoreMessage;
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.core.management.AddressControl;
 import org.apache.activemq.artemis.api.core.management.ManagementHelper;
 import org.apache.activemq.artemis.api.core.management.ObjectNameBuilder;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.DivertConfiguration;
 import org.apache.activemq.artemis.core.management.impl.ActiveMQServerControlImpl;
 import org.apache.activemq.artemis.core.messagecounter.MessageCounterManager;
 import org.apache.activemq.artemis.core.paging.PagingManager;
@@ -37,10 +46,11 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Divert;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.QueueFactory;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.cluster.Bridge;
 import org.apache.activemq.artemis.core.server.cluster.BroadcastGroup;
 import org.apache.activemq.artemis.core.server.cluster.ClusterConnection;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
+import org.apache.activemq.artemis.core.server.management.ArtemisMBeanServerGuard;
 import org.apache.activemq.artemis.core.server.management.ManagementService;
 import org.apache.activemq.artemis.core.server.management.Notification;
 import org.apache.activemq.artemis.core.server.management.NotificationListener;
@@ -49,16 +59,10 @@ import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.spi.core.remoting.Acceptor;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.utils.ConcurrentHashSet;
 import org.apache.activemq.artemis.utils.ReusableLatch;
+import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
 import org.junit.Assert;
 import org.junit.Test;
-
-import javax.management.ObjectName;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 /**
  * this is testing the case for resending notifications from RemotingGroupHandler
@@ -126,8 +130,7 @@ public class ClusteredResetMockTest extends ActiveMQTestBase {
                throw sni.ex;
             }
          }
-      }
-      finally {
+      } finally {
 
          for (Sender sni : sn) {
             sni.interrupt();
@@ -157,12 +160,10 @@ public class ClusteredResetMockTest extends ActiveMQTestBase {
             Response response = handler.propose(proposal);
             if (response == null) {
                ex = new NullPointerException("expected value on " + getName());
-            }
-            else if (!response.getGroupId().equals(code)) {
+            } else if (!response.getGroupId().equals(code)) {
                ex = new IllegalStateException("expected code=" + code + " but it was " + response.getGroupId());
             }
-         }
-         catch (Throwable ex) {
+         } catch (Throwable ex) {
             ex.printStackTrace();
             this.ex = ex;
          }
@@ -248,7 +249,12 @@ public class ClusteredResetMockTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void registerAddress(SimpleString address) throws Exception {
+      public void registerAddress(AddressInfo addressInfo) throws Exception {
+
+      }
+
+      @Override
+      public void registerAddressMeters(AddressInfo addressInfo, AddressControl addressControl) throws Exception {
 
       }
 
@@ -263,7 +269,7 @@ public class ClusteredResetMockTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void unregisterQueue(SimpleString name, SimpleString address) throws Exception {
+      public void unregisterQueue(SimpleString name, SimpleString address, RoutingType routingType) throws Exception {
 
       }
 
@@ -278,12 +284,12 @@ public class ClusteredResetMockTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void registerDivert(Divert divert, DivertConfiguration config) throws Exception {
+      public void registerDivert(Divert divert) throws Exception {
 
       }
 
       @Override
-      public void unregisterDivert(SimpleString name) throws Exception {
+      public void unregisterDivert(SimpleString name, SimpleString address) throws Exception {
 
       }
 
@@ -330,8 +336,18 @@ public class ClusteredResetMockTest extends ActiveMQTestBase {
       }
 
       @Override
-      public ServerMessage handleMessage(ServerMessage message) throws Exception {
+      public ICoreMessage handleMessage(Message message) throws Exception {
          return null;
+      }
+
+      @Override
+      public void registerHawtioSecurity(ArtemisMBeanServerGuard securityMBean) throws Exception {
+
+      }
+
+      @Override
+      public void unregisterHawtioSecurity() throws Exception {
+
       }
 
       @Override

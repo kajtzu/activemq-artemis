@@ -16,7 +16,6 @@
  */
 package org.apache.activemq.artemis.core.server.impl;
 
-import java.io.InputStream;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -30,36 +29,48 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.ToLongFunction;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQPropertyConversionException;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
-import org.apache.activemq.artemis.core.message.BodyEncoder;
+import org.apache.activemq.artemis.core.message.impl.CoreMessage;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
+import org.apache.activemq.artemis.core.persistence.OperationContext;
+import org.apache.activemq.artemis.core.persistence.Persister;
+import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.server.Consumer;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.core.server.ServerConsumer;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
-import org.apache.activemq.artemis.utils.LinkedListIterator;
 import org.apache.activemq.artemis.utils.RandomUtil;
 import org.apache.activemq.artemis.utils.ReferenceCounter;
-import org.apache.activemq.artemis.utils.TypedProperties;
 import org.apache.activemq.artemis.utils.UUID;
+import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
+import org.apache.activemq.artemis.utils.critical.CriticalComponentImpl;
+import org.apache.activemq.artemis.utils.critical.EmptyCriticalAnalyzer;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class ScheduledDeliveryHandlerTest extends Assert {
 
+   private static final Logger log = Logger.getLogger(ScheduledDeliveryHandlerTest.class);
+
    @Test
    public void testScheduleRandom() throws Exception {
-      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null);
+      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null, new FakeQueueForScheduleUnitTest(0));
 
       long nextMessage = 0;
       long NUMBER_OF_SEQUENCES = 100000;
@@ -84,7 +95,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
 
    @Test
    public void testScheduleSameTimeHeadAndTail() throws Exception {
-      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null);
+      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null, new FakeQueueForScheduleUnitTest(0));
 
       long time = System.currentTimeMillis() + 10000;
       for (int i = 10001; i < 20000; i++) {
@@ -106,7 +117,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
 
    @Test
    public void testScheduleFixedSample() throws Exception {
-      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null);
+      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null, new FakeQueueForScheduleUnitTest(0));
 
       addMessage(handler, 0, 48L, true);
       addMessage(handler, 1, 75L, true);
@@ -120,7 +131,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
 
    @Test
    public void testScheduleWithAddHeads() throws Exception {
-      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null);
+      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null, new FakeQueueForScheduleUnitTest(0));
 
       addMessage(handler, 0, 1, true);
       addMessage(handler, 1, 2, true);
@@ -141,7 +152,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
 
    @Test
    public void testScheduleFixedSampleTailAndHead() throws Exception {
-      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null);
+      ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(null, new FakeQueueForScheduleUnitTest(0));
 
       // mix a sequence of tails / heads, but at the end this was supposed to be all sequential
       addMessage(handler, 1, 48L, true);
@@ -178,8 +189,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
             // it's better to run the test a few times instead of run millions of messages here
             internalSchedule(executor, scheduler);
          }
-      }
-      finally {
+      } finally {
          scheduler.shutdownNow();
          executor.shutdownNow();
       }
@@ -188,8 +198,9 @@ public class ScheduledDeliveryHandlerTest extends Assert {
    private void internalSchedule(ExecutorService executor, ScheduledThreadPoolExecutor scheduler) throws Exception {
       final int NUMBER_OF_MESSAGES = 200;
       int NUMBER_OF_THREADS = 20;
-      final ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(scheduler);
+
       final FakeQueueForScheduleUnitTest fakeQueue = new FakeQueueForScheduleUnitTest(NUMBER_OF_MESSAGES * NUMBER_OF_THREADS);
+      final ScheduledDeliveryHandlerImpl handler = new ScheduledDeliveryHandlerImpl(scheduler, fakeQueue);
 
       final long now = System.currentTimeMillis();
 
@@ -205,12 +216,10 @@ public class ScheduledDeliveryHandlerTest extends Assert {
                for (int i = 0; i < NUMBER_OF_MESSAGES; i++) {
                   checkAndSchedule(handler, i, now, false, fakeQueue);
                }
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
                error.incrementAndGet();
-            }
-            finally {
+            } finally {
                latchDone.countDown();
             }
 
@@ -257,7 +266,9 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       handler.checkAndSchedule(refImpl, tail);
    }
 
-   private void debugList(boolean fail, ScheduledDeliveryHandlerImpl handler, long numberOfExpectedMessages) throws Exception {
+   private void debugList(boolean fail,
+                          ScheduledDeliveryHandlerImpl handler,
+                          long numberOfExpectedMessages) throws Exception {
       List<MessageReference> refs = handler.getScheduledReferences();
 
       HashSet<Long> messages = new HashSet<>();
@@ -270,10 +281,9 @@ public class ScheduledDeliveryHandlerTest extends Assert {
 
          if (fail) {
             assertTrue(ref.getScheduledDeliveryTime() >= lastTime);
-         }
-         else {
+         } else {
             if (ref.getScheduledDeliveryTime() < lastTime) {
-               System.out.println("^^^fail at " + ref.getScheduledDeliveryTime());
+               log.debug("^^^fail at " + ref.getScheduledDeliveryTime());
             }
          }
          lastTime = ref.getScheduledDeliveryTime();
@@ -284,9 +294,68 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
    }
 
-   class FakeMessage implements ServerMessage {
+   class FakeMessage implements Message {
 
+      @Override
+      public SimpleString getReplyTo() {
+         return null;
+      }
+
+      @Override
+      public Message setReplyTo(SimpleString address) {
+         return null;
+      }
+
+      @Override
+      public Object removeAnnotation(SimpleString key) {
+         return null;
+      }
+
+      @Override
+      public Object getAnnotation(SimpleString key) {
+         return null;
+      }
+
+      @Override
+      public void persist(ActiveMQBuffer targetRecord) {
+
+      }
+
+      @Override
+      public int getDurableCount() {
+         return 0;
+      }
+
+      @Override
+      public Long getScheduledDeliveryTime() {
+         return null;
+      }
+
+      @Override
+      public void reloadPersistence(ActiveMQBuffer record, CoreMessageObjectPools pools) {
+
+      }
+
+      @Override
+      public Persister<Message> getPersister() {
+         return null;
+      }
+
+      @Override
+      public int getPersistSize() {
+         return 0;
+      }
       final long id;
+
+      @Override
+      public CoreMessage toCore() {
+         return toCore(null);
+      }
+
+      @Override
+      public CoreMessage toCore(CoreMessageObjectPools coreMessageObjectPools) {
+         return null;
+      }
 
       FakeMessage(final long id) {
          this.id = id;
@@ -303,42 +372,22 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public MessageReference createReference(Queue queue) {
+      public int durableUp() {
+         return 0;
+      }
+
+      @Override
+      public int durableDown() {
+         return 0;
+      }
+
+      @Override
+      public Message copy(long newID) {
          return null;
       }
 
       @Override
-      public void forceAddress(SimpleString address) {
-
-      }
-
-      @Override
-      public int incrementRefCount() throws Exception {
-         return 0;
-      }
-
-      @Override
-      public int decrementRefCount() throws Exception {
-         return 0;
-      }
-
-      @Override
-      public int incrementDurableRefCount() {
-         return 0;
-      }
-
-      @Override
-      public int decrementDurableRefCount() {
-         return 0;
-      }
-
-      @Override
-      public ServerMessage copy(long newID) {
-         return null;
-      }
-
-      @Override
-      public ServerMessage copy() {
+      public Message copy() {
          return null;
       }
 
@@ -353,44 +402,6 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public ServerMessage makeCopyForExpiryOrDLA(long newID,
-                                                  MessageReference originalReference,
-                                                  boolean expiry,
-                                                  boolean copyOriginalHeaders) throws Exception {
-         return null;
-      }
-
-      @Override
-      public void setOriginalHeaders(ServerMessage other, MessageReference originalReference, boolean expiry) {
-
-      }
-
-      @Override
-      public void setPagingStore(PagingStore store) {
-
-      }
-
-      @Override
-      public PagingStore getPagingStore() {
-         return null;
-      }
-
-      @Override
-      public boolean hasInternalProperties() {
-         return false;
-      }
-
-      @Override
-      public boolean storeIsPaging() {
-         return false;
-      }
-
-      @Override
-      public void encodeMessageIDToBuffer() {
-
-      }
-
-      @Override
       public byte[] getDuplicateIDBytes() {
          return new byte[0];
       }
@@ -401,83 +412,8 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public void encode(ActiveMQBuffer buffer) {
+      public void messageChanged() {
 
-      }
-
-      @Override
-      public void decode(ActiveMQBuffer buffer) {
-
-      }
-
-      @Override
-      public void decodeFromBuffer(ActiveMQBuffer buffer) {
-
-      }
-
-      @Override
-      public int getEndOfMessagePosition() {
-         return 0;
-      }
-
-      @Override
-      public int getEndOfBodyPosition() {
-         return 0;
-      }
-
-      @Override
-      public void bodyChanged() {
-
-      }
-
-      @Override
-      public boolean isServerMessage() {
-         return false;
-      }
-
-      @Override
-      public ActiveMQBuffer getEncodedBuffer() {
-         return null;
-      }
-
-      @Override
-      public int getHeadersAndPropertiesEncodeSize() {
-         return 0;
-      }
-
-      @Override
-      public ActiveMQBuffer getWholeBuffer() {
-         return null;
-      }
-
-      @Override
-      public void encodeHeadersAndProperties(ActiveMQBuffer buffer) {
-
-      }
-
-      @Override
-      public void decodeHeadersAndProperties(ActiveMQBuffer buffer) {
-
-      }
-
-      @Override
-      public BodyEncoder getBodyEncoder() throws ActiveMQException {
-         return null;
-      }
-
-      @Override
-      public InputStream getBodyInputStream() {
-         return null;
-      }
-
-      @Override
-      public void setAddressTransient(SimpleString address) {
-
-      }
-
-      @Override
-      public TypedProperties getTypedProperties() {
-         return null;
       }
 
       @Override
@@ -486,23 +422,32 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public FakeMessage setUserID(UUID userID) {
-         return this;
+      public String getAddress() {
+         return null;
       }
 
       @Override
-      public SimpleString getAddress() {
+      public SimpleString getAddressSimpleString() {
+         return null;
+      }
+
+      @Override
+      public Message setBuffer(ByteBuf buffer) {
+         return null;
+      }
+
+      @Override
+      public ByteBuf getBuffer() {
+         return null;
+      }
+      @Override
+      public Message setAddress(String address) {
          return null;
       }
 
       @Override
       public Message setAddress(SimpleString address) {
          return null;
-      }
-
-      @Override
-      public byte getType() {
-         return 0;
       }
 
       @Override
@@ -558,16 +503,6 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       @Override
       public boolean isLargeMessage() {
          return false;
-      }
-
-      @Override
-      public ActiveMQBuffer getBodyBuffer() {
-         return null;
-      }
-
-      @Override
-      public ActiveMQBuffer getBodyBufferDuplicate() {
-         return null;
       }
 
       @Override
@@ -662,6 +597,11 @@ public class ScheduledDeliveryHandlerTest extends Assert {
 
       @Override
       public Message putStringProperty(SimpleString key, SimpleString value) {
+         return null;
+      }
+
+      @Override
+      public Message putStringProperty(SimpleString key, String value) {
          return null;
       }
 
@@ -826,17 +766,215 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public FakeMessage writeBodyBufferBytes(byte[] bytes) {
-         return this;
+      public Message setUserID(Object userID) {
+         return null;
       }
 
       @Override
-      public FakeMessage writeBodyBufferString(String string) {
-         return this;
+      public void receiveBuffer(ByteBuf buffer) {
+
       }
+
+      @Override
+      public int getUsage() {
+         return 0;
+      }
+
+      @Override
+      public int usageUp() {
+         return 0;
+      }
+
+      @Override
+      public int usageDown() {
+         return 0;
+      }
+
+      @Override
+      public int refUp() {
+         return 0;
+      }
+
+      @Override
+      public int refDown() {
+         return 0;
+      }
+
+      @Override
+      public void sendBuffer(ByteBuf buffer, int count) {
+
+      }
+
+      @Override
+      public long getPersistentSize() throws ActiveMQException {
+         return 0;
+      }
+
+      @Override
+      public Object getOwner() {
+         return null;
+      }
+
+      @Override
+      public void setOwner(Object object) {
+      }
+
    }
 
-   public class FakeQueueForScheduleUnitTest implements Queue {
+   public class FakeQueueForScheduleUnitTest extends CriticalComponentImpl implements Queue {
+
+      @Override
+      public void setPurgeOnNoConsumers(boolean value) {
+
+      }
+
+      @Override
+      public boolean isEnabled() {
+         return false;
+      }
+
+      @Override
+      public void setEnabled(boolean value) {
+
+      }
+
+      @Override
+      public PagingStore getPagingStore() {
+         return null;
+      }
+
+      @Override
+      public int durableUp(Message message) {
+         return 1;
+      }
+
+      @Override
+      public int durableDown(Message message) {
+         return 1;
+      }
+
+      @Override
+      public void refUp(MessageReference messageReference) {
+
+      }
+
+      @Override
+      public MessageReference removeWithSuppliedID(long id, ToLongFunction<MessageReference> idSupplier) {
+         return null;
+      }
+
+      @Override
+      public void refDown(MessageReference messageReference) {
+
+      }
+
+      @Override
+      public void removeAddress() throws Exception {
+      }
+
+      @Override
+      public long getAcknowledgeAttempts() {
+         return 0;
+      }
+
+      @Override
+      public boolean allowsReferenceCallback() {
+         return false;
+      }
+
+      @Override
+      public int getConsumersBeforeDispatch() {
+         return 0;
+      }
+
+      @Override
+      public void setConsumersBeforeDispatch(int consumersBeforeDispatch) {
+
+      }
+
+      @Override
+      public long getDelayBeforeDispatch() {
+         return 0;
+      }
+
+      @Override
+      public void setDelayBeforeDispatch(long delayBeforeDispatch) {
+
+      }
+
+      @Override
+      public long getDispatchStartTime() {
+         return 0;
+      }
+
+      @Override
+      public boolean isDispatching() {
+         return false;
+      }
+
+      @Override
+      public void setDispatching(boolean dispatching) {
+
+      }
+
+      @Override
+      public void setMaxConsumer(int maxConsumers) {
+
+      }
+
+      @Override
+      public int getGroupBuckets() {
+         return 0;
+      }
+
+      @Override
+      public void setGroupBuckets(int groupBuckets) {
+
+      }
+
+      @Override
+      public boolean isGroupRebalance() {
+         return false;
+      }
+
+      @Override
+      public void setGroupRebalance(boolean groupRebalance) {
+
+      }
+
+      @Override
+      public boolean isGroupRebalancePauseDispatch() {
+         return false;
+      }
+
+      @Override
+      public void setGroupRebalancePauseDispatch(boolean groupRebalancePauseDisptach) {
+
+      }
+
+      @Override
+      public SimpleString getGroupFirstKey() {
+         return null;
+      }
+
+      @Override
+      public void setGroupFirstKey(SimpleString groupFirstKey) {
+
+      }
+
+      @Override
+      public boolean isConfigurationManaged() {
+         return false;
+      }
+
+      @Override
+      public void setConfigurationManaged(boolean configurationManaged) {
+
+      }
+
+      @Override
+      public void recheckRefCount(OperationContext context) {
+      }
 
       @Override
       public void unproposed(SimpleString groupID) {
@@ -844,7 +982,13 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       public FakeQueueForScheduleUnitTest(final int expectedElements) {
+         super(EmptyCriticalAnalyzer.getInstance(), 1);
          this.expectedElements = new CountDownLatch(expectedElements);
+      }
+
+      @Override
+      public boolean isPersistedPause() {
+         return false;
       }
 
       public boolean waitCompletion(long timeout, TimeUnit timeUnit) throws Exception {
@@ -860,8 +1004,16 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public long getID() {
-         return 0;
+      public Long getID() {
+         return Long.valueOf(0L);
+      }
+
+      @Override
+      public void pause(boolean persist) {
+      }
+
+      @Override
+      public void reloadPause(long recordID) {
       }
 
       @Override
@@ -870,13 +1022,50 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public void setFilter(Filter filter) {
+      }
+
+      @Override
       public PageSubscription getPageSubscription() {
          return null;
       }
 
       @Override
+      public RoutingType getRoutingType() {
+         return null;
+      }
+
+      @Override
+      public void setRoutingType(RoutingType routingType) {
+
+      }
+
+      @Override
       public boolean isDurable() {
          return false;
+      }
+
+      @Override
+      public boolean isDurableMessage() {
+         return false;
+      }
+
+      @Override
+      public boolean isAutoDelete() {
+         // no-op
+         return false;
+      }
+
+      @Override
+      public long getAutoDeleteDelay() {
+         // no-op
+         return -1;
+      }
+
+      @Override
+      public long getAutoDeleteMessageCount() {
+         // no-op
+         return -1;
       }
 
       @Override
@@ -890,7 +1079,27 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public boolean isPurgeOnNoConsumers() {
+         return false;
+      }
+
+      @Override
+      public int getMaxConsumers() {
+         return -1;
+      }
+
+      @Override
       public void addConsumer(Consumer consumer) throws Exception {
+
+      }
+
+      @Override
+      public void addLingerSession(String sessionId) {
+
+      }
+
+      @Override
+      public void removeLingerSession(String sessionId) {
 
       }
 
@@ -910,6 +1119,21 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public long getConsumerRemovedTimestamp() {
+         return 0;
+      }
+
+      @Override
+      public void setRingSize(long ringSize) {
+
+      }
+
+      @Override
+      public long getRingSize() {
+         return 0;
+      }
+
+      @Override
       public void setConsumersRefCount(ReferenceCounter referenceCounter) {
 
       }
@@ -917,6 +1141,11 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       @Override
       public ReferenceCounter getConsumersRefCount() {
          return null;
+      }
+
+      @Override
+      public void addSorted(List<MessageReference> refs, boolean scheduling) {
+         addHead(refs, scheduling);
       }
 
       @Override
@@ -940,6 +1169,11 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public void addSorted(MessageReference ref, boolean scheduling) {
+
+      }
+
+      @Override
       public void addHead(List<MessageReference> refs, boolean scheduling) {
          for (MessageReference ref : refs) {
             addFirst(ref);
@@ -957,7 +1191,12 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public void acknowledge(MessageReference ref, AckReason reason) throws Exception {
+      public void acknowledge(MessageReference ref, ServerConsumer consumer) throws Exception {
+
+      }
+
+      @Override
+      public void acknowledge(MessageReference ref, AckReason reason, ServerConsumer consumer) throws Exception {
 
       }
 
@@ -967,7 +1206,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public void acknowledge(Transaction tx, MessageReference ref, AckReason reason) throws Exception {
+      public void acknowledge(Transaction tx, MessageReference ref, AckReason reason, ServerConsumer consumer) throws Exception {
 
       }
 
@@ -1022,17 +1261,62 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public long getPersistentSize() {
+         return 0;
+      }
+
+      @Override
+      public long getDurableMessageCount() {
+         return 0;
+      }
+
+      @Override
+      public long getDurablePersistentSize() {
+         return 0;
+      }
+
+      @Override
       public int getDeliveringCount() {
          return 0;
       }
 
       @Override
-      public void referenceHandled() {
+      public long getDeliveringSize() {
+         return 0;
+      }
+
+      @Override
+      public int getDurableDeliveringCount() {
+         return 0;
+      }
+
+      @Override
+      public long getDurableDeliveringSize() {
+         return 0;
+      }
+
+      @Override
+      public int getDurableScheduledCount() {
+         return 0;
+      }
+
+      @Override
+      public long getDurableScheduledSize() {
+         return 0;
+      }
+
+      @Override
+      public void referenceHandled(MessageReference ref) {
 
       }
 
       @Override
       public int getScheduledCount() {
+         return 0;
+      }
+
+      @Override
+      public long getScheduledSize() {
          return 0;
       }
 
@@ -1067,6 +1351,11 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
+      public long getMessagesReplaced() {
+         return 0;
+      }
+
+      @Override
       public MessageReference removeReferenceWithID(long id) throws Exception {
          return null;
       }
@@ -1097,7 +1386,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public int deleteMatchingReferences(int flushLImit, Filter filter) throws Exception {
+      public int deleteMatchingReferences(int flushLImit, Filter filter, AckReason reason) throws Exception {
          return 0;
       }
 
@@ -1122,7 +1411,13 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public void sendToDeadLetterAddress(Transaction tx, MessageReference ref) throws Exception {
+      public void expire(MessageReference ref, ServerConsumer consumer) throws Exception {
+
+      }
+
+      @Override
+      public boolean sendToDeadLetterAddress(Transaction tx, MessageReference ref) throws Exception {
+         return false;
       }
 
       @Override
@@ -1146,17 +1441,12 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public boolean moveReference(long messageID, SimpleString toAddress) throws Exception {
+      public boolean moveReference(long messageID, SimpleString toAddress, Binding binding, boolean rejectDuplicates) throws Exception {
          return false;
       }
 
       @Override
-      public boolean moveReference(long messageID, SimpleString toAddress, boolean rejectDuplicates) throws Exception {
-         return false;
-      }
-
-      @Override
-      public int moveReferences(Filter filter, SimpleString toAddress) throws Exception {
+      public int moveReferences(Filter filter, SimpleString toAddress, Binding binding) throws Exception {
          return 0;
       }
 
@@ -1164,7 +1454,8 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       public int moveReferences(int flushLimit,
                                 Filter filter,
                                 SimpleString toAddress,
-                                boolean rejectDuplicates) throws Exception {
+                                boolean rejectDuplicates,
+                                Binding binding) throws Exception {
          return 0;
       }
 
@@ -1179,7 +1470,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public boolean hasMatchingConsumer(ServerMessage message) {
+      public boolean hasMatchingConsumer(Message message) {
          return false;
       }
 
@@ -1189,10 +1480,30 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public boolean checkRedelivery(MessageReference ref,
-                                     long timeBase,
-                                     boolean ignoreRedeliveryDelay) throws Exception {
-         return false;
+      public Map<SimpleString, Consumer> getGroups() {
+         return null;
+      }
+
+      @Override
+      public void resetGroup(SimpleString groupID) {
+
+      }
+
+      @Override
+      public void resetAllGroups() {
+
+      }
+
+      @Override
+      public int getGroupCount() {
+         return 0;
+      }
+
+      @Override
+      public Pair<Boolean, Boolean> checkRedelivery(MessageReference ref,
+                                                    long timeBase,
+                                                    boolean ignoreRedeliveryDelay) throws Exception {
+         return new Pair<>(false, false);
       }
 
       @Override
@@ -1201,7 +1512,7 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public LinkedListIterator<MessageReference> totalIterator() {
+      public LinkedListIterator<MessageReference> browserIterator() {
          return null;
       }
 
@@ -1296,17 +1607,17 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public void route(ServerMessage message, RoutingContext context) throws Exception {
+      public void route(Message message, RoutingContext context) throws Exception {
 
       }
 
       @Override
-      public void routeWithAck(ServerMessage message, RoutingContext context) {
+      public void routeWithAck(Message message, RoutingContext context) {
 
       }
 
       @Override
-      public void postAcknowledge(MessageReference ref) {
+      public void postAcknowledge(MessageReference ref, AckReason reason) {
 
       }
 
@@ -1321,8 +1632,39 @@ public class ScheduledDeliveryHandlerTest extends Assert {
       }
 
       @Override
-      public void decDelivering(int size) {
+      public void setUser(SimpleString user) {
 
       }
+
+      @Override
+      public boolean isLastValue() {
+         return false;
+      }
+
+      @Override
+      public SimpleString getLastValueKey() {
+         return null;
+      }
+
+      @Override
+      public boolean isNonDestructive() {
+         return false;
+      }
+
+      @Override
+      public void setNonDestructive(boolean nonDestructive) {
+
+      }
+
+      @Override
+      public boolean isExclusive() {
+         return false;
+      }
+
+      @Override
+      public void setExclusive(boolean exclusive) {
+
+      }
+
    }
 }

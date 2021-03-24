@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -73,10 +74,10 @@ public class AddressSettingsTest extends ActiveMQTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, false);
-      session.createQueue(addressA, queueA, false);
-      session.createQueue(addressB, queueB, false);
-      session.createQueue(dlaA, dlqA, false);
-      session.createQueue(dlaB, dlqB, false);
+      session.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
+      session.createQueue(new QueueConfiguration(queueB).setAddress(addressB).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqA).setAddress(dlaA).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqB).setAddress(dlaB).setDurable(false));
       ClientSession sendSession = sf.createSession(false, true, true);
       ClientMessage cm = sendSession.createMessage(true);
       cm.getBodyBuffer().writeString("A");
@@ -125,10 +126,10 @@ public class AddressSettingsTest extends ActiveMQTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, false);
-      session.createQueue(addressA, queueA, false);
-      session.createQueue(addressB, queueB, false);
-      session.createQueue(dlaA, dlqA, false);
-      session.createQueue(dlaB, dlqB, false);
+      session.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
+      session.createQueue(new QueueConfiguration(queueB).setAddress(addressB).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqA).setAddress(dlaA).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqB).setAddress(dlaB).setDurable(false));
       ClientSession sendSession = sf.createSession(false, true, true);
       ClientMessage cm = sendSession.createMessage(true);
       cm.getBodyBuffer().writeString("A");
@@ -176,10 +177,10 @@ public class AddressSettingsTest extends ActiveMQTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, false);
-      session.createQueue(addressA, queueA, false);
-      session.createQueue(addressB, queueB, false);
-      session.createQueue(dlaA, dlqA, false);
-      session.createQueue(dlaB, dlqB, false);
+      session.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
+      session.createQueue(new QueueConfiguration(queueB).setAddress(addressB).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqA).setAddress(dlaA).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqB).setAddress(dlaB).setDurable(false));
       ClientSession sendSession = sf.createSession(false, true, true);
       ClientMessage cm = sendSession.createMessage(true);
       cm.getBodyBuffer().writeString("A");
@@ -229,12 +230,12 @@ public class AddressSettingsTest extends ActiveMQTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, false);
-      session.createQueue(addressA2, queueA, false);
-      session.createQueue(addressB2, queueB, false);
-      session.createQueue(addressC, queueC, false);
-      session.createQueue(dlaA, dlqA, false);
-      session.createQueue(dlaB, dlqB, false);
-      session.createQueue(dlaC, dlqC, false);
+      session.createQueue(new QueueConfiguration(queueA).setAddress(addressA2).setDurable(false));
+      session.createQueue(new QueueConfiguration(queueB).setAddress(addressB2).setDurable(false));
+      session.createQueue(new QueueConfiguration(queueC).setAddress(addressC).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqA).setAddress(dlaA).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqB).setAddress(dlaB).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqC).setAddress(dlaC).setDurable(false));
       ClientSession sendSession = sf.createSession(false, true, true);
       ClientMessage cm = sendSession.createMessage(true);
       cm.getBodyBuffer().writeString("A");
@@ -284,6 +285,24 @@ public class AddressSettingsTest extends ActiveMQTestBase {
    }
 
    @Test
+   public void test3LevelHierarchyPageSizeBytes() throws Exception {
+      ActiveMQServer server = createServer(true);
+      server.start();
+
+      AddressSettings level1 = new AddressSettings().setPageSizeBytes(100 * 1024);
+      AddressSettings level2 = new AddressSettings();
+      AddressSettings level3 = new AddressSettings();
+      server.getAddressSettingsRepository().clear();
+      server.getAddressSettingsRepository().setDefault(null);
+      HierarchicalRepository<AddressSettings> repos = server.getAddressSettingsRepository();
+      repos.addMatch("test.foo.bar", level3);
+      repos.addMatch("test.foo.#", level2);
+      repos.addMatch("test.#", level1);
+
+      assertEquals(100 * 1024, server.getAddressSettingsRepository().getMatch("test.foo.bar").getPageSizeBytes());
+   }
+
+   @Test
    public void testOverrideHierarchyWithDLA() throws Exception {
       ActiveMQServer server = createServer(false);
 
@@ -298,12 +317,12 @@ public class AddressSettingsTest extends ActiveMQTestBase {
       ServerLocator locator = createInVMNonHALocator();
       ClientSessionFactory sf = createSessionFactory(locator);
       ClientSession session = sf.createSession(false, true, false);
-      session.createQueue(addressA2, queueA, false);
-      session.createQueue(addressB2, queueB, false);
-      session.createQueue(addressC, queueC, false);
-      session.createQueue(dlaA, dlqA, false);
-      session.createQueue(dlaB, dlqB, false);
-      session.createQueue(dlaC, dlqC, false);
+      session.createQueue(new QueueConfiguration(queueA).setAddress(addressA2).setDurable(false));
+      session.createQueue(new QueueConfiguration(queueB).setAddress(addressB2).setDurable(false));
+      session.createQueue(new QueueConfiguration(queueC).setAddress(addressC).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqA).setAddress(dlaA).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqB).setAddress(dlaB).setDurable(false));
+      session.createQueue(new QueueConfiguration(dlqC).setAddress(dlaC).setDurable(false));
       ClientSession sendSession = sf.createSession(false, true, true);
       ClientMessage cm = sendSession.createMessage(true);
       ClientMessage cm2 = sendSession.createMessage(true);

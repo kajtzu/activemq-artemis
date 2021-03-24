@@ -19,10 +19,14 @@ package org.apache.activemq.artemis.core.messagecounter;
 import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Date;
 import java.util.GregorianCalendar;
 import java.util.List;
 
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.utils.JsonLoader;
+
+import static org.apache.activemq.artemis.api.core.JsonUtil.nullSafe;
 
 /**
  * This class stores message count informations for a given queue
@@ -60,12 +64,16 @@ public class MessageCounter {
 
    private long timeLastAdd;
 
+   private long timeLastAck;
+
    // per hour day counter history
    private int dayCounterMax;
 
    private final List<DayCounter> dayCounters;
 
    private long lastMessagesAdded;
+
+   private long lastMessagesAcked;
 
    // Static --------------------------------------------------------
 
@@ -107,19 +115,28 @@ public class MessageCounter {
       @Override
       public void run() {
          long latestMessagesAdded = serverQueue.getMessagesAdded();
+         long latestMessagesAcked = serverQueue.getMessagesAcknowledged();
 
          long newMessagesAdded = latestMessagesAdded - lastMessagesAdded;
+         long newMessagesAcked = latestMessagesAcked - lastMessagesAcked;
 
          countTotal += newMessagesAdded;
 
          lastMessagesAdded = latestMessagesAdded;
+         lastMessagesAcked = latestMessagesAcked;
+
+         long timestamp = System.currentTimeMillis();
 
          if (newMessagesAdded > 0) {
-            timeLastAdd = System.currentTimeMillis();
+            timeLastAdd = timestamp;
+         }
+
+         if (newMessagesAcked > 0) {
+            timeLastAck = timestamp;
          }
 
          // update timestamp
-         timeLastUpdate = System.currentTimeMillis();
+         timeLastUpdate = timestamp;
 
          // update message history
          updateHistory(newMessagesAdded);
@@ -204,12 +221,17 @@ public class MessageCounter {
       return timeLastAdd;
    }
 
+   public long getLastAckedMessageTime() {
+      return timeLastAck;
+   }
+
    public void resetCounter() {
       countTotal = 0;
       countTotalLast = 0;
       depthLast = 0;
       timeLastUpdate = 0;
       timeLastAdd = 0;
+      timeLastAck = 0;
    }
 
    private void setHistoryLimit(final int daycountmax) {
@@ -232,12 +254,10 @@ public class MessageCounter {
 
             // create initial day counter when empty
             bInitialize = dayCounters.isEmpty();
-         }
-         else if (dayCounterMax == 0) {
+         } else if (dayCounterMax == 0) {
             // disable history
             dayCounters.clear();
-         }
-         else {
+         } else {
             // unlimited day history
 
             // create initial day counter when empty
@@ -308,6 +328,32 @@ public class MessageCounter {
          ", serverQueue =" +
          serverQueue +
          "]";
+   }
+
+   /**
+    * Returns a JSON String serialization of a {@link MessageCounter} object.
+    *
+    * @return
+    */
+   public String toJSon() {
+      DateFormat dateFormat = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM);
+      String lastAddTimestamp = dateFormat.format(new Date(this.getLastAddedMessageTime()));
+      String lastAckTimestamp = dateFormat.format(new Date(this.getLastAckedMessageTime()));
+      String updateTimestamp = dateFormat.format(new Date(this.getLastUpdate()));
+      return JsonLoader
+         .createObjectBuilder()
+         .add("destinationName", nullSafe(this.getDestinationName()))
+         .add("destinationSubscription", nullSafe(this.getDestinationSubscription()))
+         .add("destinationDurable", this.isDestinationDurable())
+         .add("count", this.getCount())
+         .add("countDelta", this.getCountDelta())
+         .add("messageCount", this.getMessageCount())
+         .add("messageCountDelta", this.getMessageCountDelta())
+         .add("lastAddTimestamp", lastAddTimestamp)
+         .add("lastAckTimestamp", lastAckTimestamp)
+         .add("updateTimestamp", updateTimestamp)
+         .build()
+         .toString();
    }
 
    // Package protected ---------------------------------------------
@@ -397,7 +443,7 @@ public class MessageCounter {
 
       GregorianCalendar date = null;
 
-      int[] counters = new int[DayCounter.HOURS];
+      long[] counters = new long[DayCounter.HOURS];
 
       /**
        * Constructor
@@ -417,19 +463,17 @@ public class MessageCounter {
          for (int i = 0; i < DayCounter.HOURS; i++) {
             if (i < hour) {
                if (isStartDay) {
-                  counters[i] = -1;
+                  counters[i] = -1L;
+               } else {
+                  counters[i] = 0L;
                }
-               else {
-                  counters[i] = 0;
-               }
-            }
-            else {
-               counters[i] = -1;
+            } else {
+               counters[i] = -1L;
             }
          }
 
          // set the array element of the current hour to '0'
-         counters[hour] = 0;
+         counters[hour] = 0L;
       }
 
       /**
@@ -441,7 +485,7 @@ public class MessageCounter {
          return (GregorianCalendar) date.clone();
       }
 
-      public int[] getCounters() {
+      public long[] getCounters() {
          return counters;
       }
 

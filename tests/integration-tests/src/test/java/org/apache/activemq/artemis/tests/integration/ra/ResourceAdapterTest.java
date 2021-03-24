@@ -26,12 +26,18 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.api.core.management.AddressControl;
+import org.apache.activemq.artemis.api.core.management.ResourceNames;
 import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
 import org.apache.activemq.artemis.core.client.impl.ServerLocatorImpl;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.ra.ActiveMQResourceAdapter;
@@ -41,6 +47,7 @@ import org.apache.activemq.artemis.service.extensions.xa.recovery.XARecoveryConf
 import org.apache.activemq.artemis.tests.unit.ra.BootstrapContext;
 import org.apache.activemq.artemis.tests.unit.ra.MessageEndpointFactory;
 import org.apache.activemq.artemis.utils.DefaultSensitiveStringCodec;
+import org.apache.activemq.artemis.utils.PasswordMaskingUtil;
 import org.junit.Test;
 
 public class ResourceAdapterTest extends ActiveMQRATestBase {
@@ -51,7 +58,7 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
       ClientSessionFactory factory = locator.createSessionFactory();
       ClientSession session = factory.createSession(false, false, false);
       ActiveMQDestination queue = (ActiveMQDestination) ActiveMQJMSClient.createQueue("test");
-      session.createQueue(queue.getSimpleAddress(), queue.getSimpleAddress(), true);
+      session.createQueue(new QueueConfiguration(queue.getSimpleAddress()));
       session.close();
 
       ActiveMQResourceAdapter ra = new ActiveMQResourceAdapter();
@@ -87,7 +94,6 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
       Set<XARecoveryConfig> resources = ra.getRecoveryManager().getResources();
 
       for (int i = 0; i < 10; i++) {
-         System.out.println(i);
          activation.start();
          assertEquals(1, resources.size());
          activation.stop();
@@ -97,6 +103,66 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
       assertEquals(0, resources.size());
       locator.close();
 
+   }
+
+   @Test
+   public void testQueuePrefixWhenUseJndiIsFalse() throws Exception {
+      final String prefix = "jms.queue.";
+      final String destinationName = "test";
+      final SimpleString prefixedDestinationName = SimpleString.toSimpleString(prefix + destinationName);
+      server.createQueue(new QueueConfiguration(prefixedDestinationName).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      ActiveMQResourceAdapter ra = new ActiveMQResourceAdapter();
+      ra.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      ra.start(new BootstrapContext());
+      Connection conn = ra.getDefaultActiveMQConnectionFactory().createConnection();
+      conn.close();
+
+      ActiveMQActivationSpec spec = new ActiveMQActivationSpec();
+      spec.setResourceAdapter(ra);
+      spec.setUseJNDI(false);
+      spec.setDestinationType("javax.jms.Queue");
+      spec.setDestination(destinationName);
+      spec.setQueuePrefix(prefix);
+      spec.setMaxSession(1);
+      spec.setSetupAttempts(1);
+
+      ActiveMQActivation activation = new ActiveMQActivation(ra, new MessageEndpointFactory(), spec);
+
+      activation.start();
+
+      assertEquals(1, server.locateQueue(prefixedDestinationName).getConsumerCount());
+
+      activation.stop();
+   }
+
+   @Test
+   public void testTopicPrefixWhenUseJndiIsFalse() throws Exception {
+      final String prefix = "jms.topic.";
+      final String destinationName = "test";
+      final SimpleString prefixedDestinationName = SimpleString.toSimpleString(prefix + destinationName);
+      server.addAddressInfo(new AddressInfo(prefixedDestinationName).addRoutingType(RoutingType.MULTICAST));
+      ActiveMQResourceAdapter ra = new ActiveMQResourceAdapter();
+      ra.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      ra.start(new BootstrapContext());
+      Connection conn = ra.getDefaultActiveMQConnectionFactory().createConnection();
+      conn.close();
+
+      ActiveMQActivationSpec spec = new ActiveMQActivationSpec();
+      spec.setResourceAdapter(ra);
+      spec.setUseJNDI(false);
+      spec.setDestinationType("javax.jms.Topic");
+      spec.setDestination(destinationName);
+      spec.setTopicPrefix(prefix);
+      spec.setMaxSession(1);
+      spec.setSetupAttempts(1);
+
+      ActiveMQActivation activation = new ActiveMQActivation(ra, new MessageEndpointFactory(), spec);
+
+      activation.start();
+
+      assertEquals(1, ((AddressControl)server.getManagementService().getResource(ResourceNames.ADDRESS + prefixedDestinationName)).getQueueNames().length);
+
+      activation.stop();
    }
 
    @Test
@@ -565,7 +631,7 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
       ActiveMQRATestBase.MyBootstrapContext ctx = new ActiveMQRATestBase.MyBootstrapContext();
 
       DefaultSensitiveStringCodec codec = new DefaultSensitiveStringCodec();
-      String mask = (String) codec.encode("helloworld");
+      String mask = codec.encode("helloworld");
 
       qResourceAdapter.setUseMaskedPassword(true);
       qResourceAdapter.setPassword(mask);
@@ -595,6 +661,41 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
    }
 
    @Test
+   public void testMaskPasswordENC() throws Exception {
+      ActiveMQResourceAdapter qResourceAdapter = new ActiveMQResourceAdapter();
+      qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      ActiveMQRATestBase.MyBootstrapContext ctx = new ActiveMQRATestBase.MyBootstrapContext();
+
+      DefaultSensitiveStringCodec codec = new DefaultSensitiveStringCodec();
+      String mask = codec.encode("helloworld");
+
+      qResourceAdapter.setPassword(PasswordMaskingUtil.wrap(mask));
+
+      qResourceAdapter.start(ctx);
+
+      assertEquals("helloworld", qResourceAdapter.getPassword());
+
+      ActiveMQActivationSpec spec = new ActiveMQActivationSpec();
+      spec.setResourceAdapter(qResourceAdapter);
+      spec.setUseJNDI(false);
+      spec.setDestinationType("javax.jms.Queue");
+      spec.setDestination(MDBQUEUE);
+
+      mask = codec.encode("mdbpassword");
+      spec.setPassword(PasswordMaskingUtil.wrap(mask));
+      qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      CountDownLatch latch = new CountDownLatch(1);
+      DummyMessageEndpoint endpoint = new DummyMessageEndpoint(latch);
+      DummyMessageEndpointFactory endpointFactory = new DummyMessageEndpointFactory(endpoint, false);
+      qResourceAdapter.endpointActivation(endpointFactory, spec);
+
+      assertEquals("mdbpassword", spec.getPassword());
+
+      qResourceAdapter.stop();
+      assertTrue(endpoint.released);
+   }
+
+   @Test
    public void testMaskPassword2() throws Exception {
       ActiveMQResourceAdapter qResourceAdapter = new ActiveMQResourceAdapter();
       qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
@@ -609,7 +710,7 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
       prop.put("key", "anotherkey");
       codec.init(prop);
 
-      String mask = (String) codec.encode("helloworld");
+      String mask = codec.encode("helloworld");
 
       qResourceAdapter.setPassword(mask);
 
@@ -623,7 +724,7 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
       spec.setDestinationType("javax.jms.Queue");
       spec.setDestination(MDBQUEUE);
 
-      mask = (String) codec.encode("mdbpassword");
+      mask = codec.encode("mdbpassword");
       spec.setPassword(mask);
       qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
       CountDownLatch latch = new CountDownLatch(1);
@@ -635,6 +736,99 @@ public class ResourceAdapterTest extends ActiveMQRATestBase {
 
       qResourceAdapter.stop();
       assertTrue(endpoint.released);
+   }
+
+   @Test
+   public void testMaskPassword2ENC() throws Exception {
+      ActiveMQResourceAdapter qResourceAdapter = new ActiveMQResourceAdapter();
+      qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      ActiveMQRATestBase.MyBootstrapContext ctx = new ActiveMQRATestBase.MyBootstrapContext();
+
+      qResourceAdapter.setPasswordCodec(DefaultSensitiveStringCodec.class.getName() + ";key=anotherkey");
+
+      DefaultSensitiveStringCodec codec = new DefaultSensitiveStringCodec();
+      Map<String, String> prop = new HashMap<>();
+
+      prop.put("key", "anotherkey");
+      codec.init(prop);
+
+      String mask = codec.encode("helloworld");
+
+      qResourceAdapter.setPassword(PasswordMaskingUtil.wrap(mask));
+
+      qResourceAdapter.start(ctx);
+
+      assertEquals("helloworld", qResourceAdapter.getPassword());
+
+      ActiveMQActivationSpec spec = new ActiveMQActivationSpec();
+      spec.setResourceAdapter(qResourceAdapter);
+      spec.setUseJNDI(false);
+      spec.setDestinationType("javax.jms.Queue");
+      spec.setDestination(MDBQUEUE);
+
+      mask = codec.encode("mdbpassword");
+      spec.setPassword(PasswordMaskingUtil.wrap(mask));
+      qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      CountDownLatch latch = new CountDownLatch(1);
+      DummyMessageEndpoint endpoint = new DummyMessageEndpoint(latch);
+      DummyMessageEndpointFactory endpointFactory = new DummyMessageEndpointFactory(endpoint, false);
+      qResourceAdapter.endpointActivation(endpointFactory, spec);
+
+      assertEquals("mdbpassword", spec.getPassword());
+
+      qResourceAdapter.stop();
+      assertTrue(endpoint.released);
+   }
+
+   @Test
+   public void testConnectionParameterStringParsing() throws Exception {
+      ActiveMQResourceAdapter resourceAdapter = new ActiveMQResourceAdapter();
+      resourceAdapter.setConnectionParameters("enabledProtocols=TLS1\\,TLS1.2;sslEnabled=true");
+      assertEquals(resourceAdapter.getProperties().getParsedConnectionParameters().get(0).get("enabledProtocols"), "TLS1,TLS1.2");
+      resourceAdapter.setConnectionParameters("enabledProtocols=TLS1\\,TLS1.2;sslEnabled=true,enabledProtocols=TLS1.3\\,TLS1.4\\,TLS1.5;sslEnabled=true");
+      assertEquals(resourceAdapter.getProperties().getParsedConnectionParameters().get(0).get("enabledProtocols"), "TLS1,TLS1.2");
+      assertEquals(resourceAdapter.getProperties().getParsedConnectionParameters().get(1).get("enabledProtocols"), "TLS1.3,TLS1.4,TLS1.5");
+
+      try {
+         resourceAdapter.setConnectionParameters("enabledProtocols=TLS1,TLS1.2;sslEnabled=true,enabledProtocols=TLS1,TLS1.2;sslEnabled=true");
+         fail("This should have failed");
+      } catch (Exception e) {
+         // ignore
+      }
+   }
+
+   @Test
+   public void testConnectionFactoryPropertiesApplyToRecoveryConfig() throws Exception {
+      ServerLocator locator = createInVMNonHALocator();
+      ClientSessionFactory factory = locator.createSessionFactory();
+      ClientSession session = factory.createSession(false, false, false);
+      ActiveMQDestination queue = (ActiveMQDestination) ActiveMQJMSClient.createQueue("test");
+      session.createQueue(new QueueConfiguration(queue.getSimpleAddress()));
+      session.close();
+
+      ActiveMQResourceAdapter ra = new ActiveMQResourceAdapter();
+
+      ra.setConnectorClassName(INVM_CONNECTOR_FACTORY);
+      ra.setUserName("userGlobal");
+      ra.setPassword("passwordGlobal");
+      ra.setConnectionTTL(100L);
+      ra.setCallFailoverTimeout(100L);
+      ra.start(new BootstrapContext());
+
+      Set<XARecoveryConfig> resources = ra.getRecoveryManager().getResources();
+      assertEquals(100L, ra.getDefaultActiveMQConnectionFactory().getServerLocator().getConnectionTTL());
+      assertEquals(100L, ra.getDefaultActiveMQConnectionFactory().getServerLocator().getCallFailoverTimeout());
+
+
+      for (XARecoveryConfig resource : resources) {
+         assertEquals(100L, resource.createServerLocator().getConnectionTTL());
+         assertEquals(100L, resource.createServerLocator().getCallFailoverTimeout());
+      }
+
+      ra.stop();
+      assertEquals(0, resources.size());
+      locator.close();
+
    }
 
    @Override

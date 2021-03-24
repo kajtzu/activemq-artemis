@@ -40,6 +40,7 @@ import org.apache.activemq.artemis.utils.ReusableLatch;
 import org.jboss.byteman.contrib.bmunit.BMRule;
 import org.jboss.byteman.contrib.bmunit.BMRules;
 import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -51,6 +52,7 @@ import org.junit.runner.RunWith;
  */
 @RunWith(BMUnitRunner.class)
 public class RaceOnSyncLargeMessageOverReplicationTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(RaceOnSyncLargeMessageOverReplicationTest.class);
 
    private static ActiveMQServer backupServer;
    private static ActiveMQServer liveServer;
@@ -75,7 +77,7 @@ public class RaceOnSyncLargeMessageOverReplicationTest extends ActiveMQTestBase 
    public void setUp() throws Exception {
       super.setUp();
 
-      System.out.println("Tmp::" + getTemporaryDir());
+      log.debug("Tmp::" + getTemporaryDir());
 
       flagArrived.setCount(1);
       flagWait.setCount(1);
@@ -94,7 +96,7 @@ public class RaceOnSyncLargeMessageOverReplicationTest extends ActiveMQTestBase 
       ReplicatedBackupUtils.configureReplicationPair(backupConfig, backupConnector, backupAcceptor, liveConfig, liveConnector, liveAcceptor);
 
       liveServer = createServer(liveConfig);
-      liveServer.getConfiguration().addQueueConfiguration(new CoreQueueConfiguration().setName("jms.queue.Queue").setAddress("jms.queue.Queue"));
+      liveServer.getConfiguration().addQueueConfiguration(new CoreQueueConfiguration().setName("Queue").setAddress("Queue"));
       liveServer.start();
 
       waitForServerToStart(liveServer);
@@ -126,8 +128,7 @@ public class RaceOnSyncLargeMessageOverReplicationTest extends ActiveMQTestBase 
       if (connection != null) {
          try {
             connection.close();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
          }
       }
       if (backupServer != null) {
@@ -175,8 +176,7 @@ public class RaceOnSyncLargeMessageOverReplicationTest extends ActiveMQTestBase 
                try {
                   producer.send(message);
                   session.commit();
-               }
-               catch (JMSException expected) {
+               } catch (JMSException expected) {
                   expected.printStackTrace();
                }
             }
@@ -198,12 +198,11 @@ public class RaceOnSyncLargeMessageOverReplicationTest extends ActiveMQTestBase 
 
       t.join(5000);
 
-      System.out.println("Thread joined");
+      log.debug("Thread joined");
 
       Assert.assertFalse(t.isAlive());
 
-
-      liveServer.stop(true);
+      liveServer.fail(true);
 
       Assert.assertTrue(failedOver.await(10, TimeUnit.SECONDS));
 
@@ -228,8 +227,7 @@ public class RaceOnSyncLargeMessageOverReplicationTest extends ActiveMQTestBase 
       try {
          flagArrived.countDown();
          flagWait.await(10, TimeUnit.SECONDS);
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          e.printStackTrace();
       }
 

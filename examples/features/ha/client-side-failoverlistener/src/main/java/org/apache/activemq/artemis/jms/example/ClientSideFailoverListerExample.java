@@ -16,11 +16,6 @@
  */
 package org.apache.activemq.artemis.jms.example;
 
-import org.apache.activemq.artemis.api.core.client.FailoverEventListener;
-import org.apache.activemq.artemis.api.core.client.FailoverEventType;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnection;
-import org.apache.activemq.artemis.util.ServerUtil;
-
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.MessageConsumer;
@@ -30,9 +25,14 @@ import javax.jms.Session;
 import javax.jms.TextMessage;
 import javax.naming.InitialContext;
 
+import org.apache.activemq.artemis.api.core.client.FailoverEventListener;
+import org.apache.activemq.artemis.api.core.client.FailoverEventType;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnection;
+import org.apache.activemq.artemis.util.ServerUtil;
+
 /**
  * This example demonstrates how you can listen on failover event on the client side
- * <p/>
+ * <p>
  * In this example there are two nodes running in a cluster, both server will be running for start,
  * but after a while the first server will crash. This will trigger a fail-over event
  */
@@ -88,8 +88,7 @@ public class ClientSideFailoverListerExample {
          // Step 9. We consume messages from the session A, one at a time.
          // We reached message no 5 the first server will crash
          consume(sessionA, queue, numMessages, "A");
-      }
-      finally {
+      } finally {
          // Step 10. Be sure to close our resources!
 
          if (connectionA != null) {

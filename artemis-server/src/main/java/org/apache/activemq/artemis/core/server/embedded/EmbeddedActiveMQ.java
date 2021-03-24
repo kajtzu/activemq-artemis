@@ -17,12 +17,12 @@
 package org.apache.activemq.artemis.core.server.embedded;
 
 import javax.management.MBeanServer;
-
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.FileDeploymentManager;
 import org.apache.activemq.artemis.core.config.impl.FileConfiguration;
+import org.apache.activemq.artemis.core.config.impl.LegacyJMSConfiguration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.cluster.ClusterConnection;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
@@ -62,15 +62,15 @@ public class EmbeddedActiveMQ {
 
    /**
     * It will iterate the cluster connections until you have at least the number of expected servers
-    * @param timeWait Time to wait on each iteration
-    * @param unit unit of time to wait
+    *
+    * @param timeWait   Time to wait on each iteration
+    * @param unit       unit of time to wait
     * @param iterations number of iterations
-    * @param servers number of minimal servers
+    * @param servers    number of minimal servers
     * @return
     */
    public boolean waitClusterForming(long timeWait, TimeUnit unit, int iterations, int servers) throws Exception {
-      if (activeMQServer.getClusterManager().getClusterConnections() == null ||
-         activeMQServer.getClusterManager().getClusterConnections().size() == 0) {
+      if (activeMQServer.getClusterManager().getClusterConnections() == null || activeMQServer.getClusterManager().getClusterConnections().size() == 0) {
          return servers == 0;
       }
 
@@ -123,7 +123,8 @@ public class EmbeddedActiveMQ {
             configResourcePath = "broker.xml";
          FileDeploymentManager deploymentManager = new FileDeploymentManager(configResourcePath);
          FileConfiguration config = new FileConfiguration();
-         deploymentManager.addDeployable(config);
+         LegacyJMSConfiguration legacyJMSConfiguration = new LegacyJMSConfiguration(config);
+         deploymentManager.addDeployable(config).addDeployable(legacyJMSConfiguration);
          deploymentManager.readConfiguration();
          configuration = config;
       }
@@ -132,8 +133,7 @@ public class EmbeddedActiveMQ {
       }
       if (mbeanServer == null) {
          activeMQServer = new ActiveMQServerImpl(configuration, securityManager);
-      }
-      else {
+      } else {
          activeMQServer = new ActiveMQServerImpl(configuration, mbeanServer, securityManager);
       }
    }

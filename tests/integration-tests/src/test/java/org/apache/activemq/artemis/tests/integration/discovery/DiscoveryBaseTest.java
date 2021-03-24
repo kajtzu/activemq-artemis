@@ -27,22 +27,21 @@ import java.util.Map;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
-import org.apache.activemq.artemis.core.server.ActivateCallback;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.cluster.DiscoveryEntry;
 import org.apache.activemq.artemis.core.cluster.DiscoveryGroup;
 import org.apache.activemq.artemis.core.cluster.DiscoveryListener;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
 import org.apache.activemq.artemis.core.server.NodeManager;
 import org.apache.activemq.artemis.core.server.cluster.BroadcastGroup;
 import org.apache.activemq.artemis.core.server.cluster.impl.BroadcastGroupImpl;
+import org.apache.activemq.artemis.core.server.impl.CleaningActivateCallback;
 import org.apache.activemq.artemis.core.server.management.NotificationService;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.junit.Assert;
 
 public class DiscoveryBaseTest extends ActiveMQTestBase {
 
-   protected static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    protected final String address1 = getUDPDiscoveryAddress();
 
@@ -176,53 +175,38 @@ public class DiscoveryBaseTest extends ActiveMQTestBase {
    protected final class FakeNodeManager extends NodeManager {
 
       public FakeNodeManager(String nodeID) {
-         super(false, null);
+         super(false);
          this.setNodeID(nodeID);
       }
 
       @Override
-      public void awaitLiveNode() throws Exception {
+      public void awaitLiveNode() {
       }
 
       @Override
-      public void awaitLiveStatus() throws Exception {
+      public void awaitLiveStatus() {
       }
 
       @Override
-      public void startBackup() throws Exception {
+      public void startBackup() {
       }
 
       @Override
-      public ActivateCallback startLiveNode() throws Exception {
-         return new ActivateCallback() {
-            @Override
-            public void preActivate() {
-            }
-
-            @Override
-            public void activated() {
-            }
-
-            @Override
-            public void deActivate() {
-            }
-
-            @Override
-            public void activationComplete() {
-            }
+      public ActivateCallback startLiveNode() {
+         return new CleaningActivateCallback() {
          };
       }
 
       @Override
-      public void pauseLiveServer() throws Exception {
+      public void pauseLiveServer() {
       }
 
       @Override
-      public void crashLiveServer() throws Exception {
+      public void crashLiveServer() {
       }
 
       @Override
-      public void releaseBackup() throws Exception {
+      public void releaseBackup() {
       }
 
       @Override
@@ -231,12 +215,12 @@ public class DiscoveryBaseTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean isAwaitingFailback() throws Exception {
+      public boolean isAwaitingFailback() {
          return false;
       }
 
       @Override
-      public boolean isBackupLive() throws Exception {
+      public boolean isBackupLive() {
          return false;
       }
 

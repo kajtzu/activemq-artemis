@@ -16,17 +16,10 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.interop;
 
-import org.apache.activemq.ActiveMQMessageConsumer;
-import org.apache.activemq.ActiveMQMessageProducer;
-import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
-import org.apache.activemq.command.ActiveMQDestination;
-import org.junit.Before;
-import org.junit.Test;
-
 import javax.jms.BytesMessage;
 import javax.jms.Connection;
 import javax.jms.MapMessage;
+import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
 import javax.jms.ObjectMessage;
@@ -36,6 +29,20 @@ import javax.jms.StreamMessage;
 import javax.jms.TextMessage;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
+
+import org.apache.activemq.ActiveMQConnectionFactory;
+import org.apache.activemq.ActiveMQMessageConsumer;
+import org.apache.activemq.ActiveMQMessageProducer;
+import org.apache.activemq.artemis.api.core.ActiveMQDisconnectedException;
+import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.api.core.management.QueueControl;
+import org.apache.activemq.artemis.api.core.management.ResourceNames;
+import org.apache.activemq.artemis.core.server.ServerSession;
+import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
+import org.apache.activemq.artemis.utils.Wait;
+import org.apache.activemq.command.ActiveMQDestination;
+import org.junit.Before;
+import org.junit.Test;
 
 /**
  * This test covers interactions between core clients and
@@ -64,7 +71,6 @@ public class GeneralInteropTest extends BasicOpenWireTest {
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       ActiveMQDestination destination = createDestination(session, ActiveMQDestination.QUEUE_TYPE);
 
-      System.out.println("destination: " + destination);
       final ActiveMQMessageConsumer consumer = (ActiveMQMessageConsumer) session.createConsumer(destination);
       TextMessage textMessage = (TextMessage) consumer.receive(5000);
 
@@ -186,6 +192,64 @@ public class GeneralInteropTest extends BasicOpenWireTest {
       }
    }
 
+   @Test
+   public void testFailoverReceivingFromCore() throws Exception {
+      final int prefetchSize = 10;
+      final String text = "HelloWorld";
+
+      sendMultipleTextMessagesUsingCoreJms(queueName, text, 100);
+
+      //Initialize a failover connectionFactory.
+      String urlString = "failover:(tcp://" + OWHOST + ":" + OWPORT + "?wireFormat.MaxInactivityDuration=5000)";
+      ActiveMQConnectionFactory connectionFactory = new ActiveMQConnectionFactory(urlString);
+      connectionFactory.setSendAcksAsync(false);
+      connectionFactory.setOptimizeAcknowledge(false);
+      connectionFactory.getPrefetchPolicy().setAll(prefetchSize);
+
+      Connection connection = connectionFactory.createConnection();
+      try {
+         connection.setClientID("test.consumer.queue." + queueName);
+         connection.start();
+
+         Message message = null;
+         Session session = connection.createSession(false, Session.CLIENT_ACKNOWLEDGE);
+         Queue queue = session.createQueue(queueName);
+         QueueControl queueControl = (QueueControl)server.getManagementService().
+            getResource(ResourceNames.QUEUE + queueName);
+         MessageConsumer consumer = session.createConsumer(queue);
+
+         message = consumer.receive(5000);
+         assertNotNull(message);
+         assertTrue(message instanceof TextMessage);
+         assertEquals(text + 0, ((TextMessage)message).getText());
+         message.acknowledge();
+
+         Wait.assertEquals(1L, () -> queueControl.getMessagesAcknowledged(), 3000, 100);
+         Wait.assertEquals(prefetchSize, () -> queueControl.getDeliveringCount(), 3000, 100);
+
+         //Force a disconnection.
+         for (ServerSession serverSession : server.getSessions()) {
+            if (session.toString().contains(serverSession.getName())) {
+               serverSession.getRemotingConnection().fail(new ActiveMQDisconnectedException());
+            }
+         }
+
+         Wait.assertEquals(1L, () -> queueControl.getMessagesAcknowledged(), 3000, 100);
+         Wait.assertEquals(prefetchSize, () -> queueControl.getDeliveringCount(), 3000, 100);
+
+         message = consumer.receive(5000);
+         assertNotNull(message);
+         assertTrue(message instanceof TextMessage);
+         assertEquals(text + 1, ((TextMessage)message).getText());
+         message.acknowledge();
+
+         Wait.assertEquals(2L, () -> queueControl.getMessagesAcknowledged(), 3000, 100);
+         Wait.assertEquals(prefetchSize, () -> queueControl.getDeliveringCount(), 30000, 100);
+      } finally {
+         connection.close();
+      }
+   }
+
    private void sendMultipleTextMessagesUsingCoreJms(String queueName, String text, int num) throws Exception {
       Connection jmsConn = null;
       try {
@@ -197,8 +261,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
             TextMessage msg = session.createTextMessage(text + i);
             producer.send(msg);
          }
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -223,8 +286,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
          MessageProducer producer = session.createProducer(queue);
 
          producer.send(message);
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -251,8 +313,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
          MessageProducer producer = session.createProducer(queue);
 
          producer.send(bytesMessage);
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -271,8 +332,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
          MessageProducer producer = session.createProducer(queue);
 
          producer.send(objectMessage);
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -301,8 +361,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
          MessageProducer producer = session.createProducer(queue);
 
          producer.send(msg);
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -331,8 +390,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
          MessageProducer producer = session.createProducer(queue);
 
          producer.send(mapMessage);
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -350,8 +408,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
          MessageProducer producer = session.createProducer(queue);
 
          producer.send(msg);
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -467,8 +524,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
          assertEquals(979, genericMessage.getIntProperty("intProperty"));
          assertEquals((short) 1099, genericMessage.getShortProperty("shortProperty"));
          assertEquals("HelloMessage", genericMessage.getStringProperty("stringProperty"));
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -497,8 +553,7 @@ public class GeneralInteropTest extends BasicOpenWireTest {
             assertEquals(txtMessage.getJMSDestination(), queue);
             assertEquals(text + i, txtMessage.getText());
          }
-      }
-      finally {
+      } finally {
          if (jmsConn != null) {
             jmsConn.close();
          }
@@ -521,7 +576,6 @@ public class GeneralInteropTest extends BasicOpenWireTest {
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       ActiveMQDestination destination = createDestination(session, ActiveMQDestination.QUEUE_TYPE);
 
-      System.out.println("destination: " + destination);
       final ActiveMQMessageProducer producer = (ActiveMQMessageProducer) session.createProducer(destination);
 
       javax.jms.Message message = session.createMessage();
@@ -540,7 +594,6 @@ public class GeneralInteropTest extends BasicOpenWireTest {
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       ActiveMQDestination destination = createDestination(session, ActiveMQDestination.QUEUE_TYPE);
 
-      System.out.println("destination: " + destination);
       final ActiveMQMessageProducer producer = (ActiveMQMessageProducer) session.createProducer(destination);
 
       BytesMessage bytesMessage = session.createBytesMessage();
@@ -559,7 +612,6 @@ public class GeneralInteropTest extends BasicOpenWireTest {
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       ActiveMQDestination destination = createDestination(session, ActiveMQDestination.QUEUE_TYPE);
 
-      System.out.println("destination: " + destination);
       final ActiveMQMessageProducer producer = (ActiveMQMessageProducer) session.createProducer(destination);
 
       StreamMessage streamMessage = session.createStreamMessage();
@@ -581,7 +633,6 @@ public class GeneralInteropTest extends BasicOpenWireTest {
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       ActiveMQDestination destination = createDestination(session, ActiveMQDestination.QUEUE_TYPE);
 
-      System.out.println("destination: " + destination);
       final ActiveMQMessageProducer producer = (ActiveMQMessageProducer) session.createProducer(destination);
 
       ObjectMessage objectMessage = session.createObjectMessage(obj);
@@ -593,7 +644,6 @@ public class GeneralInteropTest extends BasicOpenWireTest {
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       ActiveMQDestination destination = createDestination(session, ActiveMQDestination.QUEUE_TYPE);
 
-      System.out.println("destination: " + destination);
       final ActiveMQMessageProducer producer = (ActiveMQMessageProducer) session.createProducer(destination);
 
       MapMessage mapMessage = session.createMapMessage();

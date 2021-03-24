@@ -17,6 +17,7 @@
 
 package org.apache.activemq.artemis.core.remoting.impl;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -28,18 +29,23 @@ public abstract class AbstractAcceptor implements Acceptor {
 
    protected final Map<String, ProtocolManager> protocolMap;
 
-
    public AbstractAcceptor(Map<String, ProtocolManager> protocolMap) {
       this.protocolMap = protocolMap;
    }
+
    /**
     * This will update the list of interceptors for each ProtocolManager inside the acceptor.
-    * */
+    */
    @Override
-   public void updateInterceptors(List<BaseInterceptor> incomingInterceptors, List<BaseInterceptor> outgoingInterceptors) {
+   public void updateInterceptors(List<BaseInterceptor> incomingInterceptors,
+                                  List<BaseInterceptor> outgoingInterceptors) {
       for (ProtocolManager manager : protocolMap.values()) {
          manager.updateInterceptors(incomingInterceptors, outgoingInterceptors);
       }
+   }
+
+   public Map<String, ProtocolManager> getProtocolMap() {
+      return Collections.unmodifiableMap(protocolMap);
    }
 
 }

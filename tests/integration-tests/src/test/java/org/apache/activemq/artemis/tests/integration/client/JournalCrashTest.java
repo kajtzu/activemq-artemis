@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -28,18 +29,18 @@ import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.tests.util.SpawnedVMSupport;
 import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
-import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.SpawnedTestBase;
+import org.apache.activemq.artemis.utils.SpawnedVMSupport;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class JournalCrashTest extends ActiveMQTestBase {
+public class JournalCrashTest extends SpawnedTestBase {
 
    private static final int FIRST_RUN = 4;
 
@@ -100,8 +101,7 @@ public class JournalCrashTest extends ActiveMQTestBase {
          // System.out.flush();
 
          Runtime.getRuntime().halt(100);
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          e.printStackTrace(System.out);
          System.exit(1);
       }
@@ -111,9 +111,8 @@ public class JournalCrashTest extends ActiveMQTestBase {
       try (ClientSession session = factory.createSession(false, false)) {
 
          try {
-            session.createQueue(QUEUE, QUEUE, true);
-         }
-         catch (Exception ignored) {
+            session.createQueue(new QueueConfiguration(QUEUE));
+         } catch (Exception ignored) {
          }
 
          ClientProducer prod = session.createProducer(QUEUE);
@@ -166,7 +165,7 @@ public class JournalCrashTest extends ActiveMQTestBase {
     */
    private void runExternalProcess(final String tempDir, final int start, final int end) throws Exception {
       System.err.println("running external process...");
-      Process process = SpawnedVMSupport.spawnVM(this.getClass().getCanonicalName(), "-Xms128m", "-Xmx128m", new String[]{}, true, true, tempDir, Integer.toString(start), Integer.toString(end));
+      Process process = SpawnedVMSupport.spawnVM(this.getClass().getCanonicalName(), "-Xms128m", "-Xmx128m", new String[]{}, true, true, true, tempDir, Integer.toString(start), Integer.toString(end));
 
       Assert.assertEquals(100, process.waitFor());
    }

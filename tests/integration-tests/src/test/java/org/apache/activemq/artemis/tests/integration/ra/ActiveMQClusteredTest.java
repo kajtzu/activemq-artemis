@@ -39,6 +39,7 @@ import org.apache.activemq.artemis.ra.ActiveMQRASession;
 import org.apache.activemq.artemis.ra.ActiveMQResourceAdapter;
 import org.apache.activemq.artemis.ra.inflow.ActiveMQActivation;
 import org.apache.activemq.artemis.ra.inflow.ActiveMQActivationSpec;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.junit.Test;
 
 public class ActiveMQClusteredTest extends ActiveMQRAClusteredTestBase {
@@ -65,7 +66,7 @@ public class ActiveMQClusteredTest extends ActiveMQRAClusteredTestBase {
       DummyMessageEndpoint endpoint = new DummyMessageEndpoint(latch);
       DummyMessageEndpointFactory endpointFactory = new DummyMessageEndpointFactory(endpoint, false);
       qResourceAdapter.endpointActivation(endpointFactory, spec);
-      //make sure thet activation didn't start, i.e. no MDB consumers
+      //make sure that activation didn't start, i.e. no MDB consumers
       assertEquals(((Queue) server.getPostOffice().getBinding(MDBQUEUEPREFIXEDSIMPLE).getBindable()).getConsumerCount(), 0);
       qResourceAdapter.endpointDeactivation(endpointFactory, spec);
 
@@ -95,7 +96,7 @@ public class ActiveMQClusteredTest extends ActiveMQRAClusteredTestBase {
       DummyMessageEndpointFactory endpointFactory = new DummyMessageEndpointFactory(endpoint, false);
       qResourceAdapter.endpointActivation(endpointFactory, spec);
       ClientSession session = addClientSession(locator.createSessionFactory().createSession());
-      ClientProducer clientProducer = session.createProducer("jms.topic.mdbTopic");
+      ClientProducer clientProducer = session.createProducer("mdbTopic");
       ClientMessage message = session.createMessage(true);
       message.getBodyBuffer().writeString("test");
       clientProducer.send(message);
@@ -142,7 +143,7 @@ public class ActiveMQClusteredTest extends ActiveMQRAClusteredTestBase {
          managedConnections.add(mc);
          ActiveMQConnectionFactory cf1 = mc.getConnectionFactory();
 
-         while (!((ServerLocatorImpl)cf1.getServerLocator()).isReceivedTopology()) {
+         while (!((ServerLocatorImpl) cf1.getServerLocator()).isReceivedTopology()) {
             Thread.sleep(50);
          }
 
@@ -156,8 +157,7 @@ public class ActiveMQClusteredTest extends ActiveMQRAClusteredTestBase {
 
          assertTrue(server.getConnectionCount() >= (CONNECTION_COUNT / 2));
          assertTrue(secondaryServer.getConnectionCount() >= (CONNECTION_COUNT / 2));
-      }
-      finally {
+      } finally {
          for (Session s : sessions) {
             s.close();
          }
@@ -193,9 +193,10 @@ public class ActiveMQClusteredTest extends ActiveMQRAClusteredTestBase {
       spec.setRebalanceConnections(true);
       spec.setMaxSession(CONSUMER_COUNT);
       spec.setSetupAttempts(5);
-      spec.setSetupInterval(200);
+      spec.setSetupInterval(200L);
+      spec.setRetryInterval(100L);
       spec.setReconnectAttempts(reconnectAttempts);
-      spec.setHA(true); // if this isn't true then the toplogy listener won't get nodeDown notifications
+      spec.setHA(true); // if this isn't true then the topology listener won't get nodeDown notifications
       spec.setCallTimeout(500L); // if this isn't set then it may take a long time for tearDown to occur on the MDB connection
       qResourceAdapter.setConnectorClassName(INVM_CONNECTOR_FACTORY);
       CountDownLatch latch = new CountDownLatch(1);
@@ -221,32 +222,25 @@ public class ActiveMQClusteredTest extends ActiveMQRAClusteredTestBase {
       assertNotNull(endpoint.lastMessage);
       assertEquals(endpoint.lastMessage.getCoreMessage().getBodyBuffer().readString(), "test");
 
-      for (int i = 0; i < 10; i++) {
-         secondaryServer.stop();
+      try {
+         for (int i = 0; i < 10; i++) {
+            secondaryServer.stop();
 
-         long mark = System.currentTimeMillis();
-         long timeout = 5000;
-         while (primaryQueue.getConsumerCount() < CONSUMER_COUNT && (System.currentTimeMillis() - mark) < timeout) {
-            Thread.sleep(100);
+            Wait.assertTrue(() -> primaryQueue.getConsumerCount() == CONSUMER_COUNT);
+
+            secondaryServer.start();
+            waitForServerToStart(secondaryServer);
+            secondaryQueue = secondaryServer.locateQueue(MDBQUEUEPREFIXEDSIMPLE);
+
+            Queue secondaryQueueRef = secondaryQueue;
+            Wait.assertTrue(() -> primaryQueue.getConsumerCount() <= CONSUMER_COUNT);
+            Wait.assertTrue(() -> secondaryQueueRef.getConsumerCount() <= CONSUMER_COUNT);
+            Wait.assertTrue(() -> primaryQueue.getConsumerCount() + secondaryQueueRef.getConsumerCount() == CONSUMER_COUNT);
          }
-
-         assertTrue(primaryQueue.getConsumerCount() == CONSUMER_COUNT);
-
-         secondaryServer.start();
-         waitForServerToStart(secondaryServer);
-         secondaryQueue = secondaryServer.locateQueue(MDBQUEUEPREFIXEDSIMPLE);
-
-         mark = System.currentTimeMillis();
-         while (((primaryQueue.getConsumerCount() + secondaryQueue.getConsumerCount()) < (CONSUMER_COUNT) || primaryQueue.getConsumerCount() == CONSUMER_COUNT) && (System.currentTimeMillis() - mark) <= timeout) {
-            Thread.sleep(100);
-         }
-
-         assertTrue(primaryQueue.getConsumerCount() < CONSUMER_COUNT);
-         assertTrue(secondaryQueue.getConsumerCount() < CONSUMER_COUNT);
-         assertTrue(primaryQueue.getConsumerCount() + secondaryQueue.getConsumerCount() == CONSUMER_COUNT);
+      } finally {
+         qResourceAdapter.endpointDeactivation(endpointFactory, spec);
+         qResourceAdapter.stop();
       }
 
-      qResourceAdapter.endpointDeactivation(endpointFactory, spec);
-      qResourceAdapter.stop();
    }
 }

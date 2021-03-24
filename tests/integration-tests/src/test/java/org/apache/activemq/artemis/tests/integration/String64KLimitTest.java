@@ -16,12 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration;
 
-import org.junit.Before;
-
-import org.junit.Test;
-
-import org.junit.Assert;
-
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -35,6 +30,9 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 /**
  * There is a bug in JDK1.3, 1.4 whereby writeUTF fails if more than 64K bytes are written
@@ -72,7 +70,7 @@ public class String64KLimitTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
       ClientConsumer consumer = session.createConsumer(queue);
@@ -136,7 +134,7 @@ public class String64KLimitTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
       ClientConsumer consumer = session.createConsumer(queue);
@@ -161,16 +159,14 @@ public class String64KLimitTest extends ActiveMQTestBase {
          ClientMessage tm3 = session.createMessage(false);
          tm3.getBodyBuffer().writeUTF(s3);
          Assert.fail("can not write UTF string bigger than 64K");
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
       }
 
       try {
          ClientMessage tm4 = session.createMessage(false);
          tm4.getBodyBuffer().writeUTF(s4);
          Assert.fail("can not write UTF string bigger than 64K");
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
       }
 
       producer.send(tm1);

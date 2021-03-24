@@ -17,7 +17,11 @@
 
 package org.apache.activemq.artemis.tests.integration.server;
 
+import java.util.Arrays;
+import java.util.Collection;
+
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -29,14 +33,12 @@ import org.apache.activemq.artemis.core.postoffice.impl.LocalQueueBinding;
 import org.apache.activemq.artemis.core.server.impl.ScaleDownHandler;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.integration.cluster.distribution.ClusterTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
-
-import java.util.Arrays;
-import java.util.Collection;
 
 /**
  * On this test we will run ScaleDown directly as an unit-test in several cases,
@@ -83,7 +85,7 @@ public class ScaleDownDirectTest extends ClusterTestBase {
 
       ClientSession session = sf.createSession(true, true);
 
-      session.createQueue("ad1", "queue1", true);
+      session.createQueue(new QueueConfiguration("queue1").setAddress("ad1"));
 
       ClientProducer producer = session.createProducer("ad1");
 
@@ -99,7 +101,7 @@ public class ScaleDownDirectTest extends ClusterTestBase {
          producer.send(message);
       }
 
-      session.createQueue("ad1", "queue2", true);
+      session.createQueue(new QueueConfiguration("queue2").setAddress("ad1"));
 
       for (int i = numberOfMessages; i < (numberOfMessages * 2); i++) {
          ClientMessage message = session.createMessage(true);
@@ -145,8 +147,6 @@ public class ScaleDownDirectTest extends ClusterTestBase {
       }
 
       messageCheckNull = consumer2.receiveImmediate();
-
-      System.out.println("Received " + messageCheckNull);
 
       assertNull(messageCheckNull);
    }
@@ -220,8 +220,8 @@ public class ScaleDownDirectTest extends ClusterTestBase {
       removeConsumer(1);
 
       // at this point on node 0 there should be 2 messages in testQueue1 and 1 message in testQueue2
-      Assert.assertEquals(TEST_SIZE, getMessageCount(((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName1))).getQueue()));
-      Assert.assertEquals(TEST_SIZE - 1, getMessageCount(((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName2))).getQueue()));
+      Wait.assertEquals(TEST_SIZE, () -> getMessageCount(((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName1))).getQueue()));
+      Wait.assertEquals(TEST_SIZE - 1, () -> getMessageCount(((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName2))).getQueue()));
 
       assertEquals(TEST_SIZE, performScaledown());
       // trigger scaleDown from node 0 to node 1
@@ -251,6 +251,47 @@ public class ScaleDownDirectTest extends ClusterTestBase {
       clientMessage = consumers[0].getConsumer().receive(250);
       Assert.assertNull(clientMessage);
       removeConsumer(0);
+   }
+
+   @Test
+   public void testTemporaryQueues() throws Exception {
+      final String addressName1 = "testAddress1";
+      final String addressName2 = "testAddress2";
+      final String queueName1 = "testQueue1";
+      final String queueName2 = "testQueue2";
+      final String queueName3 = "testQueue3";
+
+      ClientSessionFactory sf = sfs[0];
+
+      ClientSession session = sf.createSession(true, true);
+
+      session.createQueue(new QueueConfiguration(queueName1).setAddress(addressName1).setDurable(false).setTemporary(true));
+
+      session.createQueue(new QueueConfiguration(queueName2).setAddress(addressName2));
+      session.createQueue(new QueueConfiguration(queueName3).setAddress(addressName2).setDurable(false).setTemporary(true));
+
+      ClientProducer producer1 = session.createProducer(addressName1);
+      producer1.send(session.createMessage(true));
+
+      ClientProducer producer2 = session.createProducer(addressName2);
+      producer2.send(session.createMessage(true));
+
+      Wait.assertEquals(1, () -> getMessageCount(((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName1))).getQueue()));
+      Wait.assertEquals(1, () -> getMessageCount(((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName2))).getQueue()));
+      Wait.assertEquals(1, () -> getMessageCount(((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName3))).getQueue()));
+
+      assertEquals(1, performScaledown());
+
+      sfs[0].close();
+
+      session.close();
+
+      // trigger scaleDown from node 0 to node 1
+      servers[0].stop();
+
+      Assert.assertNull(servers[1].getPostOffice().getBinding(new SimpleString(queueName1)));
+      Assert.assertEquals(1, getMessageCount(((LocalQueueBinding) servers[1].getPostOffice().getBinding(new SimpleString(queueName2))).getQueue()));
+      Assert.assertNull(servers[1].getPostOffice().getBinding(new SimpleString(queueName3)));
    }
 
    private void checkBody(ClientMessage message, int bufferSize) {

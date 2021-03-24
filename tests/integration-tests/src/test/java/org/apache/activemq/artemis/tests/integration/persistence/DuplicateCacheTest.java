@@ -24,14 +24,19 @@ import org.apache.activemq.artemis.core.config.StoreConfiguration;
 import org.apache.activemq.artemis.core.io.IOCallback;
 import org.apache.activemq.artemis.core.persistence.impl.journal.OperationContextImpl;
 import org.apache.activemq.artemis.core.postoffice.DuplicateIDCache;
-import org.apache.activemq.artemis.core.postoffice.impl.DuplicateIDCacheImpl;
+import org.apache.activemq.artemis.core.postoffice.impl.DuplicateIDCaches;
 import org.apache.activemq.artemis.core.transaction.impl.TransactionImpl;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.activemq.artemis.utils.RetryRule;
 import org.junit.After;
 import org.junit.Assert;
+import org.junit.Rule;
 import org.junit.Test;
 
 public class DuplicateCacheTest extends StorageManagerTestBase {
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    public DuplicateCacheTest(StoreConfiguration.StoreType storeType) {
       super(storeType);
@@ -47,7 +52,7 @@ public class DuplicateCacheTest extends StorageManagerTestBase {
    public void testDuplicate() throws Exception {
       createStorage();
 
-      DuplicateIDCache cache = new DuplicateIDCacheImpl(new SimpleString("test"), 2000, journal, true);
+      DuplicateIDCache cache = DuplicateIDCaches.persistent(new SimpleString("test"), 2000, journal);
 
       TransactionImpl tx = new TransactionImpl(journal);
 
@@ -92,17 +97,18 @@ public class DuplicateCacheTest extends StorageManagerTestBase {
          }
       }, true);
 
-
       Assert.assertTrue(latch.await(1, TimeUnit.MINUTES));
 
       Assert.assertFalse(cache.contains(id));
+
+      cache.clear();
    }
 
    @Test
    public void testDuplicateNonPersistent() throws Exception {
       createStorage();
 
-      DuplicateIDCache cache = new DuplicateIDCacheImpl(new SimpleString("test"), 2000, journal, false);
+      DuplicateIDCache cache = DuplicateIDCaches.inMemory(new SimpleString("test"), 2000);
 
       TransactionImpl tx = new TransactionImpl(journal);
 
@@ -120,5 +126,6 @@ public class DuplicateCacheTest extends StorageManagerTestBase {
          cache.addToCache(bytes, null);
       }
 
+      cache.clear();
    }
 }

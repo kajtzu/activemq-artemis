@@ -18,10 +18,8 @@ package org.apache.activemq.artemis.tests.unit.jms.client;
 
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.SelectorTranslator;
-import org.junit.Test;
-
 import org.junit.Assert;
-
+import org.junit.Test;
 
 public class SelectorTranslatorTest extends ActiveMQTestBase {
 
@@ -204,6 +202,37 @@ public class SelectorTranslatorTest extends ActiveMQTestBase {
       Assert.assertEquals(selector, SelectorTranslator.convertToActiveMQFilterString(selector));
 
       checkNoSubstitute("JMSType");
+   }
+
+   @Test
+   public void testConvertHQFilterString() {
+      String selector = "HQUserID = 'ID:AMQ-12435678'";
+
+      Assert.assertEquals("AMQUserID = 'ID:AMQ-12435678'", SelectorTranslator.convertHQToActiveMQFilterString(selector));
+
+      selector = "HQUserID = 'HQUserID'";
+
+      Assert.assertEquals("AMQUserID = 'HQUserID'", SelectorTranslator.convertHQToActiveMQFilterString(selector));
+
+      selector = "HQUserID = 'ID:AMQ-12435678'";
+
+      Assert.assertEquals("AMQUserID = 'ID:AMQ-12435678'", SelectorTranslator.convertHQToActiveMQFilterString(selector));
+
+      selector = "HQDurable='NON_DURABLE'";
+
+      Assert.assertEquals("AMQDurable='NON_DURABLE'", SelectorTranslator.convertHQToActiveMQFilterString(selector));
+
+      selector = "HQPriority=5";
+
+      Assert.assertEquals("AMQPriority=5", SelectorTranslator.convertHQToActiveMQFilterString(selector));
+
+      selector = "HQTimestamp=12345678";
+
+      Assert.assertEquals("AMQTimestamp=12345678", SelectorTranslator.convertHQToActiveMQFilterString(selector));
+
+      selector = "HQExpiration=12345678";
+
+      Assert.assertEquals("AMQExpiration=12345678", SelectorTranslator.convertHQToActiveMQFilterString(selector));
    }
 
    // Private -------------------------------------------------------------------------------------

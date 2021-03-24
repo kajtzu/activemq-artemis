@@ -25,7 +25,7 @@
    <parent>
       <groupId>org.apache.activemq.tests</groupId>
       <artifactId>artemis-tests-pom</artifactId>
-      <version>1.5.0-SNAPSHOT</version>
+      <version>2.18.0-SNAPSHOT</version>
    </parent>
 
    <artifactId>extra-tests</artifactId>
@@ -33,8 +33,7 @@
    <name>ActiveMQ Artemis Extra Tests</name>
 
    <properties>
-      <tools.jar>${java.home}/../lib/tools.jar</tools.jar>
-      <byteman.version>2.2.0</byteman.version>
+      <byteman.version>4.0.11</byteman.version>
       <activemq.basedir>${project.basedir}/../..</activemq.basedir>
       <jboss-jts.version>4.17.13.Final</jboss-jts.version>
       <hornetq.version>2.4.7.Final</hornetq.version>
@@ -45,8 +44,8 @@
 
    <dependencies>
       <dependency>
-         <groupId>io.netty</groupId>
-         <artifactId>netty-all</artifactId>
+          <groupId>com.google.errorprone</groupId>
+          <artifactId>error_prone_core</artifactId>
       </dependency>
       <dependency>
          <groupId>org.jboss.byteman</groupId>
@@ -66,6 +65,12 @@
          <version>${byteman.version}</version>
       </dependency>
       <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-junit</artifactId>
+         <version>${project.version}</version>
+         <scope>test</scope>
+      </dependency>
+      <dependency>
          <groupId>org.jboss.byteman</groupId>
          <artifactId>byteman-bmunit</artifactId>
          <scope>test</scope>
@@ -78,18 +83,16 @@
          </exclusions>
       </dependency>
       <dependency>
-         <groupId>com.sun</groupId>
-         <artifactId>tools</artifactId>
-         <version>1.7</version>
-         <scope>system</scope>
-         <systemPath>${tools.jar}</systemPath>
-      </dependency>
-      <dependency>
          <groupId>org.apache.activemq</groupId>
          <artifactId>artemis-core-client</artifactId>
          <version>${project.version}</version>
          <scope>test</scope>
          <type>test-jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-core-client</artifactId>
+         <version>${project.version}</version>
       </dependency>
       <dependency>
          <groupId>org.apache.activemq</groupId>
@@ -99,8 +102,20 @@
          <type>test-jar</type>
       </dependency>
       <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-server</artifactId>
+         <version>${project.version}</version>
+      </dependency>
+      <dependency>
          <groupId>org.apache.activemq.tests</groupId>
          <artifactId>integration-tests</artifactId>
+         <version>${project.version}</version>
+         <scope>test</scope>
+         <type>test-jar</type>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-commons</artifactId>
          <version>${project.version}</version>
          <scope>test</scope>
          <type>test-jar</type>
@@ -129,7 +144,12 @@
       </dependency>
       <dependency>
          <groupId>org.apache.activemq</groupId>
-         <artifactId>artemis-cli</artifactId>
+         <artifactId>artemis-hqclient-protocol</artifactId>
+         <version>${project.version}</version>
+      </dependency>
+      <dependency>
+         <groupId>org.apache.activemq</groupId>
+         <artifactId>artemis-service-extensions</artifactId>
          <version>${project.version}</version>
       </dependency>
       <dependency>
@@ -137,21 +157,8 @@
          <artifactId>geronimo-j2ee-connector_1.5_spec</artifactId>
       </dependency>
       <dependency>
-         <groupId>commons-logging</groupId>
-         <artifactId>commons-logging</artifactId>
-      </dependency>
-      <dependency>
-         <groupId>org.apache.geronimo.specs</groupId>
-         <artifactId>geronimo-ejb_3.0_spec</artifactId>
-      </dependency>
-      <!--this specifically for the JMS Bridge -->
-      <dependency>
          <groupId>org.apache.geronimo.specs</groupId>
          <artifactId>geronimo-jta_1.1_spec</artifactId>
-      </dependency>
-      <dependency>
-         <groupId>org.apache.geronimo.components</groupId>
-         <artifactId>geronimo-jaspi</artifactId>
       </dependency>
       <dependency>
          <groupId>org.apache.geronimo.specs</groupId>
@@ -165,11 +172,21 @@
       </dependency>
       <dependency>
          <groupId>org.jboss.logging</groupId>
+         <artifactId>jboss-logging-annotations</artifactId>
+         <scope>provided</scope>
+         <optional>true</optional>
+      </dependency>
+      <dependency>
+         <groupId>org.jboss.logging</groupId>
          <artifactId>jboss-logging</artifactId>
       </dependency>
       <dependency>
          <groupId>org.jboss.logmanager</groupId>
          <artifactId>jboss-logmanager</artifactId>
+      </dependency>
+      <dependency>
+          <groupId>org.wildfly.common</groupId>
+          <artifactId>wildfly-common</artifactId>
       </dependency>
       <dependency>
          <groupId>junit</groupId>
@@ -216,34 +233,6 @@
          <artifactId>jbossjts-jacorb</artifactId>
          <version>4.17.13.Final</version>
       </dependency>
-
-      <!-- ### Benchmark Tools -->
-      <!-- ### Java Latency Benchmarking Harness -->
-      <dependency>
-         <groupId>net.openhft</groupId>
-         <artifactId>chronicle-core</artifactId>
-         <version>${openhft.core.version}</version>
-         <!-- License: Apache 2.0 -->
-      </dependency>
-      <dependency>
-         <groupId>net.openhft</groupId>
-         <artifactId>affinity</artifactId>
-         <version>${openhft.affinity.version}</version>
-         <!-- License: LGPLv3-->
-      </dependency>
-      <!-- ### Java Microbenchmark Harness -->
-      <dependency>
-         <groupId>org.openjdk.jmh</groupId>
-         <artifactId>jmh-core</artifactId>
-         <version>${openjdk.jmh.version}</version>
-         <!-- License: GPLv2-->
-      </dependency>
-      <dependency>
-         <groupId>org.openjdk.jmh</groupId>
-         <artifactId>jmh-generator-annprocess</artifactId>
-         <version>${openjdk.jmh.version}</version>
-         <!-- License: GPLv2-->
-      </dependency>
    </dependencies>
 
    <build>
@@ -263,7 +252,6 @@
          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
-            <version>2.18.1</version>
             <configuration>
                <skipTests>${skipExtraTests}</skipTests>
                <!-- ensure we don't inherit a byteman jar form any env settings -->

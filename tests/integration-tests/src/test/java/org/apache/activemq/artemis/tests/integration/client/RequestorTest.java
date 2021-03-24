@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.tests.integration.client;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -54,7 +55,7 @@ public class RequestorTest extends ActiveMQTestBase {
 
       session.start();
 
-      session.createTemporaryQueue(requestAddress, requestQueue);
+      session.createQueue(new QueueConfiguration(requestQueue).setAddress(requestAddress).setDurable(false).setTemporary(true));
 
       ClientConsumer requestConsumer = session.createConsumer(requestQueue);
       requestConsumer.setMessageHandler(new SimpleMessageHandler(key, session));
@@ -85,7 +86,7 @@ public class RequestorTest extends ActiveMQTestBase {
 
       final ClientSession sessionRequest = sf.createSession(false, true, true);
 
-      sessionRequest.createQueue(requestAddress, requestQueue);
+      sessionRequest.createQueue(new QueueConfiguration(requestQueue).setAddress(requestAddress));
 
       sessionRequest.start();
 
@@ -93,9 +94,6 @@ public class RequestorTest extends ActiveMQTestBase {
       requestConsumer.setMessageHandler(new SimpleMessageHandler(key, sessionRequest));
 
       for (int i = 0; i < 2000; i++) {
-         if (i % 100 == 0) {
-            System.out.println(i);
-         }
          final ClientSession session = sf.createSession(false, true, true);
 
          session.start();
@@ -128,7 +126,7 @@ public class RequestorTest extends ActiveMQTestBase {
 
       session.start();
 
-      session.createTemporaryQueue(requestAddress, requestQueue);
+      session.createQueue(new QueueConfiguration(requestQueue).setAddress(requestAddress).setDurable(false).setTemporary(true));
 
       ClientConsumer requestConsumer = session.createConsumer(requestQueue);
       requestConsumer.setMessageHandler(new SimpleMessageHandler(key, session));
@@ -161,7 +159,7 @@ public class RequestorTest extends ActiveMQTestBase {
 
       session.start();
 
-      session.createTemporaryQueue(requestAddress, requestQueue);
+      session.createQueue(new QueueConfiguration(requestQueue).setAddress(requestAddress).setDurable(false).setTemporary(true));
 
       ClientConsumer requestConsumer = session.createConsumer(requestQueue);
       requestConsumer.setMessageHandler(new MessageHandler() {
@@ -212,7 +210,7 @@ public class RequestorTest extends ActiveMQTestBase {
 
       session.start();
 
-      session.createTemporaryQueue(requestAddress, requestQueue);
+      session.createQueue(new QueueConfiguration(requestQueue).setAddress(requestAddress).setDurable(false).setTemporary(true));
 
       ClientConsumer requestConsumer = session.createConsumer(requestQueue);
       requestConsumer.setMessageHandler(new SimpleMessageHandler(key, session));
@@ -271,8 +269,7 @@ public class RequestorTest extends ActiveMQTestBase {
             ClientProducer replyProducer = session.createProducer(replyTo);
             replyProducer.send(reply);
             request.acknowledge();
-         }
-         catch (ActiveMQException e) {
+         } catch (ActiveMQException e) {
             e.printStackTrace();
          }
       }

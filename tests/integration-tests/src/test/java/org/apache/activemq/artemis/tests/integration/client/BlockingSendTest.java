@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -23,6 +24,7 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
@@ -52,13 +54,13 @@ public class BlockingSendTest extends ActiveMQTestBase {
 
       server.start();
 
-      System.out.println("sync = " + server.getConfiguration().isJournalSyncNonTransactional());
+      instanceLog.debug("sync = " + server.getConfiguration().isJournalSyncNonTransactional());
       locator = createInVMNonHALocator().setBlockOnDurableSend(true);
       factory = createSessionFactory(locator);
 
       session = factory.createSession();
 
-      session.createQueue("address", "queue");
+      session.createQueue(new QueueConfiguration("queue").setAddress("address").setRoutingType(RoutingType.ANYCAST));
 
       ClientProducer prod = session.createProducer("address");
 

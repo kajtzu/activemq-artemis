@@ -38,9 +38,9 @@ public interface ReplicatedLargeMessage {
    Message setMessageID(long id);
 
    /**
-    * @see org.apache.activemq.artemis.core.server.LargeServerMessage#releaseResources()
+    * @see org.apache.activemq.artemis.core.server.LargeServerMessage#releaseResources(boolean,boolean)
     */
-   void releaseResources();
+   void releaseResources(boolean sync, boolean sendEvent);
 
    /**
     * @see org.apache.activemq.artemis.core.server.LargeServerMessage#deleteFile()
@@ -51,5 +51,13 @@ public interface ReplicatedLargeMessage {
     * @see org.apache.activemq.artemis.core.server.LargeServerMessage#addBytes(byte[])
     */
    void addBytes(byte[] body) throws Exception;
+
+   void clearPendingRecordID();
+
+   void setPendingRecordID(long pendingRecordID);
+
+   long getPendingRecordID();
+
+   boolean hasPendingRecord();
 
 }

@@ -19,17 +19,19 @@ package org.apache.activemq.artemis.core.journal.impl;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.core.io.SequentialFile;
 import org.apache.activemq.artemis.core.io.SequentialFileFactory;
+import org.apache.activemq.artemis.core.journal.EncoderPersister;
+import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.dataformat.ByteArrayEncoding;
 import org.apache.activemq.artemis.core.journal.impl.dataformat.JournalAddRecord;
 import org.apache.activemq.artemis.core.journal.impl.dataformat.JournalInternalRecord;
-import org.apache.activemq.artemis.utils.ConcurrentHashSet;
+import org.apache.activemq.artemis.utils.collections.ConcurrentLongHashSet;
 
 /**
  * Super class for Journal maintenances such as clean up and Compactor
@@ -39,7 +41,7 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
    // Constants -----------------------------------------------------
 
    // Attributes ----------------------------------------------------
-   protected static final String FILE_COMPACT_CONTROL = "journal-rename-control.ctr";
+   public static final String FILE_COMPACT_CONTROL = "journal-rename-control.ctr";
 
    protected final JournalImpl journal;
 
@@ -55,7 +57,9 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
 
    private ActiveMQBuffer writingChannel;
 
-   private final Set<Long> recordsSnapshot = new ConcurrentHashSet<>();
+   private ByteBuffer bufferWrite;
+
+   private final ConcurrentLongHashSet recordsSnapshot;
 
    protected final List<JournalFile> newDataFiles = new ArrayList<>();
 
@@ -66,14 +70,14 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
    protected AbstractJournalUpdateTask(final SequentialFileFactory fileFactory,
                                        final JournalImpl journal,
                                        final JournalFilesRepository filesRepository,
-                                       final Set<Long> recordsSnapshot,
+                                       final ConcurrentLongHashSet recordsSnapshot,
                                        final long nextOrderingID) {
       super();
       this.journal = journal;
       this.filesRepository = filesRepository;
       this.fileFactory = fileFactory;
       this.nextOrderingID = nextOrderingID;
-      this.recordsSnapshot.addAll(recordsSnapshot);
+      this.recordsSnapshot = recordsSnapshot;
    }
 
    // Public --------------------------------------------------------
@@ -96,8 +100,7 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
 
          if (files == null) {
             filesToRename.writeInt(0);
-         }
-         else {
+         } else {
             filesToRename.writeInt(files.size());
 
             for (JournalFile file : files) {
@@ -109,8 +112,7 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
 
          if (newFiles == null) {
             filesToRename.writeInt(0);
-         }
-         else {
+         } else {
             filesToRename.writeInt(newFiles.size());
 
             for (JournalFile file : newFiles) {
@@ -121,8 +123,7 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
          // Renames from clean up third
          if (renames == null) {
             filesToRename.writeInt(0);
-         }
-         else {
+         } else {
             filesToRename.writeInt(renames.size());
             for (Pair<String, String> rename : renames) {
                filesToRename.writeUTF(rename.getA());
@@ -130,7 +131,7 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
             }
          }
 
-         JournalInternalRecord controlRecord = new JournalAddRecord(true, 1, (byte) 0, new ByteArrayEncoding(filesToRename.toByteBuffer().array()));
+         JournalInternalRecord controlRecord = new JournalAddRecord(true, 1, (byte) 0, EncoderPersister.getInstance(), new ByteArrayEncoding(filesToRename.toByteBuffer().array()));
 
          ActiveMQBuffer renameBuffer = ActiveMQBuffers.dynamicBuffer(filesToRename.writerIndex());
 
@@ -147,9 +148,98 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
          controlFile.writeDirect(writeBuffer, true);
 
          return controlFile;
+      } finally {
+         controlFile.close(false, false);
       }
-      finally {
-         controlFile.close();
+   }
+
+   static SequentialFile readControlFile(final SequentialFileFactory fileFactory,
+                                                final List<String> dataFiles,
+                                                final List<String> newFiles,
+                                                final List<Pair<String, String>> renameFile,
+                                                final AtomicReference<ByteBuffer> wholeFileBufferRef) throws Exception {
+      SequentialFile controlFile = fileFactory.createSequentialFile(AbstractJournalUpdateTask.FILE_COMPACT_CONTROL);
+
+      if (controlFile.exists()) {
+         JournalFile file = new JournalFileImpl(controlFile, 0, JournalImpl.FORMAT_VERSION);
+
+         final ArrayList<RecordInfo> records = new ArrayList<>();
+
+         JournalImpl.readJournalFile(fileFactory, file, new JournalReaderCallbackAbstract() {
+            @Override
+            public void onReadAddRecord(final RecordInfo info) throws Exception {
+               records.add(info);
+            }
+         }, wholeFileBufferRef);
+
+         if (records.size() == 0) {
+            // the record is damaged
+            controlFile.delete();
+            return null;
+         } else {
+            ActiveMQBuffer input = ActiveMQBuffers.wrappedBuffer(records.get(0).data);
+
+            int numberDataFiles = input.readInt();
+
+            for (int i = 0; i < numberDataFiles; i++) {
+               dataFiles.add(input.readUTF());
+            }
+
+            int numberNewFiles = input.readInt();
+
+            for (int i = 0; i < numberNewFiles; i++) {
+               newFiles.add(input.readUTF());
+            }
+
+            int numberRenames = input.readInt();
+            for (int i = 0; i < numberRenames; i++) {
+               String from = input.readUTF();
+               String to = input.readUTF();
+               renameFile.add(new Pair<>(from, to));
+            }
+
+         }
+
+         return controlFile;
+      } else {
+         return null;
+      }
+   }
+
+   public static SequentialFile readControlFile(final SequentialFileFactory fileFactory,
+                                                final List<String> dataFiles,
+                                                final List<String> newFiles,
+                                                final List<Pair<String, String>> renameFile) throws Exception {
+      return readControlFile(fileFactory, dataFiles, newFiles, renameFile, null);
+   }
+
+   private void flush(boolean releaseWritingBuffer) throws Exception {
+      if (writingChannel != null) {
+         try {
+            if (sequentialFile.isOpen()) {
+               try {
+                  sequentialFile.position(0);
+
+                  // To Fix the size of the file
+                  writingChannel.writerIndex(writingChannel.capacity());
+
+                  final ByteBuffer byteBuffer = bufferWrite;
+                  final int readerIndex = writingChannel.readerIndex();
+                  byteBuffer.clear().position(readerIndex).limit(readerIndex + writingChannel.readableBytes());
+                  sequentialFile.blockingWriteDirect(byteBuffer, true, false);
+               } finally {
+                  sequentialFile.close(false, false);
+                  newDataFiles.add(currentFile);
+               }
+            }
+         } finally {
+            if (releaseWritingBuffer) {
+               //deterministic release of native resources
+               fileFactory.releaseDirectBuffer(bufferWrite);
+               writingChannel = null;
+               bufferWrite = null;
+            }
+         }
       }
    }
 
@@ -157,21 +247,10 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
     * Write pending output into file
     */
    public void flush() throws Exception {
-      if (writingChannel != null) {
-         sequentialFile.position(0);
-
-         // To Fix the size of the file
-         writingChannel.writerIndex(writingChannel.capacity());
-
-         sequentialFile.writeDirect(writingChannel.toByteBuffer(), true);
-         sequentialFile.close();
-         newDataFiles.add(currentFile);
-      }
-
-      writingChannel = null;
+      flush(true);
    }
 
-   public boolean lookupRecord(final long id) {
+   public boolean containsRecord(final long id) {
       return recordsSnapshot.contains(id);
    }
 
@@ -184,19 +263,30 @@ public abstract class AbstractJournalUpdateTask implements JournalReaderCallback
     */
 
    protected void openFile() throws Exception {
-      flush();
+      flush(false);
 
-      ByteBuffer bufferWrite = fileFactory.newBuffer(journal.getFileSize());
-
-      writingChannel = ActiveMQBuffers.wrappedBuffer(bufferWrite);
-
-      currentFile = filesRepository.takeFile(false, false, false, true);
+      currentFile = filesRepository.openFileCMP();
 
       sequentialFile = currentFile.getFile();
 
       sequentialFile.open(1, false);
 
       currentFile = new JournalFileImpl(sequentialFile, nextOrderingID++, JournalImpl.FORMAT_VERSION);
+
+      final int fileSize = journal.getFileSize();
+      if (bufferWrite != null && bufferWrite.capacity() < fileSize) {
+         fileFactory.releaseDirectBuffer(bufferWrite);
+         bufferWrite = null;
+         writingChannel = null;
+      }
+      if (bufferWrite == null) {
+         final ByteBuffer bufferWrite = fileFactory.allocateDirectBuffer(fileSize);
+         this.bufferWrite = bufferWrite;
+         writingChannel = ActiveMQBuffers.wrappedBuffer(bufferWrite);
+      } else {
+         writingChannel.clear();
+         bufferWrite.clear();
+      }
 
       JournalImpl.writeHeader(writingChannel, journal.getUserVersion(), currentFile.getFileID());
    }

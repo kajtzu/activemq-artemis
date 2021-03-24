@@ -16,8 +16,13 @@
  */
 package org.apache.activemq.artemis.tests.integration.ra;
 
+import javax.jms.JMSConsumer;
 import javax.jms.JMSContext;
+import javax.jms.JMSProducer;
 import javax.jms.JMSRuntimeException;
+import javax.jms.MessageFormatRuntimeException;
+import javax.jms.Queue;
+import javax.jms.TextMessage;
 import javax.transaction.TransactionManager;
 import java.util.HashSet;
 import java.util.Set;
@@ -57,7 +62,7 @@ public class JMSContextTest extends ActiveMQRATestBase {
       securityManager.getConfiguration().setDefaultUser("guest");
       securityManager.getConfiguration().addRole("testuser", "arole");
       securityManager.getConfiguration().addRole("guest", "arole");
-      Role role = new Role("arole", true, true, true, true, true, true, true, true);
+      Role role = new Role("arole", true, true, true, true, true, true, true, true, true, true);
       Set<Role> roles = new HashSet<>();
       roles.add(role);
       server.getSecurityRepository().addMatch(MDBQUEUEPREFIXED, roles);
@@ -89,11 +94,9 @@ public class JMSContextTest extends ActiveMQRATestBase {
       try {
          jmsctx.createContext(JMSContext.AUTO_ACKNOWLEDGE);
          fail("expected JMSRuntimeException");
-      }
-      catch (JMSRuntimeException e) {
+      } catch (JMSRuntimeException e) {
          //pass
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          fail("wrong exception thrown: " + e);
       }
    }
@@ -104,11 +107,9 @@ public class JMSContextTest extends ActiveMQRATestBase {
       try {
          jmsctx.createContext(JMSContext.AUTO_ACKNOWLEDGE);
          fail("expected JMSRuntimeException");
-      }
-      catch (JMSRuntimeException e) {
+      } catch (JMSRuntimeException e) {
          //pass
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          fail("wrong exception thrown: " + e);
       }
    }
@@ -118,8 +119,7 @@ public class JMSContextTest extends ActiveMQRATestBase {
       try {
          qraConnectionFactory.createContext(JMSContext.SESSION_TRANSACTED);
          fail();
-      }
-      catch (JMSRuntimeException e) {
+      } catch (JMSRuntimeException e) {
          //pass
       }
    }
@@ -136,8 +136,7 @@ public class JMSContextTest extends ActiveMQRATestBase {
       try {
          qraConnectionFactory.createContext(JMSContext.CLIENT_ACKNOWLEDGE);
          fail();
-      }
-      catch (JMSRuntimeException e) {
+      } catch (JMSRuntimeException e) {
          //pass
       }
    }
@@ -149,4 +148,25 @@ public class JMSContextTest extends ActiveMQRATestBase {
       assertEquals(context.getSessionMode(), JMSContext.AUTO_ACKNOWLEDGE);
    }
 
+   @Test
+   public void testJMSContextConsumerThrowsMessageFormatExceptionOnMalformedBody() throws Exception {
+      Queue queue = createQueue(true, "ContextMalformedBodyTestQueue");
+
+      JMSContext context = qraConnectionFactory.createContext();
+      JMSProducer producer = context.createProducer();
+
+      TextMessage message = context.createTextMessage("TestMessage");
+      producer.send(queue, message);
+
+      JMSConsumer consumer = context.createConsumer(queue);
+
+      try {
+         consumer.receiveBody(Boolean.class);
+         fail("Should thrown MessageFormatException");
+      } catch (MessageFormatRuntimeException mfre) {
+         // Do nothing test passed
+      } catch (Exception e) {
+         fail("Threw wrong exception, should be MessageFormatRuntimeException, instead got: " + e.getClass().getCanonicalName());
+      }
+   }
 }

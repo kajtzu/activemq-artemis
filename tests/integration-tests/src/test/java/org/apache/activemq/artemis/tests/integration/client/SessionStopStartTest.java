@@ -16,15 +16,10 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
-import org.junit.Before;
-
-import org.junit.Test;
-
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-import org.junit.Assert;
-
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -34,12 +29,15 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.MessageHandler;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.jboss.logging.Logger;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class SessionStopStartTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(SessionStopStartTest.class);
 
    private ActiveMQServer server;
 
@@ -63,7 +61,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -104,7 +102,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -148,7 +146,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -193,8 +191,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
                }
 
                latch.countDown();
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
             }
          }
       }
@@ -213,9 +210,6 @@ public class SessionStopStartTest extends ActiveMQTestBase {
       session.start();
       for (int i = 0; i < 90; i++) {
          ClientMessage msg = consumer.receive(1000);
-         if (msg == null) {
-            System.out.println("ClientConsumerTest.testStopConsumer");
-         }
          Assert.assertNotNull("message " + i, msg);
          msg.acknowledge();
       }
@@ -231,7 +225,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -274,8 +268,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
                   consumer.setMessageHandler(null);
                }
 
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
             }
          }
       }
@@ -288,8 +281,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       try {
          session.stop();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          SessionStopStartTest.log.warn(e.getMessage(), e);
          throw e;
       }
@@ -302,9 +294,6 @@ public class SessionStopStartTest extends ActiveMQTestBase {
       session.start();
       for (int i = 0; i < 90; i++) {
          ClientMessage msg = consumer.receive(1000);
-         if (msg == null) {
-            System.out.println("ClientConsumerTest.testStopConsumer");
-         }
          Assert.assertNotNull("message " + i, msg);
          msg.acknowledge();
       }
@@ -320,7 +309,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -378,8 +367,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
                   started = false;
                }
 
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
             }
          }
       }
@@ -415,7 +403,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -473,8 +461,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
                   started = false;
                }
 
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
             }
          }
       }
@@ -524,7 +511,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -576,7 +563,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -614,7 +601,7 @@ public class SessionStopStartTest extends ActiveMQTestBase {
 
       final ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 

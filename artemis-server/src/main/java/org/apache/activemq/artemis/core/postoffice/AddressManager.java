@@ -16,10 +16,15 @@
  */
 package org.apache.activemq.artemis.core.postoffice;
 
-import java.util.Map;
+import java.util.Collection;
+import java.util.EnumSet;
 import java.util.Set;
+import java.util.stream.Stream;
 
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
+import org.apache.activemq.artemis.core.server.mirror.MirrorController;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 
 /**
@@ -39,15 +44,42 @@ public interface AddressManager {
     */
    Binding removeBinding(SimpleString uniqueName, Transaction tx) throws Exception;
 
+   Bindings getExistingBindingsForRoutingAddress(SimpleString address) throws Exception;
+
    Bindings getBindingsForRoutingAddress(SimpleString address) throws Exception;
 
-   Bindings getMatchingBindings(SimpleString address) throws Exception;
+   Collection<Binding> getMatchingBindings(SimpleString address) throws Exception;
+
+   Collection<Binding> getDirectBindings(SimpleString address) throws Exception;
+
+   SimpleString getMatchingQueue(SimpleString address, RoutingType routingType) throws Exception;
+
+   SimpleString getMatchingQueue(SimpleString address, SimpleString queueName, RoutingType routingType) throws Exception;
 
    void clear();
 
    Binding getBinding(SimpleString queueName);
 
-   Map<SimpleString, Binding> getBindings();
+   Stream<Binding> getBindings();
 
    Set<SimpleString> getAddresses();
+
+   /**
+    * @param addressInfo
+    * @return true if the address was added, false if it wasn't added
+    */
+   boolean addAddressInfo(AddressInfo addressInfo) throws Exception;
+
+   boolean reloadAddressInfo(AddressInfo addressInfo) throws Exception;
+
+   /** it will return null if there are no updates.
+    *  it will throw an exception if the address doesn't exist */
+   AddressInfo updateAddressInfo(SimpleString addressName, EnumSet<RoutingType> routingTypes) throws Exception;
+
+   AddressInfo removeAddressInfo(SimpleString address) throws Exception;
+
+   AddressInfo getAddressInfo(SimpleString address);
+
+   void scanAddresses(MirrorController mirrorController) throws Exception;
+
 }

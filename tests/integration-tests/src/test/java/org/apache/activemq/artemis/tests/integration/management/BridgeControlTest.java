@@ -16,20 +16,14 @@
  */
 package org.apache.activemq.artemis.tests.integration.management;
 
-import org.apache.activemq.artemis.tests.integration.SimpleNotificationService;
-import org.apache.activemq.artemis.utils.RandomUtil;
-import org.junit.Before;
-import org.junit.Test;
-
+import javax.management.MBeanServer;
+import javax.management.MBeanServerFactory;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import javax.management.MBeanServer;
-import javax.management.MBeanServerFactory;
-
-import org.junit.Assert;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.management.BridgeControl;
@@ -37,13 +31,18 @@ import org.apache.activemq.artemis.api.core.management.CoreNotificationType;
 import org.apache.activemq.artemis.api.core.management.ObjectNameBuilder;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMAcceptorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnectorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
+import org.apache.activemq.artemis.core.server.cluster.impl.BridgeMetrics;
 import org.apache.activemq.artemis.core.server.management.Notification;
+import org.apache.activemq.artemis.tests.integration.SimpleNotificationService;
+import org.apache.activemq.artemis.utils.RandomUtil;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class BridgeControlTest extends ManagementTestBase {
 
@@ -66,6 +65,11 @@ public class BridgeControlTest extends ManagementTestBase {
       Assert.assertEquals(bridgeConfig.getRetryIntervalMultiplier(), bridgeControl.getRetryIntervalMultiplier(), 0.000001);
       Assert.assertEquals(bridgeConfig.getReconnectAttempts(), bridgeControl.getReconnectAttempts());
       Assert.assertEquals(bridgeConfig.isUseDuplicateDetection(), bridgeControl.isUseDuplicateDetection());
+      Map<String, Object> bridgeMetrics = bridgeControl.getMetrics();
+      Assert.assertEquals(0L, bridgeControl.getMessagesPendingAcknowledgement());
+      Assert.assertEquals(0L, bridgeControl.getMessagesAcknowledged());
+      Assert.assertEquals(0L, bridgeMetrics.get(BridgeMetrics.MESSAGES_PENDING_ACKNOWLEDGEMENT_KEY));
+      Assert.assertEquals(0L, bridgeMetrics.get(BridgeMetrics.MESSAGES_ACKNOWLEDGED_KEY));
 
       String[] connectorPairData = bridgeControl.getStaticConnectors();
       Assert.assertEquals(bridgeConfig.getStaticConnectors().get(0), connectorPairData[0]);
@@ -123,14 +127,14 @@ public class BridgeControlTest extends ManagementTestBase {
 
       TransportConfiguration connectorConfig = new TransportConfiguration(InVMConnectorFactory.class.getName(), acceptorParams, RandomUtil.randomString());
 
-      CoreQueueConfiguration sourceQueueConfig = new CoreQueueConfiguration().setAddress(RandomUtil.randomString()).setName(RandomUtil.randomString()).setDurable(false);
-      CoreQueueConfiguration targetQueueConfig = new CoreQueueConfiguration().setAddress(RandomUtil.randomString()).setName(RandomUtil.randomString()).setDurable(false);
+      QueueConfiguration sourceQueueConfig = new QueueConfiguration(RandomUtil.randomString()).setDurable(false);
+      QueueConfiguration targetQueueConfig = new QueueConfiguration(RandomUtil.randomString()).setDurable(false);
       List<String> connectors = new ArrayList<>();
       connectors.add(connectorConfig.getName());
 
       Configuration conf_1 = createBasicConfig().addAcceptorConfiguration(acceptorConfig).addQueueConfiguration(targetQueueConfig);
 
-      bridgeConfig = new BridgeConfiguration().setName(RandomUtil.randomString()).setQueueName(sourceQueueConfig.getName()).setForwardingAddress(targetQueueConfig.getAddress()).setRetryInterval(RandomUtil.randomPositiveLong()).setRetryIntervalMultiplier(RandomUtil.randomDouble()).setInitialConnectAttempts(RandomUtil.randomPositiveInt()).setReconnectAttempts(RandomUtil.randomPositiveInt()).setReconnectAttemptsOnSameNode(RandomUtil.randomPositiveInt()).setUseDuplicateDetection(RandomUtil.randomBoolean()).setConfirmationWindowSize(RandomUtil.randomPositiveInt()).setStaticConnectors(connectors).setPassword(CLUSTER_PASSWORD);
+      bridgeConfig = new BridgeConfiguration().setName(RandomUtil.randomString()).setQueueName(sourceQueueConfig.getName().toString()).setForwardingAddress(targetQueueConfig.getAddress().toString()).setRetryInterval(RandomUtil.randomPositiveLong()).setRetryIntervalMultiplier(RandomUtil.randomDouble()).setInitialConnectAttempts(RandomUtil.randomPositiveInt()).setReconnectAttempts(RandomUtil.randomPositiveInt()).setReconnectAttemptsOnSameNode(RandomUtil.randomPositiveInt()).setUseDuplicateDetection(RandomUtil.randomBoolean()).setConfirmationWindowSize(RandomUtil.randomPositiveInt()).setStaticConnectors(connectors).setPassword(CLUSTER_PASSWORD);
 
       Configuration conf_0 = createBasicConfig().addAcceptorConfiguration(new TransportConfiguration(InVMAcceptorFactory.class.getName())).addConnectorConfiguration(connectorConfig.getName(), connectorConfig).addQueueConfiguration(sourceQueueConfig).addBridgeConfiguration(bridgeConfig);
 

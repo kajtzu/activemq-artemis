@@ -31,7 +31,8 @@ Developers are encouraged also to use the Dev profile, which will activate check
 
 ## Commit Messages
 
-Please ensure the commit messages follow the 50/72 format as described [here](code.md#commitMessageDetails).
+Please ensure the commit messages follow the 50/72 format as described [here](code.md#commitMessageDetails). This
+format follows the recommendation from the [official Git book](https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project).
 
 ## Configuring git repositories
 
@@ -44,7 +45,7 @@ let's assume these ref/repo associations already exist as described in the [Work
 
 1. Add the canonical Apache repository as a remote. Here we call it `apache`.
 
-        $ git remote add apache https://git-wip-us.apache.org/repos/asf/activemq-artemis.git
+        $ git remote add apache https://gitbox.apache.org/repos/asf/activemq-artemis.git
 
 1. Add the following section to your <artemis-repo>/.git/config statement to fetch all pull requests sent to the GitHub
    mirror.  We are using `upstream` as the remote repo name (as noted above), but the remote repo name may be different

@@ -27,6 +27,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -37,13 +38,17 @@ import org.apache.activemq.artemis.api.core.client.MessageHandler;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.StoreConfiguration;
+import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.api.core.RoutingType;
+import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.impl.XidImpl;
 import org.apache.activemq.artemis.ra.ActiveMQRAXAResource;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.apache.activemq.artemis.utils.Wait;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -53,7 +58,7 @@ import org.junit.runners.Parameterized;
 @RunWith(Parameterized.class)
 public class BasicXaTest extends ActiveMQTestBase {
 
-   private static IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(BasicXaTest.class);
 
    private final Map<String, AddressSettings> addressSettings = new HashMap<>();
 
@@ -77,7 +82,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
    @Parameterized.Parameters(name = "storeType={0}")
    public static Collection<Object[]> data() {
-      Object[][] params = new Object[][] {{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
+      Object[][] params = new Object[][]{{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
       return Arrays.asList(params);
    }
 
@@ -90,12 +95,11 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       if (storeType == StoreConfiguration.StoreType.DATABASE) {
          configuration = createDefaultJDBCConfig(true);
-      }
-      else {
+      } else {
          configuration = createDefaultNettyConfig();
       }
 
-      messagingService = createServer(false, configuration, -1, -1, addressSettings);
+      messagingService = createServer(true, configuration, -1, -1, addressSettings);
 
       // start the server
       messagingService.start();
@@ -105,7 +109,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       clientSession = addClientSession(sessionFactory.createSession(true, false, false));
 
-      clientSession.createQueue(atestq, atestq, null, true);
+      clientSession.createQueue(new QueueConfiguration(atestq));
    }
 
    @Test
@@ -117,7 +121,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       ClientSession session = addClientSession(factory.createSession(true, false, false));
 
-      session.createQueue("Test", "Test");
+      session.createQueue(new QueueConfiguration("Test").setRoutingType(RoutingType.ANYCAST));
 
       ClientProducer prod = session.createProducer("Test");
 
@@ -138,7 +142,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       ClientSession session = addClientSession(factory.createSession(false, true, true));
 
-      session.createQueue("Test", "Test");
+      session.createQueue(new QueueConfiguration("Test").setRoutingType(RoutingType.ANYCAST));
 
       ClientProducer prod = session.createProducer("Test");
 
@@ -214,6 +218,42 @@ public class BasicXaTest extends ActiveMQTestBase {
    }
 
    @Test
+   public void testRestartWithTXPrepareDeletedQueue() throws Exception {
+
+      ClientSession clientSession2 = sessionFactory.createSession(false, true, true);
+      ClientProducer clientProducer = clientSession2.createProducer(atestq);
+      ClientMessage m1 = createTextMessage(clientSession2, "m1");
+      clientProducer.send(m1);
+
+      Xid xid = newXID();
+      clientSession.start(xid, XAResource.TMNOFLAGS);
+      clientSession.start();
+
+      ClientConsumer clientConsumer = clientSession.createConsumer(atestq);
+
+      ClientMessage message = clientConsumer.receive(5000);
+      message.acknowledge();
+      clientSession.end(xid, XAResource.TMSUCCESS);
+      clientSession.prepare(xid);
+
+      Queue queueAtestQ = messagingService.locateQueue(atestq);
+      Assert.assertNotNull(queueAtestQ);
+
+      clientSession.getSessionFactory().getConnection().destroy();
+
+      Wait.assertEquals(0, queueAtestQ::getConsumerCount);
+
+      messagingService.destroyQueue(atestq);
+
+      messagingService.stop();
+      messagingService.start();
+
+      messagingService.waitForActivation(10, TimeUnit.SECONDS);
+
+      assertTrue(messagingService.isStarted());
+   }
+
+   @Test
    public void testXAInterleaveResourceRollbackAfterPrepare() throws Exception {
       Xid xid = newXID();
       Xid xid2 = newXID();
@@ -263,7 +303,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       clientSession = sessionFactory.createSession(true, false, false);
 
-      log.info("committing");
+      log.debug("committing");
 
       clientSession.commit(xid, false);
       clientSession.start();
@@ -331,6 +371,105 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       clientSession2.close();
 
+   }
+
+   @Test
+   public void testPrepareError() throws Exception {
+      Xid xid = newXID();
+
+      ClientSession clientSession2 = sessionFactory.createSession(false, true, true);
+      ClientProducer clientProducer = clientSession2.createProducer(atestq);
+      ClientMessage m1 = createTextMessage(clientSession2, "m1");
+      ClientMessage m2 = createTextMessage(clientSession2, "m2");
+      ClientMessage m3 = createTextMessage(clientSession2, "m3");
+      ClientMessage m4 = createTextMessage(clientSession2, "m4");
+      clientProducer.send(m1);
+      clientProducer.send(m2);
+      clientProducer.send(m3);
+      clientProducer.send(m4);
+
+      clientSession.start(xid, XAResource.TMNOFLAGS);
+      clientSession.start();
+      ClientConsumer clientConsumer = clientSession.createConsumer(atestq);
+      ClientMessage m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m1");
+      m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m2");
+      m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m3");
+      m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m4");
+      clientSession.end(xid, XAResource.TMSUCCESS);
+
+      StorageManager journalStorageManager = messagingService.getStorageManager();
+
+      clientSession.prepare(xid);
+
+      journalStorageManager.getMessageJournal().stop();
+      try {
+         clientSession.commit(xid, false);
+         Assert.fail("Exception exptected");
+      } catch (XAException e) {
+         Assert.assertTrue(e.errorCode == XAException.XA_RETRY);
+      }
+   }
+
+
+   @Test
+   public void testRollbackError() throws Exception {
+      Xid xid = newXID();
+
+      ClientSession clientSession2 = sessionFactory.createSession(false, true, true);
+      ClientProducer clientProducer = clientSession2.createProducer(atestq);
+      ClientMessage m1 = createTextMessage(clientSession2, "m1");
+      ClientMessage m2 = createTextMessage(clientSession2, "m2");
+      ClientMessage m3 = createTextMessage(clientSession2, "m3");
+      ClientMessage m4 = createTextMessage(clientSession2, "m4");
+      clientProducer.send(m1);
+      clientProducer.send(m2);
+      clientProducer.send(m3);
+      clientProducer.send(m4);
+
+      clientSession.start(xid, XAResource.TMNOFLAGS);
+      clientSession.start();
+      ClientConsumer clientConsumer = clientSession.createConsumer(atestq);
+      ClientMessage m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m1");
+      m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m2");
+      m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m3");
+      m = clientConsumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m4");
+      clientSession.end(xid, XAResource.TMSUCCESS);
+
+      StorageManager journalStorageManager = messagingService.getStorageManager();
+
+      clientSession.prepare(xid);
+
+      journalStorageManager.getMessageJournal().stop();
+      try {
+         clientSession.rollback(xid);
+         Assert.fail("Exception exptected");
+      } catch (XAException e) {
+         Assert.assertTrue(e.errorCode == XAException.XA_RETRY);
+      }
    }
 
    @Test
@@ -420,8 +559,7 @@ public class BasicXaTest extends ActiveMQTestBase {
       try {
          session.start(xid, XAResource.TMRESUME);
          Assert.fail("XAException expected");
-      }
-      catch (XAException e) {
+      } catch (XAException e) {
          Assert.assertEquals(XAException.XAER_PROTO, e.errorCode);
       }
 
@@ -515,8 +653,7 @@ public class BasicXaTest extends ActiveMQTestBase {
       try {
          clientSession.forget(newXID());
          Assert.fail("should throw a XAERR_NOTA XAException");
-      }
-      catch (XAException e) {
+      } catch (XAException e) {
          Assert.assertEquals(XAException.XAER_NOTA, e.errorCode);
       }
    }
@@ -530,7 +667,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       String[] preparedTransactions = messagingService.getActiveMQServerControl().listPreparedTransactions();
       Assert.assertEquals(1, preparedTransactions.length);
-      System.out.println(preparedTransactions[0]);
+      instanceLog.debug(preparedTransactions[0]);
       Assert.assertTrue(messagingService.getActiveMQServerControl().commitPreparedTransaction(XidImpl.toBase64String(xid)));
       Assert.assertEquals(1, messagingService.getActiveMQServerControl().listHeuristicCommittedTransactions().length);
 
@@ -548,7 +685,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
       String[] preparedTransactions = messagingService.getActiveMQServerControl().listPreparedTransactions();
       Assert.assertEquals(1, preparedTransactions.length);
-      System.out.println(preparedTransactions[0]);
+      instanceLog.debug(preparedTransactions[0]);
 
       Assert.assertTrue(messagingService.getActiveMQServerControl().rollbackPreparedTransaction(XidImpl.toBase64String(xid)));
       Assert.assertEquals(1, messagingService.getActiveMQServerControl().listHeuristicRolledBackTransactions().length);
@@ -583,8 +720,8 @@ public class BasicXaTest extends ActiveMQTestBase {
       SimpleString ADDRESS1 = new SimpleString("Address-1");
       SimpleString ADDRESS2 = new SimpleString("Address-2");
 
-      clientSession.createQueue(ADDRESS1, ADDRESS1, true);
-      clientSession.createQueue(ADDRESS2, ADDRESS2, true);
+      clientSession.createQueue(new QueueConfiguration(ADDRESS1));
+      clientSession.createQueue(new QueueConfiguration(ADDRESS2));
 
       Xid xid = newXID();
 
@@ -664,9 +801,9 @@ public class BasicXaTest extends ActiveMQTestBase {
 
          if (createQueues) {
             for (int i = 0; i < NUMBER_OF_QUEUES; i++) {
-               session.createQueue(ADDRESS, ADDRESS.concat(Integer.toString(i)), true);
+               session.createQueue(new QueueConfiguration(ADDRESS.concat(Integer.toString(i))).setAddress(ADDRESS));
                if (isJoinSession) {
-                  clientSession.createQueue(ADDRESS.concat("-join"), ADDRESS.concat("-join." + i), true);
+                  clientSession.createQueue(new QueueConfiguration(ADDRESS.concat("-join." + i)).setAddress(ADDRESS.concat("-join")).setDurable(true));
                }
 
             }
@@ -726,8 +863,7 @@ public class BasicXaTest extends ActiveMQTestBase {
 
             if (tr == 0) {
                session.rollback(xid);
-            }
-            else {
+            } else {
                session.commit(xid, onePhase);
             }
 
@@ -803,13 +939,11 @@ public class BasicXaTest extends ActiveMQTestBase {
 
             if (i == 0) {
                session.rollback(xid);
-            }
-            else {
+            } else {
                session.commit(xid, false);
             }
          }
-      }
-      finally {
+      } finally {
          if (session != null) {
             session.close();
          }
@@ -829,8 +963,7 @@ public class BasicXaTest extends ActiveMQTestBase {
       if (heuristicCommit) {
          Assert.assertTrue(messagingService.getActiveMQServerControl().commitPreparedTransaction(XidImpl.toBase64String(xid)));
          Assert.assertEquals(1, messagingService.getActiveMQServerControl().listHeuristicCommittedTransactions().length);
-      }
-      else {
+      } else {
          Assert.assertTrue(messagingService.getActiveMQServerControl().rollbackPreparedTransaction(XidImpl.toBase64String(xid)));
          Assert.assertEquals(1, messagingService.getActiveMQServerControl().listHeuristicRolledBackTransactions().length);
       }
@@ -839,26 +972,21 @@ public class BasicXaTest extends ActiveMQTestBase {
       try {
          if (isCommit) {
             clientSession.commit(xid, false);
-         }
-         else {
+         } else {
             clientSession.rollback(xid);
          }
          Assert.fail("neither commit not rollback must succeed on a heuristically completed tx");
-      }
-
-      catch (XAException e) {
+      } catch (XAException e) {
          if (heuristicCommit) {
             Assert.assertEquals(XAException.XA_HEURCOM, e.errorCode);
-         }
-         else {
+         } else {
             Assert.assertEquals(XAException.XA_HEURRB, e.errorCode);
          }
       }
 
       if (heuristicCommit) {
          Assert.assertEquals(1, messagingService.getActiveMQServerControl().listHeuristicCommittedTransactions().length);
-      }
-      else {
+      } else {
          Assert.assertEquals(1, messagingService.getActiveMQServerControl().listHeuristicRolledBackTransactions().length);
       }
    }
@@ -881,28 +1009,24 @@ public class BasicXaTest extends ActiveMQTestBase {
          Xid xid = new XidImpl(UUIDGenerator.getInstance().generateStringUUID().getBytes(), 1, UUIDGenerator.getInstance().generateStringUUID().getBytes());
          try {
             session.start(xid, XAResource.TMNOFLAGS);
-         }
-         catch (XAException e) {
+         } catch (XAException e) {
             e.printStackTrace();
          }
 
          try {
             message.acknowledge();
-         }
-         catch (ActiveMQException e) {
+         } catch (ActiveMQException e) {
             BasicXaTest.log.error("Failed to process message", e);
          }
          try {
             session.end(xid, XAResource.TMSUCCESS);
             session.rollback(xid);
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             e.printStackTrace();
             failedToAck = true;
             try {
                session.close();
-            }
-            catch (ActiveMQException e1) {
+            } catch (ActiveMQException e1) {
                //
             }
          }

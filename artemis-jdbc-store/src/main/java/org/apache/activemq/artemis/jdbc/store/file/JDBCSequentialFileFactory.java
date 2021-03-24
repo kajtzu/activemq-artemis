@@ -19,38 +19,71 @@ package org.apache.activemq.artemis.jdbc.store.file;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 
+import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
 import org.apache.activemq.artemis.core.io.SequentialFile;
 import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
-import org.apache.activemq.artemis.jdbc.store.JDBCUtils;
+import org.apache.activemq.artemis.jdbc.store.drivers.JDBCConnectionProvider;
+import org.apache.activemq.artemis.jdbc.store.sql.SQLProvider;
 import org.apache.activemq.artemis.journal.ActiveMQJournalLogger;
+import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
+import org.jboss.logging.Logger;
 
 public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveMQComponent {
 
+   private static final Logger logger = Logger.getLogger(JDBCSequentialFile.class);
+
    private boolean started;
 
-   private List<JDBCSequentialFile> files;
+   private final Set<JDBCSequentialFile> files = new ConcurrentHashSet<>();
 
-   private Executor executor;
+   private final Executor executor;
 
-   private Map<String, Object> fileLocks = new HashMap<>();
+   private final Map<String, Object> fileLocks = new ConcurrentHashMap<>();
 
-   private final JDBCSequentialFileFactoryDriver dbDriver;
+   private JDBCSequentialFileFactoryDriver dbDriver;
 
-   public JDBCSequentialFileFactory(final String connectionUrl,
-                                    final String tableName,
-                                    final String className,
-                                    Executor executor) throws Exception {
+   private final IOCriticalErrorListener criticalErrorListener;
+
+   public JDBCSequentialFileFactory(final JDBCConnectionProvider connectionProvider,
+                                    final SQLProvider sqlProvider,
+                                    Executor executor,
+                                    IOCriticalErrorListener criticalErrorListener) throws Exception {
+
       this.executor = executor;
-      files = new ArrayList<>();
-      dbDriver = JDBCUtils.getDBFileDriver(className, tableName, connectionUrl);
+      this.criticalErrorListener = criticalErrorListener;
+
+      try {
+         this.dbDriver = JDBCFileUtils.getDBFileDriver(connectionProvider, sqlProvider);
+      } catch (SQLException e) {
+         criticalErrorListener.onIOException(e, "Failed to start JDBC Driver", null);
+      }
+   }
+
+   public JDBCSequentialFileFactoryDriver getDbDriver() {
+      return dbDriver;
+   }
+
+   @Override
+   public SequentialFileFactory setDatasync(boolean enabled) {
+      return this;
+   }
+
+   @Override
+   public boolean isDatasync() {
+      return false;
+   }
+
+   @Override
+   public long getBufferSize() {
+      return dbDriver.getMaxSize();
    }
 
    @Override
@@ -60,9 +93,8 @@ public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveM
             dbDriver.start();
             started = true;
          }
-      }
-      catch (Exception e) {
-         ActiveMQJournalLogger.LOGGER.error("Could not start file factory, unable to connect to database");
+      } catch (Exception e) {
+         criticalErrorListener.onIOException(e, "Unable to start database driver", null);
          started = false;
       }
    }
@@ -71,8 +103,7 @@ public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveM
    public synchronized void stop() {
       try {
          dbDriver.stop();
-      }
-      catch (SQLException e) {
+      } catch (SQLException e) {
          ActiveMQJournalLogger.LOGGER.error("Error stopping file factory, unable to close db connection");
       }
       started = false;
@@ -81,17 +112,22 @@ public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveM
    @Override
    public SequentialFile createSequentialFile(String fileName) {
       try {
-         if (fileLocks.get(fileName) == null) {
-            fileLocks.put(fileName, new Object());
-         }
+         fileLocks.putIfAbsent(fileName, new Object());
          JDBCSequentialFile file = new JDBCSequentialFile(this, fileName, executor, dbDriver, fileLocks.get(fileName));
          files.add(file);
          return file;
-      }
-      catch (Exception e) {
-         ActiveMQJournalLogger.LOGGER.error("Could not create file", e);
+      } catch (Exception e) {
+         criticalErrorListener.onIOException(e, "Error whilst creating JDBC file", null);
       }
       return null;
+   }
+
+   public void sequentialFileClosed(SequentialFile file) {
+      files.remove(file);
+   }
+
+   public int getNumberOfOpenFiles() {
+      return files.size();
    }
 
    @Override
@@ -101,7 +137,12 @@ public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveM
 
    @Override
    public List<String> listFiles(String extension) throws Exception {
-      return dbDriver.listFiles(extension);
+      try {
+         return dbDriver.listFiles(extension);
+      } catch (SQLException e) {
+         criticalErrorListener.onIOException(e, "Error listing JDBC files.", null);
+         throw e;
+      }
    }
 
    @Override
@@ -111,6 +152,7 @@ public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveM
 
    @Override
    public void onIOError(Exception exception, String message, SequentialFile file) {
+      criticalErrorListener.onIOException(exception, message, file);
    }
 
    @Override
@@ -151,6 +193,12 @@ public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveM
    }
 
    @Override
+   public JDBCSequentialFileFactory setAlignment(int alignment) {
+      // no op
+      return this;
+   }
+
+   @Override
    public int calculateBlockSize(final int bytes) {
       return bytes;
    }
@@ -183,9 +231,20 @@ public class JDBCSequentialFileFactory implements SequentialFileFactory, ActiveM
 
    @Override
    public void flush() {
+      for (SequentialFile file : files) {
+         try {
+            file.sync();
+         } catch (Exception e) {
+            criticalErrorListener.onIOException(e, "Error during JDBC file sync.", file);
+         }
+      }
    }
 
    public synchronized void destroy() throws SQLException {
-      dbDriver.destroy();
+      try {
+         dbDriver.destroy();
+      } catch (SQLException e) {
+         logger.error("Error destroying file factory", e);
+      }
    }
 }

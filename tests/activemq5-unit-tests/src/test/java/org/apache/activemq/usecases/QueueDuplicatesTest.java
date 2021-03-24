@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,12 +16,6 @@
  */
 
 package org.apache.activemq.usecases;
-
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
 
 import javax.jms.Connection;
 import javax.jms.DeliveryMode;
@@ -33,6 +27,11 @@ import javax.jms.MessageListener;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.TextMessage;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
 import junit.framework.TestCase;
 
@@ -97,8 +96,7 @@ public class QueueDuplicatesTest extends TestCase {
          // sleep a little while longer
          Thread.sleep(15000);
          session.close();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          e.printStackTrace();
       }
    }
@@ -118,7 +116,7 @@ public class QueueDuplicatesTest extends TestCase {
 
    private class SendingThread extends Thread {
 
-      private String subject;
+      private final String subject;
 
       SendingThread(String brokerUrl, String subject) {
          this.subject = subject;
@@ -140,8 +138,7 @@ public class QueueDuplicatesTest extends TestCase {
                Thread.sleep(1000);
             }
             session.close();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             e.printStackTrace();
          }
       }
@@ -149,7 +146,7 @@ public class QueueDuplicatesTest extends TestCase {
 
    private static class SimpleConsumer implements MessageListener {
 
-      private Map<String, Message> msgs = new HashMap<>();
+      private final Map<String, Message> msgs = new HashMap<>();
 
       @Override
       public void onMessage(Message message) {
@@ -158,8 +155,7 @@ public class QueueDuplicatesTest extends TestCase {
             String id = message.getJMSMessageID();
             assertNull("Message is duplicate: " + id, msgs.get(id));
             msgs.put(id, message);
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             e.printStackTrace();
          }
       }

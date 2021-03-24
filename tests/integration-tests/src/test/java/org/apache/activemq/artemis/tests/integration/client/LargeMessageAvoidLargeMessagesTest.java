@@ -17,18 +17,19 @@
 package org.apache.activemq.artemis.tests.integration.client;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
-import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.StoreConfiguration;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,6 +42,10 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
    public LargeMessageAvoidLargeMessagesTest(StoreConfiguration.StoreType storeType) {
       super(storeType);
       isCompressedTest = true;
+   }
+
+   @Override
+   protected void validateLargeMessageComplete(ActiveMQServer server) throws Exception {
    }
 
    @Override
@@ -62,7 +67,7 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, true, true));
 
-      session.createQueue(ADDRESS, ADDRESS, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -105,7 +110,7 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, true, true));
 
-      session.createTemporaryQueue(ADDRESS, ADDRESS);
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -157,7 +162,7 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createTemporaryQueue(ADDRESS, ADDRESS);
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -208,7 +213,7 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
 
       ClientSession session = addClientSession(sf.createSession(false, false, false));
 
-      session.createTemporaryQueue(ADDRESS, ADDRESS);
+      session.createQueue(new QueueConfiguration(ADDRESS).setAddress(ADDRESS).setDurable(false).setTemporary(true));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -225,8 +230,7 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
          ClientMessage clientFile = session.createMessage(true);
          if (i % 2 == 0) {
             clientFile.setBodyInputStream(regularInput.clone());
-         }
-         else {
+         } else {
             clientFile.setBodyInputStream(largeInput.clone());
          }
 
@@ -250,8 +254,7 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
                byte b = msg1.getBodyBuffer().readByte();
                Assert.assertEquals("incorrect char ", regularInput.getChar(i), b);
             }
-         }
-         else {
+         } else {
             for (int i = 0; i < largeInput.getSize(); i++) {
                byte b = msg1.getBodyBuffer().readByte();
                Assert.assertEquals("incorrect char ", largeInput.getChar(i), b);
@@ -283,8 +286,8 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
 
       session = addClientSession(sf.createSession(false, false, false));
 
-      session.createQueue(ADDRESS, ADDRESS, true);
-      session.createQueue(ADDRESS, ADDRESS.concat("-2"), true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
+      session.createQueue(new QueueConfiguration(ADDRESS.concat("-2")).setAddress(ADDRESS));
 
       SimpleString ADDRESS_DLA = ADDRESS.concat("-dla");
 
@@ -292,7 +295,7 @@ public class LargeMessageAvoidLargeMessagesTest extends LargeMessageTest {
 
       server.getAddressSettingsRepository().addMatch("*", addressSettings);
 
-      session.createQueue(ADDRESS_DLA, ADDRESS_DLA, true);
+      session.createQueue(new QueueConfiguration(ADDRESS_DLA));
 
       ClientProducer producer = session.createProducer(ADDRESS);
 

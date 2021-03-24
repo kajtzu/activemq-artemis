@@ -18,20 +18,19 @@ package org.apache.activemq.artemis.core.client.impl;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicLong;
 
-import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
-import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.SendAcknowledgementHandler;
 import org.apache.activemq.artemis.core.client.ActiveMQClientMessageBundle;
-import org.apache.activemq.artemis.core.message.BodyEncoder;
-import org.apache.activemq.artemis.core.message.impl.MessageInternal;
+import org.apache.activemq.artemis.core.message.LargeBodyReader;
 import org.apache.activemq.artemis.spi.core.remoting.SessionContext;
-import org.apache.activemq.artemis.utils.DeflaterReader;
 import org.apache.activemq.artemis.utils.ActiveMQBufferInputStream;
+import org.apache.activemq.artemis.utils.DeflaterReader;
 import org.apache.activemq.artemis.utils.TokenBucketLimiter;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.jboss.logging.Logger;
@@ -92,8 +91,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
       if (autoGroup) {
          this.groupID = UUIDGenerator.getInstance().generateSimpleStringUUID();
-      }
-      else {
+      } else {
          this.groupID = groupID;
       }
 
@@ -101,8 +99,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
       if (address != null) {
          producerCredits = session.getCredits(address, false);
-      }
-      else {
+      } else {
          producerCredits = null;
       }
    }
@@ -118,14 +115,14 @@ public class ClientProducerImpl implements ClientProducerInternal {
    public void send(final Message msg) throws ActiveMQException {
       checkClosed();
 
-      doSend(null, msg, null, false);
+      send(null, msg, sessionContext.getSendAcknowledgementHandler());
    }
 
    @Override
    public void send(final SimpleString address1, final Message msg) throws ActiveMQException {
       checkClosed();
 
-      doSend(address1, msg, null, false);
+      send(address1, msg, sessionContext.getSendAcknowledgementHandler());
    }
 
    @Override
@@ -138,15 +135,20 @@ public class ClientProducerImpl implements ClientProducerInternal {
                     Message message,
                     SendAcknowledgementHandler handler) throws ActiveMQException {
       checkClosed();
-      boolean confirmationWindowEnabled = session.isConfirmationWindowEnabled();
-      if (confirmationWindowEnabled) {
-         doSend(address1, message, handler, true);
+
+      if (handler != null) {
+         handler = new SendAcknowledgementHandlerWrapper(handler);
       }
-      else {
-         doSend(address1, message, null, true);
-         if (handler != null) {
-            session.scheduleConfirmation(handler, message);
+
+      doSend(address1, message, handler);
+
+      if (handler != null && !session.isConfirmationWindowEnabled()) {
+         if (logger.isDebugEnabled()) {
+            logger.debug("Handler was used on producing messages towards address " + address1 + " however there is no confirmationWindowEnabled");
          }
+
+         // if there is no confirmation enabled, we will at least call the handler after the sent is done
+         session.scheduleConfirmation(handler, message);
       }
    }
 
@@ -211,16 +213,16 @@ public class ClientProducerImpl implements ClientProducerInternal {
    }
 
    private void doSend(SimpleString sendingAddress,
-                       final Message msg,
-                       final SendAcknowledgementHandler handler,
-                       final boolean forceAsync) throws ActiveMQException {
+                       final Message msgToSend,
+                       final SendAcknowledgementHandler handler) throws ActiveMQException {
       if (sendingAddress == null) {
          sendingAddress = this.address;
       }
       session.startCall();
 
       try {
-         MessageInternal msgI = (MessageInternal) msg;
+         // In case we received message from another protocol, we first need to convert it to core as the ClientProducer only understands core
+         ICoreMessage msg = msgToSend.toCore();
 
          ClientProducerCredits theCredits;
 
@@ -228,18 +230,16 @@ public class ClientProducerImpl implements ClientProducerInternal {
          // a note about the second check on the writerIndexSize,
          // If it's a server's message, it means this is being done through the bridge or some special consumer on the
          // server's on which case we can't' convert the message into large at the servers
-         if (sessionContext.supportsLargeMessage() && (msgI.getBodyInputStream() != null || msgI.isLargeMessage() ||
-            msgI.getBodyBuffer().writerIndex() > minLargeMessageSize && !msgI.isServerMessage())) {
+         if (sessionContext.supportsLargeMessage() && (getBodyInputStream(msg) != null || msg.isLargeMessage() ||
+            msg.getBodyBuffer().writerIndex() > minLargeMessageSize)) {
             isLarge = true;
-         }
-         else {
+         } else {
             isLarge = false;
          }
 
          if (!isLarge) {
             session.setAddress(msg, sendingAddress);
-         }
-         else {
+         } else {
             msg.setAddress(sendingAddress);
          }
 
@@ -253,29 +253,31 @@ public class ClientProducerImpl implements ClientProducerInternal {
          }
 
          if (groupID != null) {
-            msgI.putStringProperty(Message.HDR_GROUP_ID, groupID);
+            msg.putStringProperty(Message.HDR_GROUP_ID, groupID);
          }
 
-         final boolean sendBlockingConfig = msgI.isDurable() ? blockOnDurableSend : blockOnNonDurableSend;
-         final boolean forceAsyncOverride = handler != null;
-         final boolean sendBlocking = sendBlockingConfig && !forceAsyncOverride;
+         final boolean sendBlockingConfig = msg.isDurable() ? blockOnDurableSend : blockOnNonDurableSend;
+         // if Handler != null, we will send non blocking
+         final boolean sendBlocking = sendBlockingConfig && handler == null && sessionContext.getSendAcknowledgementHandler() == null;
 
          session.workDone();
 
          if (isLarge) {
-            largeMessageSend(sendBlocking, msgI, theCredits, handler);
+            largeMessageSend(sendBlocking, msg, theCredits, handler);
+         } else {
+            sendRegularMessage(sendingAddress, msg, sendBlocking, theCredits, handler);
          }
-         else {
-            sendRegularMessage(msgI, sendBlocking, theCredits, handler);
-            session.checkDefaultAddress(sendingAddress);
-         }
-      }
-      finally {
+      } finally {
          session.endCall();
       }
    }
 
-   private void sendRegularMessage(final MessageInternal msgI,
+   private InputStream getBodyInputStream(ICoreMessage msgI) {
+      return msgI.getBodyInputStream();
+   }
+
+   private void sendRegularMessage(final SimpleString sendingAddress,
+                                   final ICoreMessage msgI,
                                    final boolean sendBlocking,
                                    final ClientProducerCredits theCredits,
                                    final SendAcknowledgementHandler handler) throws ActiveMQException {
@@ -308,7 +310,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
     * @throws ActiveMQException
     */
    private void largeMessageSend(final boolean sendBlocking,
-                                 final MessageInternal msgI,
+                                 final ICoreMessage msgI,
                                  final ClientProducerCredits credits,
                                  SendAcknowledgementHandler handler) throws ActiveMQException {
       logger.tracef("largeMessageSend::%s, Blocking=%s", msgI, sendBlocking);
@@ -320,24 +322,22 @@ public class ClientProducerImpl implements ClientProducerInternal {
       }
 
       // msg.getBody() could be Null on LargeServerMessage
-      if (msgI.getBodyInputStream() == null && msgI.getWholeBuffer() != null) {
-         msgI.getWholeBuffer().readerIndex(0);
+      if (getBodyInputStream(msgI) == null && msgI.getBuffer() != null) {
+         msgI.getBuffer().readerIndex(0);
       }
 
       InputStream input;
 
       if (msgI.isServerMessage()) {
          largeMessageSendServer(sendBlocking, msgI, credits, handler);
-      }
-      else if ((input = msgI.getBodyInputStream()) != null) {
+      } else if ((input = getBodyInputStream(msgI)) != null) {
          largeMessageSendStreamed(sendBlocking, msgI, input, credits, handler);
-      }
-      else {
+      } else {
          largeMessageSendBuffered(sendBlocking, msgI, credits, handler);
       }
    }
 
-   private void sendInitialLargeMessageHeader(MessageInternal msgI,
+   private void sendInitialLargeMessageHeader(Message msgI,
                                               ClientProducerCredits credits) throws ActiveMQException {
       int creditsUsed = sessionContext.sendInitialChunkOnLargeMessage(msgI);
 
@@ -357,17 +357,14 @@ public class ClientProducerImpl implements ClientProducerInternal {
     * @throws ActiveMQException
     */
    private void largeMessageSendServer(final boolean sendBlocking,
-                                       final MessageInternal msgI,
+                                       final ICoreMessage msgI,
                                        final ClientProducerCredits credits,
                                        SendAcknowledgementHandler handler) throws ActiveMQException {
       sendInitialLargeMessageHeader(msgI, credits);
 
-      BodyEncoder context = msgI.getBodyEncoder();
+      LargeBodyReader context = msgI.getLargeBodyReader();
 
-      final long bodySize = context.getLargeBodySize();
-
-      final int reconnectID = sessionContext.getReconnectID();
-
+      final long bodySize = context.getSize();
       context.open();
       try {
 
@@ -376,21 +373,22 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
             final int chunkLength = (int) Math.min((bodySize - pos), minLargeMessageSize);
 
-            final ActiveMQBuffer bodyBuffer = ActiveMQBuffers.fixedBuffer(chunkLength);
+            final ByteBuffer bodyBuffer = ByteBuffer.allocate(chunkLength);
 
-            context.encode(bodyBuffer, chunkLength);
+            final int encodedSize = context.readInto(bodyBuffer);
+
+            assert encodedSize == chunkLength;
 
             pos += chunkLength;
 
             lastChunk = pos >= bodySize;
             SendAcknowledgementHandler messageHandler = lastChunk ? handler : null;
 
-            int creditsUsed = sessionContext.sendServerLargeMessageChunk(msgI, -1, sendBlocking, lastChunk, bodyBuffer.toByteBuffer().array(), messageHandler);
+            int creditsUsed = sessionContext.sendServerLargeMessageChunk(msgI, -1, sendBlocking, lastChunk, bodyBuffer.array(), messageHandler);
 
             credits.acquireCredits(creditsUsed);
          }
-      }
-      finally {
+      } finally {
          context.close();
       }
    }
@@ -402,7 +400,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
     * @throws ActiveMQException
     */
    private void largeMessageSendBuffered(final boolean sendBlocking,
-                                         final MessageInternal msgI,
+                                         final ICoreMessage msgI,
                                          final ClientProducerCredits credits,
                                          SendAcknowledgementHandler handler) throws ActiveMQException {
       msgI.getBodyBuffer().readerIndex(0);
@@ -417,7 +415,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
     * @throws ActiveMQException
     */
    private void largeMessageSendStreamed(final boolean sendBlocking,
-                                         final MessageInternal msgI,
+                                         final ICoreMessage msgI,
                                          final InputStream inputStreamParameter,
                                          final ClientProducerCredits credits,
                                          SendAcknowledgementHandler handler) throws ActiveMQException {
@@ -441,7 +439,6 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
       boolean headerSent = false;
 
-
       int reconnectID = sessionContext.getReconnectID();
       while (!lastPacket) {
          byte[] buff = new byte[minLargeMessageSize];
@@ -455,8 +452,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
             try {
                numberOfBytesRead = input.read(buff, pos, wanted);
-            }
-            catch (IOException e) {
+            } catch (IOException e) {
                throw ActiveMQClientMessageBundle.BUNDLE.errorReadingBody(e);
             }
 
@@ -467,7 +463,8 @@ public class ClientProducerImpl implements ClientProducerInternal {
             }
 
             pos += numberOfBytesRead;
-         } while (pos < minLargeMessageSize);
+         }
+         while (pos < minLargeMessageSize);
 
          totalSize += pos;
 
@@ -490,10 +487,9 @@ public class ClientProducerImpl implements ClientProducerInternal {
                msgI.putLongProperty(Message.HDR_LARGE_BODY_SIZE, deflaterReader.getTotalSize());
 
                msgI.getBodyBuffer().writeBytes(buff, 0, pos);
-               sendRegularMessage(msgI, sendBlocking, credits, handler);
+               sendRegularMessage(msgI.getAddressSimpleString(), msgI, sendBlocking, credits, handler);
                return;
-            }
-            else {
+            } else {
                if (!headerSent) {
                   headerSent = true;
                   sendInitialLargeMessageHeader(msgI, credits);
@@ -501,8 +497,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
                int creditsSent = sessionContext.sendLargeMessageChunk(msgI, messageSize.get(), sendBlocking, true, buff, reconnectID, handler);
                credits.acquireCredits(creditsSent);
             }
-         }
-         else {
+         } else {
             if (!headerSent) {
                headerSent = true;
                sendInitialLargeMessageHeader(msgI, credits);
@@ -515,8 +510,7 @@ public class ClientProducerImpl implements ClientProducerInternal {
 
       try {
          input.close();
-      }
-      catch (IOException e) {
+      } catch (IOException e) {
          throw ActiveMQClientMessageBundle.BUNDLE.errorClosingLargeMessage(e);
       }
    }

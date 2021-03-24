@@ -20,6 +20,8 @@ package org.apache.activemq.artemis.core.reload;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -37,18 +39,22 @@ public class ReloadManagerTest extends ActiveMQTestBase {
 
    private ScheduledExecutorService scheduledExecutorService;
 
+   private ExecutorService executorService;
+
    private ReloadManagerImpl manager;
 
    @Before
    public void startScheduled() {
       scheduledExecutorService = new ScheduledThreadPoolExecutor(5);
-      manager = new ReloadManagerImpl(scheduledExecutorService, 100);
+      executorService = Executors.newSingleThreadExecutor();
+      manager = new ReloadManagerImpl(scheduledExecutorService, executorService, 100);
    }
 
    @After
    public void stopScheduled() {
       manager.stop();
       scheduledExecutorService.shutdown();
+      executorService.shutdown();
       scheduledExecutorService = null;
    }
 
@@ -62,7 +68,7 @@ public class ReloadManagerTest extends ActiveMQTestBase {
 
    @Test
    public void testUpdateWithSpace() throws Exception {
-      File spaceDir = new File(getTemporaryDir(), "./with space");
+      File spaceDir = new File(getTemporaryDir(), "./with %25space");
       spaceDir.mkdirs();
       File file = new File(spaceDir, "checkFile.tst");
       internalTest(manager, file);

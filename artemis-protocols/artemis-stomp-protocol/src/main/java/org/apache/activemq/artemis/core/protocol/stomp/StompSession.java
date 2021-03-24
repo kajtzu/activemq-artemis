@@ -17,35 +17,36 @@
 package org.apache.activemq.artemis.core.protocol.stomp;
 
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
-import java.util.zip.Inflater;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQQueueExistsException;
+import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.core.message.BodyEncoder;
-import org.apache.activemq.artemis.core.message.impl.MessageImpl;
+import org.apache.activemq.artemis.core.message.impl.CoreMessage;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
-import org.apache.activemq.artemis.core.persistence.impl.journal.LargeServerMessageImpl;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.LargeServerMessage;
 import org.apache.activemq.artemis.core.server.MessageReference;
-import org.apache.activemq.artemis.core.server.QueueQueryResult;
+import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.ServerSession;
-import org.apache.activemq.artemis.core.server.impl.ServerMessageImpl;
 import org.apache.activemq.artemis.core.server.impl.ServerSessionImpl;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.protocol.SessionCallback;
 import org.apache.activemq.artemis.spi.core.remoting.ReadyListener;
-import org.apache.activemq.artemis.utils.ByteUtil;
+import org.apache.activemq.artemis.utils.CompositeAddress;
 import org.apache.activemq.artemis.utils.ConfigurationHelper;
 import org.apache.activemq.artemis.utils.PendingTask;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
@@ -71,17 +72,19 @@ public class StompSession implements SessionCallback {
 
    private volatile boolean noLocal = false;
 
-   private final int consumerCredits;
-
    StompSession(final StompConnection connection, final StompProtocolManager manager, OperationContext sessionContext) {
       this.connection = connection;
       this.manager = manager;
       this.sessionContext = sessionContext;
-      this.consumerCredits = ConfigurationHelper.getIntProperty(TransportConstants.STOMP_CONSUMERS_CREDIT, TransportConstants.STOMP_DEFAULT_CONSUMERS_CREDIT, connection.getAcceptorUsed().getConfiguration());
    }
 
    @Override
-   public boolean isWritable(ReadyListener callback) {
+   public boolean supportsDirectDelivery() {
+      return false;
+   }
+
+   @Override
+   public boolean isWritable(ReadyListener callback, Object protocolContext) {
       return connection.isWritable(callback);
    }
 
@@ -89,7 +92,7 @@ public class StompSession implements SessionCallback {
       this.session = session;
    }
 
-   public ServerSession getSession() {
+   public ServerSession getCoreSession() {
       return session;
    }
 
@@ -125,45 +128,23 @@ public class StompSession implements SessionCallback {
    }
 
    @Override
-   public int sendMessage(MessageReference ref, ServerMessage serverMessage, final ServerConsumer consumer, int deliveryCount) {
-      LargeServerMessageImpl largeMessage = null;
-      ServerMessage newServerMessage = serverMessage;
+   public int sendMessage(MessageReference ref,
+                          Message serverMessage,
+                          final ServerConsumer consumer,
+                          int deliveryCount) {
+
+      ICoreMessage  coreMessage = serverMessage.toCore();
+
+      ICoreMessage newServerMessage = serverMessage.toCore();
       try {
          StompSubscription subscription = subscriptions.get(consumer.getID());
-         StompFrame frame = null;
-         if (serverMessage.isLargeMessage()) {
-            newServerMessage = serverMessage.copy();
+         // subscription might be null if the consumer was closed
+         if (subscription == null)
+            return 0;
+         StompFrame frame;
+         ActiveMQBuffer buffer = coreMessage.getDataBuffer();
 
-            largeMessage = (LargeServerMessageImpl) serverMessage;
-            BodyEncoder encoder = largeMessage.getBodyEncoder();
-            encoder.open();
-            int bodySize = (int) encoder.getLargeBodySize();
-
-            //large message doesn't have a body.
-            ((ServerMessageImpl) newServerMessage).createBody(bodySize);
-            encoder.encode(newServerMessage.getBodyBuffer(), bodySize);
-            encoder.close();
-         }
-
-         if (serverMessage.getBooleanProperty(Message.HDR_LARGE_COMPRESSED)) {
-            //decompress
-            ActiveMQBuffer qbuff = newServerMessage.getBodyBuffer();
-            int bytesToRead = qbuff.writerIndex() - MessageImpl.BODY_OFFSET;
-            Inflater inflater = new Inflater();
-            inflater.setInput(ByteUtil.getActiveArray(qbuff.readBytes(bytesToRead).toByteBuffer()));
-
-            //get the real size of large message
-            long sizeBody = newServerMessage.getLongProperty(Message.HDR_LARGE_BODY_SIZE);
-
-            byte[] data = new byte[(int) sizeBody];
-            inflater.inflate(data);
-            inflater.end();
-            qbuff.resetReaderIndex();
-            qbuff.resetWriterIndex();
-            qbuff.writeBytes(data);
-         }
-
-         frame = connection.createStompMessage(newServerMessage, subscription, deliveryCount);
+         frame = connection.createStompMessage(newServerMessage, buffer, subscription, deliveryCount);
 
          int length = frame.getEncodedSize();
 
@@ -173,7 +154,7 @@ public class StompSession implements SessionCallback {
                final long consumerID = consumer.getID();
 
                // this will be called after the delivery is complete
-               // we can't call sesison.ack within the delivery
+               // we can't call session.ack within the delivery
                // as it could dead lock.
                afterDeliveryTasks.offer(new PendingTask() {
                   @Override
@@ -184,28 +165,19 @@ public class StompSession implements SessionCallback {
                   }
                });
             }
-         }
-         else {
+         } else {
             messagesToAck.put(newServerMessage.getMessageID(), new Pair<>(consumer.getID(), length));
             // Must send AFTER adding to messagesToAck - or could get acked from client BEFORE it's been added!
             manager.send(connection, frame);
          }
 
          return length;
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          if (ActiveMQStompProtocolLogger.LOGGER.isDebugEnabled()) {
             ActiveMQStompProtocolLogger.LOGGER.debug(e);
          }
          return 0;
       }
-      finally {
-         if (largeMessage != null) {
-            largeMessage.releaseResources();
-            largeMessage = null;
-         }
-      }
-
    }
 
    @Override
@@ -217,7 +189,11 @@ public class StompSession implements SessionCallback {
    }
 
    @Override
-   public int sendLargeMessage(MessageReference ref, ServerMessage msg, ServerConsumer consumer, long bodySize, int deliveryCount) {
+   public int sendLargeMessage(MessageReference ref,
+                               Message msg,
+                               ServerConsumer consumer,
+                               long bodySize,
+                               int deliveryCount) {
       return 0;
    }
 
@@ -226,26 +202,25 @@ public class StompSession implements SessionCallback {
    }
 
    @Override
-   public void disconnect(ServerConsumer consumerId, String queueName) {
+   public void disconnect(ServerConsumer consumerId, SimpleString queueName) {
       StompSubscription stompSubscription = subscriptions.remove(consumerId.getID());
       if (stompSubscription != null) {
          StompFrame frame = connection.getFrameHandler().createStompFrame(Stomp.Responses.ERROR);
          frame.addHeader(Stomp.Headers.CONTENT_TYPE, "text/plain");
          frame.setBody("consumer with ID " + consumerId + " disconnected by server");
-         connection.sendFrame(frame);
+         connection.sendFrame(frame, null);
       }
    }
 
    public void acknowledge(String messageID, String subscriptionID) throws Exception {
       long id = Long.parseLong(messageID);
-      Pair<Long, Integer> pair = messagesToAck.remove(id);
+      Pair<Long, Integer> pair = messagesToAck.get(id);
 
       if (pair == null) {
          throw BUNDLE.failToAckMissingID(id).setHandler(connection.getFrameHandler());
       }
 
       long consumerID = pair.getA();
-      int credits = pair.getB();
 
       StompSubscription sub = subscriptions.get(consumerID);
 
@@ -255,59 +230,77 @@ public class StompSession implements SessionCallback {
          }
       }
 
-      if (this.consumerCredits != -1) {
-         session.receiveConsumerCredits(consumerID, credits);
-      }
-
       if (sub.getAck().equals(Stomp.Headers.Subscribe.AckModeValues.CLIENT_INDIVIDUAL)) {
          session.individualAcknowledge(consumerID, id);
-      }
-      else {
-         session.acknowledge(consumerID, id);
+
+         if (sub.getConsumerWindowSize() != -1) {
+            session.receiveConsumerCredits(consumerID, messagesToAck.remove(id).getB());
+         }
+      } else {
+         List<Long> ackedRefs = session.acknowledge(consumerID, id);
+
+         if (sub.getConsumerWindowSize() != -1) {
+            for (Long ackedID : ackedRefs) {
+               session.receiveConsumerCredits(consumerID, messagesToAck.remove(ackedID).getB());
+            }
+         }
       }
 
       session.commit();
    }
 
-   public void addSubscription(long consumerID,
-                               String subscriptionID,
-                               String clientID,
-                               String durableSubscriptionName,
-                               String destination,
-                               String selector,
-                               String ack) throws Exception {
-      SimpleString queue = SimpleString.toSimpleString(destination);
-      int receiveCredits = consumerCredits;
-      if (ack.equals(Stomp.Headers.Subscribe.AckModeValues.AUTO)) {
-         receiveCredits = -1;
+   public StompPostReceiptFunction addSubscription(long consumerID,
+                                                   String subscriptionID,
+                                                   String clientID,
+                                                   String durableSubscriptionName,
+                                                   String destination,
+                                                   String selector,
+                                                   String ack,
+                                                   Integer consumerWindowSize) throws Exception {
+      SimpleString address = SimpleString.toSimpleString(destination);
+      SimpleString queueName = SimpleString.toSimpleString(destination);
+      SimpleString selectorSimple = SimpleString.toSimpleString(selector);
+      final int finalConsumerWindowSize;
+
+      if (consumerWindowSize != null) {
+         finalConsumerWindowSize = consumerWindowSize;
+      } else if (ack.equals(Stomp.Headers.Subscribe.AckModeValues.AUTO)) {
+         finalConsumerWindowSize = -1;
+      } else {
+         finalConsumerWindowSize = ConfigurationHelper.getIntProperty(TransportConstants.STOMP_CONSUMER_WINDOW_SIZE, ConfigurationHelper.getIntProperty(TransportConstants.STOMP_CONSUMERS_CREDIT, TransportConstants.STOMP_DEFAULT_CONSUMER_WINDOW_SIZE, connection.getAcceptorUsed().getConfiguration()), connection.getAcceptorUsed().getConfiguration());
       }
 
-      if (destination.startsWith("jms.topic")) {
+      Set<RoutingType> routingTypes = manager.getServer().getAddressInfo(getCoreSession().removePrefix(address)).getRoutingTypes();
+      boolean multicast = routingTypes.size() == 1 && routingTypes.contains(RoutingType.MULTICAST);
+      // if the destination is FQQN then the queue will have already been created
+      if (multicast && !CompositeAddress.isFullyQualified(destination)) {
          // subscribes to a topic
          if (durableSubscriptionName != null) {
             if (clientID == null) {
                throw BUNDLE.missingClientID();
             }
-            queue = SimpleString.toSimpleString(clientID + "." + durableSubscriptionName);
-            QueueQueryResult query = session.executeQueueQuery(queue);
-            if (!query.isExists()) {
-               session.createQueue(SimpleString.toSimpleString(destination), queue, SimpleString.toSimpleString(selector), false, true);
+            queueName = SimpleString.toSimpleString(clientID + "." + durableSubscriptionName);
+            if (manager.getServer().locateQueue(queueName) == null) {
+               try {
+                  session.createQueue(new QueueConfiguration(queueName).setAddress(address).setFilterString(selectorSimple));
+               } catch (ActiveMQQueueExistsException e) {
+                  // ignore; can be caused by concurrent durable subscribers
+               }
             }
+         } else {
+            queueName = UUIDGenerator.getInstance().generateSimpleStringUUID();
+            session.createQueue(new QueueConfiguration(queueName).setAddress(address).setFilterString(selectorSimple).setDurable(false).setTemporary(true));
          }
-         else {
-            queue = UUIDGenerator.getInstance().generateSimpleStringUUID();
-            session.createQueue(SimpleString.toSimpleString(destination), queue, SimpleString.toSimpleString(selector), true, false);
-         }
-         ((ServerSessionImpl) session).createConsumer(consumerID, queue, null, false, false, receiveCredits);
       }
-      else {
-         ((ServerSessionImpl) session).createConsumer(consumerID, queue, SimpleString.toSimpleString(selector), false, false, receiveCredits);
-      }
-
-      StompSubscription subscription = new StompSubscription(subscriptionID, ack);
+      final ServerConsumer consumer = session.createConsumer(consumerID, queueName, multicast ? null : selectorSimple, false, false, 0);
+      StompSubscription subscription = new StompSubscription(subscriptionID, ack, queueName, multicast, finalConsumerWindowSize);
       subscriptions.put(consumerID, subscription);
-
       session.start();
+      /*
+       * If the consumerWindowSize is 0 then we need to supply at least 1 credit otherwise messages will *never* flow.
+       * See org.apache.activemq.artemis.core.client.impl.ClientConsumerImpl#startSlowConsumer()
+       */
+      return () -> consumer.receiveCredits(finalConsumerWindowSize == 0 ? 1 : finalConsumerWindowSize);
    }
 
    public boolean unsubscribe(String id, String durableSubscriptionName, String clientID) throws Exception {
@@ -320,20 +313,19 @@ public class StompSession implements SessionCallback {
          StompSubscription sub = entry.getValue();
          if (id != null && id.equals(sub.getID())) {
             iterator.remove();
+            SimpleString queueName = sub.getQueueName();
             session.closeConsumer(consumerID);
-            SimpleString queueName = SimpleString.toSimpleString(id);
-            QueueQueryResult query = session.executeQueueQuery(queueName);
-            if (query.isExists()) {
+            Queue queue = manager.getServer().locateQueue(queueName);
+            if (sub.isMulticast() && queue != null && (durableSubscriptionName == null && !queue.isDurable())) {
                session.deleteQueue(queueName);
             }
             result = true;
          }
       }
 
-      if (!result && durableSubscriptionName != null && clientID != null) {
+      if (durableSubscriptionName != null && clientID != null) {
          SimpleString queueName = SimpleString.toSimpleString(clientID + "." + durableSubscriptionName);
-         QueueQueryResult query = session.executeQueueQuery(queueName);
-         if (query.isExists()) {
+         if (manager.getServer().locateQueue(queueName) != null) {
             session.deleteQueue(queueName);
          }
          result = true;
@@ -368,11 +360,11 @@ public class StompSession implements SessionCallback {
       this.noLocal = noLocal;
    }
 
-   public void sendInternal(ServerMessageImpl message, boolean direct) throws Exception {
+   public void sendInternal(Message message, boolean direct) throws Exception {
       session.send(message, direct);
    }
 
-   public void sendInternalLarge(ServerMessageImpl message, boolean direct) throws Exception {
+   public void sendInternalLarge(CoreMessage message, boolean direct) throws Exception {
       int headerSize = message.getHeadersAndPropertiesEncodeSize();
       if (headerSize >= connection.getMinLargeMessageSize()) {
          throw BUNDLE.headerTooBig();
@@ -382,18 +374,17 @@ public class StompSession implements SessionCallback {
       long id = storageManager.generateID();
       LargeServerMessage largeMessage = storageManager.createLargeMessage(id, message);
 
-      byte[] bytes = new byte[message.getBodyBuffer().writerIndex() - MessageImpl.BODY_OFFSET];
-      message.getBodyBuffer().readBytes(bytes);
+      ActiveMQBuffer body = message.getReadOnlyBodyBuffer();
+      byte[] bytes = new byte[body.readableBytes()];
+      body.readBytes(bytes);
 
       largeMessage.addBytes(bytes);
 
-      largeMessage.releaseResources();
+      largeMessage.releaseResources(true, true);
 
-      largeMessage.putLongProperty(Message.HDR_LARGE_BODY_SIZE, bytes.length);
+      largeMessage.toMessage().putLongProperty(Message.HDR_LARGE_BODY_SIZE, bytes.length);
 
-      session.send(largeMessage, direct);
-
-      largeMessage = null;
+      session.send(largeMessage.toMessage(), direct);
    }
 
 }

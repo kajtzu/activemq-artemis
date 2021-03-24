@@ -16,17 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.extras.byteman;
 
-import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
-import org.apache.activemq.artemis.tests.util.JMSTestBase;
-import org.jboss.byteman.contrib.bmunit.BMRule;
-import org.jboss.byteman.contrib.bmunit.BMRules;
-import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.JMSException;
@@ -36,11 +25,24 @@ import javax.jms.Queue;
 import javax.jms.Session;
 import javax.jms.TextMessage;
 
+import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
+import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
+import org.apache.activemq.artemis.tests.util.JMSTestBase;
+import org.jboss.byteman.contrib.bmunit.BMRule;
+import org.jboss.byteman.contrib.bmunit.BMRules;
+import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
+import org.jboss.logging.Logger;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 /**
  * GroupingTest
  */
 @RunWith(BMUnitRunner.class)
 public class GroupingTest extends JMSTestBase {
+   private static final Logger log = Logger.getLogger(GroupingTest.class);
 
    private Queue queue;
    static boolean pause = false;
@@ -105,8 +107,7 @@ public class GroupingTest extends JMSTestBase {
 
                      producer.send(message);
                   }
-               }
-               catch (JMSException e) {
+               } catch (JMSException e) {
                   e.printStackTrace();
                }
             }
@@ -137,8 +138,7 @@ public class GroupingTest extends JMSTestBase {
 
             assertEquals(tm.getStringProperty("JMSXGroupID"), "foo");
          }
-      }
-      finally {
+      } finally {
          if (sendConnection != null) {
             sendConnection.close();
          }
@@ -151,13 +151,12 @@ public class GroupingTest extends JMSTestBase {
    public static void pause() {
       if (pause) {
          try {
-            System.out.println("pausing after rollback");
+            log.debug("pausing after rollback");
             Thread.sleep(500);
-         }
-         catch (InterruptedException e) {
+         } catch (InterruptedException e) {
             e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
          }
-         System.out.println("finished pausing after rollback");
+         log.debug("finished pausing after rollback");
       }
    }
 }

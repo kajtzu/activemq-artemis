@@ -18,17 +18,19 @@ package org.apache.activemq.artemis.core.paging.impl;
 
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
+import org.apache.activemq.artemis.core.server.ActiveMQScheduledComponent;
 
 /**
  * This will batch multiple calls waiting to perform a sync in a single call.
  */
-final class PageSyncTimer {
+final class PageSyncTimer extends ActiveMQScheduledComponent {
 
    // Constants -----------------------------------------------------
 
@@ -55,7 +57,8 @@ final class PageSyncTimer {
 
    // Constructors --------------------------------------------------
 
-   PageSyncTimer(PagingStore store, ScheduledExecutorService scheduledExecutor, long timeSync) {
+   PageSyncTimer(PagingStore store, ScheduledExecutorService scheduledExecutor, Executor executor, long timeSync) {
+      super(scheduledExecutor, executor, timeSync, TimeUnit.NANOSECONDS, true);
       this.store = store;
       this.scheduledExecutor = scheduledExecutor;
       this.timeSync = timeSync;
@@ -67,9 +70,15 @@ final class PageSyncTimer {
       ctx.pageSyncLineUp();
       if (!pendingSync) {
          pendingSync = true;
-         scheduledExecutor.schedule(runnable, timeSync, TimeUnit.NANOSECONDS);
+
+         delay();
       }
       syncOperations.add(ctx);
+   }
+
+   @Override
+   public void run() {
+      tick();
    }
 
    private void tick() {
@@ -86,13 +95,11 @@ final class PageSyncTimer {
          if (pendingSyncsArray.length != 0) {
             store.ioSync();
          }
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          for (OperationContext ctx : pendingSyncsArray) {
             ctx.onError(ActiveMQExceptionType.IO_ERROR.getCode(), e.getMessage());
          }
-      }
-      finally {
+      } finally {
          // In case of failure, The context should propagate an exception to the client
          // We send an exception to the client even on the case of a failure
          // to avoid possible locks and the client not getting the exception back

@@ -22,7 +22,7 @@ import java.nio.ByteBuffer;
 import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.tests.unit.core.journal.impl.fakes.FakeSequentialFileFactory;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
@@ -50,7 +50,7 @@ public class CleanBufferTest extends ActiveMQTestBase {
    @Test
    public void testCleanOnAIO() {
       if (LibaioContext.isLoaded()) {
-         SequentialFileFactory factory = new AIOSequentialFileFactory(new File("Whatever"), 50);
+         SequentialFileFactory factory = new AIOSequentialFileFactory(new File("./target"), 50);
 
          testBuffer(factory);
       }
@@ -87,13 +87,11 @@ public class CleanBufferTest extends ActiveMQTestBase {
          for (byte b = 0; b < 100; b++) {
             if (b < 10) {
                Assert.assertEquals(0, buffer.get());
-            }
-            else {
+            } else {
                Assert.assertEquals(b, buffer.get());
             }
          }
-      }
-      finally {
+      } finally {
          factory.releaseBuffer(buffer);
          factory.stop();
       }

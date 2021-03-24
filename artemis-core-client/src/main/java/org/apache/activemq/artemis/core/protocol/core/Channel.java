@@ -42,6 +42,7 @@ public interface Channel {
    /**
     * This number increases every time the channel reconnects successfully.
     * This is used to guarantee the integrity of the channel on sequential commands such as large messages.
+    *
     * @return
     */
    int getReconnectID();
@@ -50,6 +51,11 @@ public interface Channel {
     * For protocol check
     */
    boolean supports(byte packetID);
+
+   /**
+    * For protocol check
+    */
+   boolean supports(byte packetID, int version);
 
    /**
     * Sends a packet on this channel.
@@ -67,7 +73,7 @@ public interface Channel {
     * @return false if the packet was rejected by an outgoing interceptor; true if the send was
     * successful
     */
-   boolean send(Packet packet, final int reconnectID);
+   boolean send(Packet packet, int reconnectID);
 
    /**
     * Sends a packet on this channel using batching algorithm if appropriate
@@ -77,6 +83,25 @@ public interface Channel {
     * successful
     */
    boolean sendBatched(Packet packet);
+
+   /**
+    * Similarly to {@code flushConnection} on {@link #send(Packet, boolean)}, it requests
+    * any un-flushed previous sent packets to be flushed to the underlying connection.<br>
+    * It can be a no-op in case of InVM transports, because they would likely to flush already on each send.
+    */
+   void flushConnection();
+
+   /**
+    * Sends a packet on this channel, but request it to be flushed (along with the un-flushed previous ones) only iff
+    * {@code flushConnection} is {@code true}.
+    *
+    * @param packet       the packet to send
+    * @param flushConnection if {@code true} requests this {@code packet} and any un-flushed previous sent one to be flushed
+    *                     to the underlying connection
+    * @return false if the packet was rejected by an outgoing interceptor; true if the send was
+    * successful
+    */
+   boolean send(Packet packet, boolean flushConnection);
 
    /**
     * Sends a packet on this channel and then blocks until it has been written to the connection.
@@ -124,6 +149,8 @@ public interface Channel {
     * @return the current channel handler
     */
    ChannelHandler getHandler();
+
+   void endOfBatch();
 
    /**
     * Closes this channel.
@@ -204,6 +231,9 @@ public interface Channel {
     * @param handler the handler to call
     */
    void setCommandConfirmationHandler(CommandConfirmationHandler handler);
+
+   void setResponseHandler(ResponseHandler handler);
+
 
    /**
     * flushes any confirmations on to the connection.

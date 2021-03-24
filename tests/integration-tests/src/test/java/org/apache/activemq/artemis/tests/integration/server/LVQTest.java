@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.tests.integration.server;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -26,14 +27,24 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
+import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.core.server.impl.LastValueQueue;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
+import org.apache.activemq.artemis.utils.RetryMethod;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 public class LVQTest extends ActiveMQTestBase {
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    private ActiveMQServer server;
 
@@ -66,6 +77,40 @@ public class LVQTest extends ActiveMQTestBase {
    }
 
    @Test
+   public void testSimpleRestart() throws Exception {
+      ClientProducer producer = clientSession.createProducer(address);
+      ClientMessage m1 = createTextMessage(clientSession, "m1");
+      SimpleString rh = new SimpleString("SMID1");
+      m1.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+      producer.send(m1);
+      ClientMessage m2 = createTextMessage(clientSession, "m2");
+      m2.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+      producer.send(m2);
+      assertEquals(1, server.locateQueue(qName1).getMessageCount());
+      clientSession.close();
+
+      server.stop();
+      server.start();
+
+      assertEquals(1, server.locateQueue(qName1).getMessageCount());
+      ServerLocator locator = createNettyNonHALocator().setBlockOnAcknowledge(true).setAckBatchSize(0);
+      ClientSessionFactory sf = createSessionFactory(locator);
+      clientSession = addClientSession(sf.createSession(false, true, true));
+      producer = clientSession.createProducer(address);
+      ClientMessage m3 = createTextMessage(clientSession, "m3");
+      m3.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+      producer.send(m3);
+      assertEquals(1, server.locateQueue(qName1).getMessageCount());
+
+      ClientConsumer consumer = clientSession.createConsumer(qName1);
+      clientSession.start();
+      ClientMessage m = consumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals("m3", m.getBodyBuffer().readString());
+   }
+
+   @Test
    public void testMultipleMessages() throws Exception {
       ClientProducer producer = clientSession.createProducer(address);
       ClientConsumer consumer = clientSession.createConsumer(qName1);
@@ -92,6 +137,38 @@ public class LVQTest extends ActiveMQTestBase {
       Assert.assertNotNull(m);
       m.acknowledge();
       Assert.assertEquals(m.getBodyBuffer().readString(), "m4");
+   }
+
+   @Test
+   public void testMultipleRollback() throws Exception {
+      AddressSettings qs = new AddressSettings();
+      qs.setDefaultLastValueQueue(true);
+      qs.setRedeliveryDelay(1);
+      server.getAddressSettingsRepository().addMatch(address.toString(), qs);
+
+      ClientProducer producer = clientSessionTxReceives.createProducer(address);
+      ClientConsumer consumer = clientSessionTxReceives.createConsumer(qName1);
+      SimpleString messageId1 = new SimpleString("SMID1");
+      ClientMessage m1 = createTextMessage(clientSession, "m1");
+      m1.putStringProperty(Message.HDR_LAST_VALUE_NAME, messageId1);
+      producer.send(m1);
+      clientSessionTxReceives.start();
+      for (int i = 0; i < 10; i++) {
+         instanceLog.debug("#Deliver " + i);
+         ClientMessage m = consumer.receive(5000);
+         Assert.assertNotNull(m);
+         m.acknowledge();
+         clientSessionTxReceives.rollback();
+      }
+      m1 = createTextMessage(clientSession, "m1");
+      m1.putStringProperty(Message.HDR_LAST_VALUE_NAME, messageId1);
+      producer.send(m1);
+      ClientMessage m = consumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertEquals(m.getBodyBuffer().readString(), "m1");
+      Assert.assertNull(consumer.receiveImmediate());
+      clientSessionTxReceives.commit();
    }
 
    @Test
@@ -504,9 +581,15 @@ public class LVQTest extends ActiveMQTestBase {
       assertEquals(0, queue.getDeliveringCount());
    }
 
+   // There's a race between the schedule message reaching the queue,
+   // and actually being delivered
+   // by the time scheduledCount == 0 the message could still be in flight to the queue on
+   // an executor, and that's not an issue,
+   // however this test may eventually fail because of that, so I'm setting a retry here
+   @RetryMethod(retries = 3)
    @Test
    public void testScheduledMessages() throws Exception {
-      final long DELAY_TIME = 5000;
+      final long DELAY_TIME = 10;
       final int MESSAGE_COUNT = 5;
       Queue queue = server.locateQueue(qName1);
       ClientProducer producer = clientSession.createProducer(address);
@@ -518,25 +601,18 @@ public class LVQTest extends ActiveMQTestBase {
          m.setDurable(true);
          m.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
          timeSent = System.currentTimeMillis();
-         m.putLongProperty(Message.HDR_SCHEDULED_DELIVERY_TIME, timeSent + DELAY_TIME);
+         m.putLongProperty(Message.HDR_SCHEDULED_DELIVERY_TIME, timeSent + (i * DELAY_TIME));
          producer.send(m);
-         Thread.sleep(100);
       }
 
       // allow schedules to elapse so the messages will be delivered to the queue
-      long start = System.currentTimeMillis();
-      while (queue.getScheduledCount() > 0 && System.currentTimeMillis() - start <= DELAY_TIME) {
-         Thread.sleep(50);
-      }
+      Wait.waitFor(() -> queue.getScheduledCount() == 0);
 
-      assertTrue(queue.getScheduledCount() == 0);
+      Wait.assertEquals(MESSAGE_COUNT, queue::getMessagesAdded);
 
       clientSession.start();
-      ClientMessage m = consumer.receive(DELAY_TIME);
+      ClientMessage m = consumer.receive(5000);
       assertNotNull(m);
-      long actualDelay = System.currentTimeMillis() - timeSent + 50;
-      assertTrue(actualDelay >= DELAY_TIME);
-      m.acknowledge();
       assertEquals(m.getBodyBuffer().readString(), "m" + (MESSAGE_COUNT - 1));
       assertEquals(0, queue.getScheduledCount());
    }
@@ -626,23 +702,119 @@ public class LVQTest extends ActiveMQTestBase {
       clientSessionTxReceives.commit();
    }
 
+   @Test
+   public void testLargeMessage() throws Exception {
+      ClientProducer producer = clientSessionTxReceives.createProducer(address);
+      ClientConsumer consumer = clientSessionTxReceives.createConsumer(qName1);
+      SimpleString rh = new SimpleString("SMID1");
+
+      for (int i = 0; i < 50; i++) {
+         ClientMessage message = clientSession.createMessage(true);
+         message.setBodyInputStream(createFakeLargeStream(300 * 1024));
+         message.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+         producer.send(message);
+         clientSession.commit();
+      }
+      clientSessionTxReceives.start();
+      ClientMessage m = consumer.receive(1000);
+      Assert.assertNotNull(m);
+      m.acknowledge();
+      Assert.assertNull(consumer.receiveImmediate());
+      clientSessionTxReceives.commit();
+   }
+
+   @Test
+   public void testSizeInReplace() throws Exception {
+      ClientProducer producer = clientSession.createProducer(address);
+      ClientMessage m1 = createTextMessage(clientSession, "m1");
+      SimpleString rh = new SimpleString("SMID1");
+      m1.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+
+      ClientMessage m2 = clientSession.createMessage(true);
+      m2.setBodyInputStream(createFakeLargeStream(10 * 1024));
+      m2.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+
+      Queue queue = server.locateQueue(qName1);
+      producer.send(m1);
+      long oldSize = queue.getPersistentSize();
+      producer.send(m2);
+      assertEquals(queue.getDeliveringSize(), 0);
+      assertNotEquals(queue.getPersistentSize(), oldSize);
+      assertTrue(queue.getPersistentSize() > 10 * 1024);
+   }
+
+   @Test
+   public void testDeleteReference() throws Exception {
+      ClientProducer producer = clientSession.createProducer(address);
+      ClientMessage m1 = createTextMessage(clientSession, "m1");
+      SimpleString rh = new SimpleString("SMID1");
+      m1.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+      m1.setBodyInputStream(createFakeLargeStream(2 * 1024));
+
+      ClientMessage m2 = clientSession.createMessage(true);
+      m2.setBodyInputStream(createFakeLargeStream(10 * 1024));
+      m2.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+
+      Queue queue = server.locateQueue(qName1);
+      producer.send(m1);
+      LinkedListIterator<MessageReference> browserIterator = queue.browserIterator();
+      // Wait for message delivered to queue
+      Wait.assertTrue(() -> browserIterator.hasNext(), 10_000, 2);
+      long messageId = browserIterator.next().getMessage().getMessageID();
+      browserIterator.close();
+
+      queue.deleteReference(messageId);
+      // Wait for delete tx's afterCommit called
+      Wait.assertEquals(0L, () -> queue.getDeliveringSize(), 10_000, 2);
+      assertEquals(queue.getPersistentSize(), 0);
+      assertTrue(((LastValueQueue)queue).getLastValueKeys().isEmpty());
+
+      producer.send(m2);
+      // Wait for message delivered to queue
+      Wait.assertTrue(() -> queue.getPersistentSize() > 10 * 1024, 10_000, 2);
+      assertEquals(queue.getDeliveringSize(), 0);
+   }
+
+   @Test
+   public void testChangeReferencePriority() throws Exception {
+      ClientProducer producer = clientSession.createProducer(address);
+      ClientMessage m1 = createTextMessage(clientSession, "m1");
+      SimpleString rh = new SimpleString("SMID1");
+      m1.putStringProperty(Message.HDR_LAST_VALUE_NAME, rh);
+
+      Queue queue = server.locateQueue(qName1);
+      producer.send(m1);
+      Wait.assertEquals(1, queue::getMessageCount);
+      LinkedListIterator<MessageReference> browserIterator = queue.browserIterator();
+      // Wait for message delivered to queue
+      Assert.assertTrue(browserIterator.hasNext());
+      long messageId = browserIterator.next().getMessage().getMessageID();
+      browserIterator.close();
+      long oldSize = queue.getPersistentSize();
+
+      assertTrue(queue.changeReferencePriority(messageId, (byte) 1));
+      // Wait for message delivered to queue
+      Wait.assertEquals(oldSize, () -> queue.getPersistentSize(), 10_000, 2);
+      assertEquals(queue.getDeliveringSize(), 0);
+   }
+
    @Override
    @Before
    public void setUp() throws Exception {
       super.setUp();
 
-      server = addServer(ActiveMQServers.newActiveMQServer(createDefaultInVMConfig(), false));
+      server = addServer(ActiveMQServers.newActiveMQServer(createDefaultNettyConfig(), true));
       // start the server
       server.start();
 
-      server.getAddressSettingsRepository().addMatch(address.toString(), new AddressSettings().setLastValueQueue(true));
+      server.getAddressSettingsRepository().addMatch(address.toString(), new AddressSettings().setDefaultLastValueQueue(true));
       // then we create a client as normalServer
-      ServerLocator locator = createInVMNonHALocator().setBlockOnAcknowledge(true).setAckBatchSize(0);
+      ServerLocator locator = createNettyNonHALocator().setBlockOnAcknowledge(true).setAckBatchSize(0);
 
       ClientSessionFactory sf = createSessionFactory(locator);
       clientSession = addClientSession(sf.createSession(false, true, true));
       clientSessionTxReceives = addClientSession(sf.createSession(false, true, false));
       clientSessionTxSends = addClientSession(sf.createSession(false, false, true));
-      clientSession.createQueue(address, qName1, null, true);
+      clientSession.createQueue(new QueueConfiguration(qName1).setAddress(address));
    }
 }

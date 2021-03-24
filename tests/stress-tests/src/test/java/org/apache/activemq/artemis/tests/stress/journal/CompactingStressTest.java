@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -30,7 +31,7 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.JournalType;
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
@@ -182,8 +183,7 @@ public class CompactingStressTest extends ActiveMQTestBase {
          }
 
          session.commit();
-      }
-      finally {
+      } finally {
          session.close();
       }
 
@@ -229,21 +229,17 @@ public class CompactingStressTest extends ActiveMQTestBase {
                   prod.send(msg);
                }
                sessionSlow.commit();
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                this.e = e;
-            }
-            finally {
+            } finally {
                try {
                   session.close();
-               }
-               catch (Throwable e) {
+               } catch (Throwable e) {
                   this.e = e;
                }
                try {
                   sessionSlow.close();
-               }
-               catch (Throwable e) {
+               } catch (Throwable e) {
                   this.e = e;
                }
             }
@@ -273,15 +269,12 @@ public class CompactingStressTest extends ActiveMQTestBase {
                }
 
                Assert.assertNull(cons.receiveImmediate());
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                this.e = e;
-            }
-            finally {
+            } finally {
                try {
                   session.close();
-               }
-               catch (Throwable e) {
+               } catch (Throwable e) {
                   this.e = e;
                }
             }
@@ -351,12 +344,10 @@ public class CompactingStressTest extends ActiveMQTestBase {
 
          Assert.assertNull(cons.receiveImmediate());
 
-      }
-      finally {
+      } finally {
          try {
             sess.close();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
       }
    }
@@ -374,21 +365,18 @@ public class CompactingStressTest extends ActiveMQTestBase {
       ClientSession sess = addClientSession(sf.createSession());
 
       try {
-         sess.createQueue(CompactingStressTest.AD1, CompactingStressTest.Q1, true);
-      }
-      catch (Exception ignored) {
-      }
-
-      try {
-         sess.createQueue(CompactingStressTest.AD2, CompactingStressTest.Q2, true);
-      }
-      catch (Exception ignored) {
+         sess.createQueue(new QueueConfiguration(CompactingStressTest.Q1).setAddress(CompactingStressTest.AD1));
+      } catch (Exception ignored) {
       }
 
       try {
-         sess.createQueue(CompactingStressTest.AD3, CompactingStressTest.Q3, true);
+         sess.createQueue(new QueueConfiguration(CompactingStressTest.Q2).setAddress(CompactingStressTest.AD2));
+      } catch (Exception ignored) {
       }
-      catch (Exception ignored) {
+
+      try {
+         sess.createQueue(new QueueConfiguration(CompactingStressTest.Q3).setAddress(CompactingStressTest.AD3));
+      } catch (Exception ignored) {
       }
 
       sess.close();

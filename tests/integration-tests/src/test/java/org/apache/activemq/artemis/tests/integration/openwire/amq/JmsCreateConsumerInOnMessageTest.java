@@ -23,8 +23,8 @@ import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.Topic;
 
-import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
+import org.apache.activemq.command.ActiveMQDestination;
 import org.junit.Test;
 
 /**
@@ -58,7 +58,6 @@ public class JmsCreateConsumerInOnMessageTest extends BasicOpenWireTest implemen
       Message msg = publisherSession.createMessage();
       producer.send(msg);
 
-      System.out.println("message sent: " + msg);
       synchronized (lock) {
          long timeout = System.currentTimeMillis() + 3000;
          while (testConsumer == null && timeout > System.currentTimeMillis()) {
@@ -75,15 +74,13 @@ public class JmsCreateConsumerInOnMessageTest extends BasicOpenWireTest implemen
     */
    @Override
    public void onMessage(Message message) {
-      System.out.println("____________onmessage " + message);
       try {
          synchronized (lock) {
             testConsumer = consumerSession.createConsumer(topic);
             consumerSession.createProducer(topic);
             lock.notify();
          }
-      }
-      catch (Exception ex) {
+      } catch (Exception ex) {
          ex.printStackTrace();
          assertTrue(false);
       }

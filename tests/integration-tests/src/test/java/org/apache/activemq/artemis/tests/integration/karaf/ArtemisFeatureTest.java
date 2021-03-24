@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,6 +15,35 @@
  * limitations under the License.
  */
 package org.apache.activemq.artemis.tests.integration.karaf;
+
+import javax.inject.Inject;
+import javax.jms.Connection;
+import javax.jms.Message;
+import javax.jms.MessageConsumer;
+import javax.jms.MessageProducer;
+import javax.jms.Queue;
+import javax.jms.QueueBrowser;
+import javax.jms.QueueRequestor;
+import javax.jms.QueueSession;
+import javax.jms.TextMessage;
+import javax.json.Json;
+import javax.json.JsonArray;
+import javax.json.JsonString;
+import javax.security.auth.Subject;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.PrintStream;
+import java.io.StringReader;
+import java.security.PrivilegedAction;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Enumeration;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.karaf.jaas.boot.principal.RolePrincipal;
 import org.apache.karaf.jaas.boot.principal.UserPrincipal;
@@ -39,36 +68,22 @@ import org.osgi.framework.Constants;
 import org.osgi.framework.InvalidSyntaxException;
 import org.osgi.util.tracker.ServiceTracker;
 
-import javax.inject.Inject;
-import javax.jms.Connection;
-import javax.jms.Message;
-import javax.jms.MessageConsumer;
-import javax.jms.MessageProducer;
-import javax.jms.Queue;
-import javax.security.auth.Subject;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.PrintStream;
-import java.security.PrivilegedAction;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
-
 import static org.ops4j.pax.exam.CoreOptions.maven;
 import static org.ops4j.pax.exam.CoreOptions.mavenBundle;
 import static org.ops4j.pax.exam.karaf.options.KarafDistributionOption.editConfigurationFilePut;
 import static org.ops4j.pax.exam.karaf.options.KarafDistributionOption.features;
 import static org.ops4j.pax.exam.karaf.options.KarafDistributionOption.karafDistributionConfiguration;
 import static org.ops4j.pax.exam.karaf.options.KarafDistributionOption.logLevel;
+// uncomment this to be able to debug it
+// import static org.ops4j.pax.exam.karaf.options.KarafDistributionOption.debugConfiguration;
 
+/**
+ * Useful docs about this test: https://ops4j1.jira.com/wiki/display/paxexam/FAQ
+ */
 @RunWith(PaxExam.class)
 public class ArtemisFeatureTest extends Assert {
 
-   private static Logger LOG = Logger.getLogger(ArtemisFeatureTest.class.getName());
+   private static Logger log = Logger.getLogger(ArtemisFeatureTest.class.getName());
 
    @Inject
    BundleContext bundleContext;
@@ -99,17 +114,14 @@ public class ArtemisFeatureTest extends Assert {
       ArrayList<String> f = new ArrayList<>();
       f.addAll(Arrays.asList(features));
 
-      Option[] options =
-            new Option[]{
-                  karafDistributionConfiguration().frameworkUrl(
-                        maven().groupId("org.apache.karaf").artifactId("apache-karaf").type("tar.gz").versionAsInProject())
-                        .unpackDirectory(new File("target/paxexam/unpack/")),
+      Option[] options = new Option[]{karafDistributionConfiguration().frameworkUrl(maven().groupId("org.apache.karaf").artifactId("apache-karaf").type("tar.gz").versionAsInProject()).unpackDirectory(new File("target/paxexam/unpack/")),
 
-                  KarafDistributionOption.keepRuntimeFolder(),
-                  logLevel(LogLevelOption.LogLevel.INFO),
-                  editConfigurationFilePut("etc/config.properties", "karaf.startlevel.bundle", "50"),
-                  //debugConfiguration("5005", true),
-                  features(getArtemisMQKarafFeatureUrl(), f.toArray(new String[f.size()]))};
+         KarafDistributionOption.keepRuntimeFolder(), logLevel(LogLevelOption.LogLevel.INFO), editConfigurationFilePut("etc/config.properties", "karaf.startlevel.bundle", "50"),
+         // [KARAF-6600] Use https URL for Maven Central
+         editConfigurationFilePut("etc/org.ops4j.pax.url.mvn.cfg", "org.ops4j.pax.url.mvn.repositories", "https://repo1.maven.org/maven2@id=central, https://repository.apache.org/content/groups/snapshots-group@id=apache@snapshots@noreleases, https://oss.sonatype.org/content/repositories/ops4j-snapshots@id=ops4j.sonatype.snapshots.deploy@snapshots@noreleases"),
+         // uncomment this to debug it.
+         // debugConfiguration("5005", true),
+         features(getArtemisMQKarafFeatureUrl(), f.toArray(new String[f.size()]))};
 
       return options;
    }
@@ -117,8 +129,8 @@ public class ArtemisFeatureTest extends Assert {
    public static UrlReference getArtemisMQKarafFeatureUrl() {
       String type = "xml/features";
       UrlReference urlReference = mavenBundle().groupId("org.apache.activemq").
-            artifactId("artemis-features").versionAsInProject().type(type);
-      LOG.info("FeatureURL: " + urlReference.getURL());
+         artifactId("artemis-features").versionAsInProject().type(type);
+      log.debug("FeatureURL: " + urlReference.getURL());
       return urlReference;
    }
 
@@ -136,7 +148,7 @@ public class ArtemisFeatureTest extends Assert {
 
       Object service = waitForService("(objectClass=org.apache.activemq.artemis.core.server.ActiveMQServer)", 30000);
       assertNotNull(service);
-      LOG.info("have service " + service);
+      log.debug("have service " + service);
 
       executeCommand("service:list -n");
 
@@ -146,16 +158,38 @@ public class ArtemisFeatureTest extends Assert {
          connection = factory.createConnection(USER, PASSWORD);
          connection.start();
 
-         javax.jms.Session sess = connection.createSession(false, javax.jms.Session.AUTO_ACKNOWLEDGE);
-         Queue queue = sess.createQueue("jms.queue.exampleQueue");
+         QueueSession sess = (QueueSession) connection.createSession(false, javax.jms.Session.AUTO_ACKNOWLEDGE);
+         Queue queue = sess.createQueue("exampleQueue");
          MessageProducer producer = sess.createProducer(queue);
          producer.send(sess.createTextMessage("TEST"));
+
+         // Test browsing
+         try (QueueBrowser browser = sess.createBrowser(queue)) {
+            Enumeration messages = browser.getEnumeration();
+            while (messages.hasMoreElements()) {
+               messages.nextElement();
+            }
+         }
+
+         // Test management
+         Queue managementQueue = sess.createQueue("activemq.management");
+         QueueRequestor requestor = new QueueRequestor(sess, managementQueue);
+         connection.start();
+         TextMessage m = sess.createTextMessage();
+         m.setStringProperty("_AMQ_ResourceName", "broker");
+         m.setStringProperty("_AMQ_OperationName", "getQueueNames");
+         m.setText("[\"ANYCAST\"]");
+         Message reply = requestor.request(m);
+         String json = ((TextMessage) reply).getText();
+         JsonArray array = Json.createReader(new StringReader(json)).readArray();
+         List<JsonString> queues = (List<JsonString>) array.get(0);
+         assertNotNull(queues);
+         assertFalse(queues.isEmpty());
 
          MessageConsumer consumer = sess.createConsumer(queue);
          Message msg = consumer.receive(5000);
          assertNotNull(msg);
-      }
-      finally {
+      } finally {
          if (connection != null) {
             connection.close();
          }
@@ -169,45 +203,42 @@ public class ArtemisFeatureTest extends Assert {
       final Session commandSession = sessionFactory.create(System.in, printStream, printStream);
       commandSession.put("APPLICATION", System.getProperty("karaf.name", "root"));
       commandSession.put("USER", USER);
-      FutureTask<String> commandFuture = new FutureTask<>(
-            new Callable<String>() {
-               @Override
-               public String call() {
+      FutureTask<String> commandFuture = new FutureTask<>(new Callable<String>() {
+         @Override
+         public String call() {
 
-                  Subject subject = new Subject();
-                  subject.getPrincipals().add(new UserPrincipal("admin"));
-                  subject.getPrincipals().add(new RolePrincipal("admin"));
-                  subject.getPrincipals().add(new RolePrincipal("manager"));
-                  subject.getPrincipals().add(new RolePrincipal("viewer"));
-                  return Subject.doAs(subject, new PrivilegedAction<String>() {
-                     @Override
-                     public String run() {
-                        try {
-                           if (!silent) {
-                              System.out.println(command);
-                              System.out.flush();
-                           }
-                           commandSession.execute(command);
-                        }
-                        catch (Exception e) {
-                           e.printStackTrace(System.err);
-                        }
-                        printStream.flush();
-                        return byteArrayOutputStream.toString();
+            Subject subject = new Subject();
+            subject.getPrincipals().add(new UserPrincipal("admin"));
+            subject.getPrincipals().add(new RolePrincipal("admin"));
+            subject.getPrincipals().add(new RolePrincipal("manager"));
+            subject.getPrincipals().add(new RolePrincipal("viewer"));
+            return Subject.doAs(subject, new PrivilegedAction<String>() {
+               @Override
+               public String run() {
+                  try {
+                     if (!silent) {
+                        System.out.println(command);
+                        System.out.flush();
                      }
-                  });
+                     commandSession.execute(command);
+                  } catch (Exception e) {
+                     e.printStackTrace(System.err);
+                  }
+                  printStream.flush();
+                  return byteArrayOutputStream.toString();
                }
             });
+         }
+      });
 
       try {
          executor.submit(commandFuture);
          response = commandFuture.get(timeout, TimeUnit.MILLISECONDS);
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          e.printStackTrace(System.err);
          response = "SHELL COMMAND TIMED OUT: ";
       }
-      LOG.info("Execute: " + command + " - Response:" + response);
+      log.debug("Execute: " + command + " - Response:" + response);
       return response;
    }
 
@@ -220,13 +251,11 @@ public class ArtemisFeatureTest extends Assert {
       while (true) {
          try {
             return callable.call();
-         }
-         catch (Throwable t) {
+         } catch (Throwable t) {
             if (System.currentTimeMillis() < max) {
                TimeUnit.SECONDS.sleep(1);
                continue;
-            }
-            else {
+            } else {
                throw t;
             }
          }
@@ -236,7 +265,7 @@ public class ArtemisFeatureTest extends Assert {
    public boolean verifyBundleInstalled(final String bundleName) throws Exception {
       boolean found = false;
       for (Bundle bundle : bundleContext.getBundles()) {
-         LOG.debug("Checking: " + bundle.getSymbolicName());
+         log.debug("Checking: " + bundle.getSymbolicName());
          if (bundle.getSymbolicName().contains(bundleName)) {
             found = true;
             break;
@@ -250,8 +279,7 @@ public class ArtemisFeatureTest extends Assert {
       try {
          st.open();
          return st.waitForService(timeout);
-      }
-      finally {
+      } finally {
          st.close();
       }
    }

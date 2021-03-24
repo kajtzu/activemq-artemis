@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -29,8 +30,8 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.MessageHandler;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -66,7 +67,7 @@ public class DeliveryOrderTest extends ActiveMQTestBase {
       ClientSession sendSession = cf.createSession(false, false, true);
       ClientProducer cp = sendSession.createProducer(addressA);
       int numMessages = 1000;
-      sendSession.createQueue(addressA, queueA, false);
+      sendSession.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       for (int i = 0; i < numMessages; i++) {
          ClientMessage cm = sendSession.createMessage(false);
          cm.getBodyBuffer().writeInt(i);
@@ -91,7 +92,7 @@ public class DeliveryOrderTest extends ActiveMQTestBase {
       ClientSession sendSession = cf.createSession(false, true, false);
       ClientProducer cp = sendSession.createProducer(addressA);
       int numMessages = 1000;
-      sendSession.createQueue(addressA, queueA, false);
+      sendSession.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       for (int i = 0; i < numMessages; i++) {
          ClientMessage cm = sendSession.createMessage(false);
          cm.getBodyBuffer().writeInt(i);
@@ -119,7 +120,7 @@ public class DeliveryOrderTest extends ActiveMQTestBase {
    public void testMultipleConsumersMessageOrder() throws Exception {
       ClientSession sendSession = cf.createSession(false, true, true);
       ClientSession recSession = cf.createSession(false, true, true);
-      sendSession.createQueue(addressA, queueA, false);
+      sendSession.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       int numReceivers = 100;
       AtomicInteger count = new AtomicInteger(0);
       int numMessage = 10000;
@@ -163,8 +164,7 @@ public class DeliveryOrderTest extends ActiveMQTestBase {
          int i = message.getBodyBuffer().readInt();
          try {
             message.acknowledge();
-         }
-         catch (ActiveMQException e) {
+         } catch (ActiveMQException e) {
             e.printStackTrace();
          }
          if (i <= lastMessage) {

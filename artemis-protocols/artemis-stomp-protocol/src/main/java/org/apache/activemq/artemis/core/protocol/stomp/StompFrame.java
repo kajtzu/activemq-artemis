@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
@@ -77,8 +78,23 @@ public class StompFrame {
 
    @Override
    public String toString() {
-      return "StompFrame[command=" + command + ", headers=" + headers + ", content= " + this.body + " bytes " +
-         Arrays.toString(bytesBody);
+      StringBuilder result = new StringBuilder()
+         .append("StompFrame[command=").append(command)
+         .append(", headers=").append(headers
+                                         .keySet()
+                                         .stream()
+                                         .map(key -> key + "=" + (key.equals(Stomp.Headers.Connect.PASSCODE) ? "****" : headers.get(key)))
+                                         .collect(Collectors.joining(", ", "{", "}")));
+
+      if (command.equals(Stomp.Responses.MESSAGE) || command.equals(Stomp.Responses.ERROR) || command.equals(Stomp.Commands.SEND)) {
+         result.append(", body=").append(this.getBody())
+               .append(", body-bytes=").append(Arrays.toString(bytesBody))
+               .append(", size=").append(size);
+      }
+
+      result.append("]");
+
+      return result.toString();
    }
 
    public boolean isPing() {
@@ -91,19 +107,14 @@ public class StompFrame {
 
    public ActiveMQBuffer toActiveMQBuffer() throws Exception {
       if (buffer == null) {
-         if (bytesBody != null) {
-            buffer = ActiveMQBuffers.dynamicBuffer(bytesBody.length + 512);
-         }
-         else {
-            buffer = ActiveMQBuffers.dynamicBuffer(512);
-         }
-
          if (isPing()) {
+            buffer = ActiveMQBuffers.fixedBuffer(1);
             buffer.writeByte((byte) 10);
+            size = buffer.writerIndex();
             return buffer;
          }
 
-         StringBuilder head = new StringBuilder();
+         StringBuilder head = new StringBuilder(512);
          head.append(command);
          head.append(Stomp.NEWLINE);
          // Output the headers.
@@ -117,15 +128,19 @@ public class StompFrame {
          // Add a newline to separate the headers from the content.
          head.append(Stomp.NEWLINE);
 
-         buffer.writeBytes(head.toString().getBytes(StandardCharsets.UTF_8));
+         byte[] headBytes = head.toString().getBytes(StandardCharsets.UTF_8);
+         int bodyLength = (bytesBody == null) ? 0 : bytesBody.length;
+
+         buffer = ActiveMQBuffers.fixedBuffer(headBytes.length + bodyLength + END_OF_FRAME.length);
+
+         buffer.writeBytes(headBytes);
          if (bytesBody != null) {
             buffer.writeBytes(bytesBody);
          }
          buffer.writeBytes(END_OF_FRAME);
 
          size = buffer.writerIndex();
-      }
-      else {
+      } else {
          buffer.readerIndex(0);
       }
       return buffer;
@@ -172,6 +187,10 @@ public class StompFrame {
    }
 
    public String encode(String str) {
+      if (str == null) {
+         return "";
+      }
+
       int len = str.length();
 
       char[] buffer = new char[2 * len];
@@ -183,27 +202,17 @@ public class StompFrame {
          if (c == (byte) 10) {
             buffer[iBuffer] = (byte) 92;
             buffer[++iBuffer] = (byte) 110;
-         }
-
-         // \r
-         else if (c == (byte) 13) {
+         } else if (c == (byte) 13) { // \r
             buffer[iBuffer] = (byte) 92;
             buffer[++iBuffer] = (byte) 114;
-         }
+         } else if (c == (byte) 92) { // \
 
-         // \
-         else if (c == (byte) 92) {
             buffer[iBuffer] = (byte) 92;
             buffer[++iBuffer] = (byte) 92;
-         }
-
-         // :
-         else if (c == (byte) 58) {
+         } else if (c == (byte) 58) { // :
             buffer[iBuffer] = (byte) 92;
             buffer[++iBuffer] = (byte) 99;
-         }
-
-         else {
+         } else {
             buffer[iBuffer] = c;
          }
          iBuffer++;

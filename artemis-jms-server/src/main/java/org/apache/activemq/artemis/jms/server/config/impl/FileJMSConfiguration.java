@@ -16,9 +16,15 @@
  */
 package org.apache.activemq.artemis.jms.server.config.impl;
 
+import javax.management.MBeanServer;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.Map;
+
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.core.config.impl.Validators;
 import org.apache.activemq.artemis.core.deployers.Deployable;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.jms.server.ActiveMQJMSServerLogger;
@@ -31,11 +37,6 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-
-import javax.management.MBeanServer;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.Map;
 
 public class FileJMSConfiguration extends JMSConfigurationImpl implements Deployable {
 
@@ -55,18 +56,16 @@ public class FileJMSConfiguration extends JMSConfigurationImpl implements Deploy
 
    private static final boolean DEFAULT_QUEUE_DURABILITY = true;
 
-   private boolean parsed = false;
-
    @Override
    public void parse(Element config, URL url) throws Exception {
       parseConfiguration(config);
       setConfigurationUrl(url);
-      parsed = true;
    }
 
    @Override
    public boolean isParsed() {
-      return parsed;
+      // always return false here so that the FileDeploymentManager will not invoke buildService()
+      return false;
    }
 
    @Override
@@ -78,7 +77,7 @@ public class FileJMSConfiguration extends JMSConfigurationImpl implements Deploy
    public void buildService(ActiveMQSecurityManager securityManager,
                             MBeanServer mBeanServer,
                             Map<String, Deployable> deployables,
-                            Map<String, ActiveMQComponent> components) throws Exception {
+                            Map<String, ActiveMQComponent> components, ActivateCallback activateCallback) throws Exception {
       ActiveMQServerImpl server = (ActiveMQServerImpl) components.get("core");
       components.put(CONFIGURATION_SCHEMA_ROOT_ELEMENT, new JMSServerManagerImpl(server, this));
    }
@@ -111,8 +110,7 @@ public class FileJMSConfiguration extends JMSConfigurationImpl implements Deploy
 
             if (node.getNodeName().equals(TOPIC_NODE_NAME)) {
                topics.add(parseTopicConfiguration(node));
-            }
-            else if (node.getNodeName().equals(QUEUE_NODE_NAME)) {
+            } else if (node.getNodeName().equals(QUEUE_NODE_NAME)) {
                queues.add(parseQueueConfiguration(node));
             }
          }

@@ -31,19 +31,33 @@ public class PagePositionImpl implements PagePosition {
     */
    private int messageNr;
 
+   private int fileOffset = -1;
+
    /**
     * ID used for storage
     */
    private long recordID = -1;
 
    /**
+    * Optional size value that can be set to specify the peristent size of the message
+    * for metrics tracking purposes
+    */
+   private long persistentSize;
+
+   /**
     * @param pageNr
     * @param messageNr
+    * @param fileOffset
     */
-   public PagePositionImpl(long pageNr, int messageNr) {
+   public PagePositionImpl(long pageNr, int messageNr, int fileOffset) {
       this();
       this.pageNr = pageNr;
       this.messageNr = messageNr;
+      this.fileOffset = fileOffset;
+   }
+
+   public PagePositionImpl(long pageNr, int messageNr) {
+      this(pageNr, messageNr, -1);
    }
 
    public PagePositionImpl() {
@@ -83,32 +97,38 @@ public class PagePositionImpl implements PagePosition {
    }
 
    @Override
-   public int compareTo(PagePosition o) {
-      if (pageNr > o.getPageNr()) {
-         return 1;
-      }
-      else if (pageNr < o.getPageNr()) {
-         return -1;
-      }
-      else if (recordID > o.getRecordID()) {
-         return 1;
-      }
-      else if (recordID < o.getRecordID()) {
-         return -1;
-      }
-      else {
-         return 0;
-      }
+   public int getFileOffset() {
+      return fileOffset;
+   }
+
+   /**
+    * @return the persistentSize
+    */
+   @Override
+   public long getPersistentSize() {
+      return persistentSize;
+   }
+
+   /**
+    * @param persistentSize the persistentSize to set
+    */
+   @Override
+   public void setPersistentSize(long persistentSize) {
+      this.persistentSize = persistentSize;
    }
 
    @Override
-   public PagePosition nextMessage() {
-      return new PagePositionImpl(this.pageNr, this.messageNr + 1);
+   public int compareTo(PagePosition o) {
+      if (pageNr > o.getPageNr()) {
+         return 1;
+      } else if (pageNr < o.getPageNr()) {
+         return -1;
+      } else return Long.compare(recordID, o.getRecordID());
    }
 
    @Override
    public PagePosition nextPage() {
-      return new PagePositionImpl(this.pageNr + 1, 0);
+      return new PagePositionImpl(this.pageNr + 1, 0, 0);
    }
 
    @Override
@@ -138,7 +158,8 @@ public class PagePositionImpl implements PagePosition {
 
    @Override
    public String toString() {
-      return "PagePositionImpl [pageNr=" + pageNr + ", messageNr=" + messageNr + ", recordID=" + recordID + "]";
+      return "PagePositionImpl [pageNr=" + pageNr + ", messageNr=" + messageNr + ", recordID=" + recordID +
+         ", fileOffset=" + fileOffset + "]";
    }
 
    /**

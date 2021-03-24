@@ -26,6 +26,14 @@ public final class TransportConstants {
 
    public static final long DEFAULT_CONNECTIONS_ALLOWED = -1L;
 
+   public static final String BUFFER_POOLING = "bufferPooling";
+
+   public static final boolean DEFAULT_BUFFER_POOLING = true;
+
+   public static final boolean DEFAULT_DIRECT_DELIVER = false;
+
+   public static final String DIRECT_DELIVER = "directDeliver";
+
    private TransportConstants() {
       // Utility class
    }

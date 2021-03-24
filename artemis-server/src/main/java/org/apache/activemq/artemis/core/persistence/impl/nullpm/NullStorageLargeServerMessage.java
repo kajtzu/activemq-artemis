@@ -16,13 +16,18 @@
  */
 package org.apache.activemq.artemis.core.persistence.impl.nullpm;
 
-import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
+import io.netty.buffer.Unpooled;
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.core.buffers.impl.ChannelBufferWrapper;
 import org.apache.activemq.artemis.core.io.SequentialFile;
-import org.apache.activemq.artemis.core.server.LargeServerMessage;
-import org.apache.activemq.artemis.core.server.ServerMessage;
-import org.apache.activemq.artemis.core.server.impl.ServerMessageImpl;
+import org.apache.activemq.artemis.core.message.impl.CoreMessage;
+import org.apache.activemq.artemis.core.persistence.StorageManager;
+import org.apache.activemq.artemis.core.persistence.impl.journal.LargeBody;
+import org.apache.activemq.artemis.core.server.CoreLargeServerMessage;
 
-class NullStorageLargeServerMessage extends ServerMessageImpl implements LargeServerMessage {
+class NullStorageLargeServerMessage extends CoreMessage implements CoreLargeServerMessage {
 
    NullStorageLargeServerMessage() {
       super();
@@ -33,17 +38,67 @@ class NullStorageLargeServerMessage extends ServerMessageImpl implements LargeSe
    }
 
    @Override
-   public void releaseResources() {
+   public void releaseResources(boolean sync, boolean sendEvent) {
+   }
+
+   @Override
+   public LargeBody getLargeBody() {
+      return null;
+   }
+
+   @Override
+   public StorageManager getStorageManager() {
+      return null;
+   }
+
+   @Override
+   public Message toMessage() {
+      return this;
    }
 
    @Override
    public synchronized void addBytes(final byte[] bytes) {
       if (buffer == null) {
-         buffer = ActiveMQBuffers.dynamicBuffer(bytes.length);
+         buffer = Unpooled.buffer(bytes.length);
       }
 
       // expand the buffer
       buffer.writeBytes(bytes);
+   }
+
+   @Override
+   public void validateFile() throws ActiveMQException {
+
+   }
+
+   @Override
+   public void setStorageManager(StorageManager storageManager) {
+
+   }
+
+   @Override
+   public synchronized void addBytes(ActiveMQBuffer bytes, boolean initialHeader) {
+      final int readableBytes = bytes.readableBytes();
+      if (buffer == null) {
+         buffer = Unpooled.buffer(readableBytes);
+      }
+
+      // expand the buffer
+      buffer.ensureWritable(readableBytes);
+      assert buffer.hasArray();
+      final int writerIndex = buffer.writerIndex();
+      bytes.readBytes(buffer.array(), buffer.arrayOffset() + writerIndex, readableBytes);
+      buffer.writerIndex(writerIndex + readableBytes);
+   }
+
+   @Override
+   public synchronized ActiveMQBuffer getReadOnlyBodyBuffer() {
+      return new ChannelBufferWrapper(buffer.slice(0, buffer.writerIndex()).asReadOnly());
+   }
+
+   @Override
+   public synchronized int getBodyBufferSize() {
+      return buffer.writerIndex();
    }
 
    @Override
@@ -56,15 +111,12 @@ class NullStorageLargeServerMessage extends ServerMessageImpl implements LargeSe
       return true;
    }
 
-   @Override
-   public void decrementDelayDeletionCount() {
-
-   }
 
    @Override
-   public void incrementDelayDeletionCount() {
-
+   public boolean isServerMessage() {
+      return true;
    }
+
 
    @Override
    public synchronized int getEncodeSize() {
@@ -77,7 +129,7 @@ class NullStorageLargeServerMessage extends ServerMessageImpl implements LargeSe
    }
 
    @Override
-   public ServerMessage copy() {
+   public Message copy() {
       // This is a simple copy, used only to avoid changing original properties
       return new NullStorageLargeServerMessage(this);
    }
@@ -91,12 +143,22 @@ class NullStorageLargeServerMessage extends ServerMessageImpl implements LargeSe
    }
 
    @Override
+   public void clearPendingRecordID() {
+
+   }
+
+   @Override
+   public boolean hasPendingRecord() {
+      return false;
+   }
+
+   @Override
    public long getPendingRecordID() {
       return -1;
    }
 
    @Override
-   public SequentialFile getFile() {
+   public SequentialFile getAppendFile() {
       return null;
    }
 

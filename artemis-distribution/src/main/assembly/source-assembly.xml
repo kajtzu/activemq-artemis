@@ -38,9 +38,13 @@
          should use this descriptor directly in future -->
          <excludes>
             <exclude>tests/extra-tests/</exclude>
+            <exclude>tests/performance-jmh/</exclude>
 
             <!-- in case some of the build generates data, this needs to be ignored -->
             <exclude>data/</exclude>
+
+            <!-- Removing ide files -->
+            <exclude>etc/ide-settings/</exclude>
 
             <!-- Exclude all docs except user manual -->
             <exclude>docs/diagrams/</exclude>
@@ -57,22 +61,6 @@
             <exclude>mvnw.cmd</exclude>
             <exclude>.mvn/</exclude>
             <exclude>artemis_doap.rdf</exclude>
-            <exclude>artemis-native/bin/</exclude>
-
-            <!-- Files generated from automake -->
-            <exclude>CMakeCache.txt</exclude>
-            <exclude>CMakeFiles/</exclude>
-            <exclude>Makefile</exclude>
-            <exclude>artemis-native/CMakeCache.txt</exclude>
-            <exclude>artemis-native/CMakeFiles/</exclude>
-            <exclude>artemis-native/Makefile</exclude>
-            <exclude>artemis-native/cmake_install.cmake</exclude>
-            <exclude>artemis-native/src/main/c/CMakeFiles/</exclude>
-            <exclude>artemis-native/src/main/c/Makefile</exclude>
-            <exclude>artemis-native/src/main/c/cmake_install.cmake</exclude>
-            <exclude>artemis-native/src/main/c/org_apache_activemq_artemis_jlibaio_LibaioContext.h</exclude>
-            <exclude>cmake_install.cmake</exclude>
-
 
             <!--  build output  -->
             <exclude>

@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.tests.integration.client;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -26,16 +27,17 @@ import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Before;
 import org.junit.Test;
 
 /**
- * The delete queue was reseting some fields on the Queue what would eventually turn a NPE.
+ * The delete queue was resetting some fields on the Queue what would eventually turn a NPE.
  * this test would eventually fail without the fix but it was a rare event as in most of the time
  * the NPE happened during depaging what let the server to recover itself on the next depage.
  * To verify a fix on this test against the previous version of QueueImpl look for NPEs on System.err
@@ -68,12 +70,13 @@ public class ConcurrentCreateDeleteProduceTest extends ActiveMQTestBase {
 
    @Test
    public void testConcurrentProduceCreateAndDelete() throws Throwable {
+      locator.setBlockOnDurableSend(false).setBlockOnNonDurableSend(false);
       ClientSessionFactory factory = locator.createSessionFactory();
       ClientSession session = factory.createSession(true, true);
       ClientProducer producer = session.createProducer(ADDRESS);
 
       // just to make it page forever
-      Queue serverQueue = server.createQueue(ADDRESS, SimpleString.toSimpleString("everPage"), null, true, false);
+      Queue serverQueue = server.createQueue(new QueueConfiguration("everPage").setAddress(ADDRESS).setRoutingType(RoutingType.ANYCAST));
       serverQueue.getPageSubscription().getPagingStore().startPaging();
 
       Consumer[] consumers = new Consumer[10];
@@ -83,7 +86,7 @@ public class ConcurrentCreateDeleteProduceTest extends ActiveMQTestBase {
          consumers[i].start();
       }
 
-      for (int i = 0; i < 50000 && running; i++) {
+      for (int i = 0; i < 1500 && running; i++) {
          producer.send(session.createMessage(true));
          //Thread.sleep(10);
       }
@@ -118,12 +121,13 @@ public class ConcurrentCreateDeleteProduceTest extends ActiveMQTestBase {
 
             for (int i = 0; i < 100 && running; i++) {
                SimpleString queueName = ADDRESS.concat("_" + sequence.incrementAndGet());
-               session.createQueue(ADDRESS, queueName, true);
+               session.createQueue(new QueueConfiguration(queueName).setAddress(ADDRESS));
                ClientConsumer consumer = session.createConsumer(queueName);
                while (running) {
-                  ClientMessage msg = consumer.receive(5000);
+                  ClientMessage msg = consumer.receive(500);
                   if (msg == null) {
-                     break;
+                     if (running) continue;
+                     else break;
                   }
                   if (msgcount++ == 500) {
                      msgcount = 0;
@@ -133,11 +137,9 @@ public class ConcurrentCreateDeleteProduceTest extends ActiveMQTestBase {
                consumer.close();
                session.commit();
                session.deleteQueue(queueName);
-               System.out.println("Deleting " + queueName);
             }
             session.close();
-         }
-         catch (Throwable e) {
+         } catch (Throwable e) {
             this.ex = e;
             e.printStackTrace();
             running = false;

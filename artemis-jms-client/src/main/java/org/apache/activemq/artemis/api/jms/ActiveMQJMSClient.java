@@ -21,20 +21,42 @@ import javax.jms.Topic;
 
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
-import org.apache.activemq.artemis.jms.client.ActiveMQJMSConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQQueueConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQTopicConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQXAConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQXAQueueConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQXATopicConnectionFactory;
 import org.apache.activemq.artemis.uri.ConnectionFactoryParser;
+import org.apache.activemq.artemis.utils.ClassloadingUtil;
+import org.jboss.logging.Logger;
 
 /**
  * A utility class for creating ActiveMQ Artemis client-side JMS managed resources.
  */
 public class ActiveMQJMSClient {
+   private static final Logger logger = Logger.getLogger(ActiveMQJMSClient.class);
+
+   public static final boolean DEFAULT_ENABLE_1X_PREFIXES;
+
+
+   static {
+
+      String value1X = System.getProperty(ActiveMQJMSClient.class.getName() + ".enable1xPrefixes");
+
+      if (value1X == null) {
+         value1X = ClassloadingUtil.loadProperty(ActiveMQJMSClient.class.getClassLoader(), ActiveMQJMSClient.class.getName() + ".properties", "enable1xPrefixes");
+      }
+
+      boolean prefixes = false;
+
+
+      if (value1X != null) {
+         try {
+            prefixes = Boolean.parseBoolean(value1X);
+         } catch (Throwable e) {
+            logger.warn(e);
+         }
+      }
+      DEFAULT_ENABLE_1X_PREFIXES = prefixes;
+   }
 
    /**
     * Creates an ActiveMQConnectionFactory;
@@ -64,27 +86,7 @@ public class ActiveMQJMSClient {
     */
    public static ActiveMQConnectionFactory createConnectionFactoryWithHA(final DiscoveryGroupConfiguration groupConfiguration,
                                                                          JMSFactoryType jmsFactoryType) {
-      ActiveMQConnectionFactory factory = null;
-      if (jmsFactoryType.equals(JMSFactoryType.CF)) {
-         factory = new ActiveMQJMSConnectionFactory(true, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_CF)) {
-         factory = new ActiveMQQueueConnectionFactory(true, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_CF)) {
-         factory = new ActiveMQTopicConnectionFactory(true, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.XA_CF)) {
-         factory = new ActiveMQXAConnectionFactory(true, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_XA_CF)) {
-         factory = new ActiveMQXAQueueConnectionFactory(true, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_XA_CF)) {
-         factory = new ActiveMQXATopicConnectionFactory(true, groupConfiguration);
-      }
-
-      return factory;
+      return jmsFactoryType.createConnectionFactoryWithHA(groupConfiguration);
    }
 
    /**
@@ -98,27 +100,7 @@ public class ActiveMQJMSClient {
     */
    public static ActiveMQConnectionFactory createConnectionFactoryWithoutHA(final DiscoveryGroupConfiguration groupConfiguration,
                                                                             JMSFactoryType jmsFactoryType) {
-      ActiveMQConnectionFactory factory = null;
-      if (jmsFactoryType.equals(JMSFactoryType.CF)) {
-         factory = new ActiveMQJMSConnectionFactory(false, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_CF)) {
-         factory = new ActiveMQQueueConnectionFactory(false, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_CF)) {
-         factory = new ActiveMQTopicConnectionFactory(false, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.XA_CF)) {
-         factory = new ActiveMQXAConnectionFactory(false, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_XA_CF)) {
-         factory = new ActiveMQXAQueueConnectionFactory(false, groupConfiguration);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_XA_CF)) {
-         factory = new ActiveMQXATopicConnectionFactory(false, groupConfiguration);
-      }
-
-      return factory;
+      return jmsFactoryType.createConnectionFactoryWithoutHA(groupConfiguration);
    }
 
    /**
@@ -139,27 +121,7 @@ public class ActiveMQJMSClient {
     */
    public static ActiveMQConnectionFactory createConnectionFactoryWithHA(JMSFactoryType jmsFactoryType,
                                                                          final TransportConfiguration... initialServers) {
-      ActiveMQConnectionFactory factory = null;
-      if (jmsFactoryType.equals(JMSFactoryType.CF)) {
-         factory = new ActiveMQJMSConnectionFactory(true, initialServers);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_CF)) {
-         factory = new ActiveMQQueueConnectionFactory(true, initialServers);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_CF)) {
-         factory = new ActiveMQTopicConnectionFactory(true, initialServers);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.XA_CF)) {
-         factory = new ActiveMQXAConnectionFactory(true, initialServers);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_XA_CF)) {
-         factory = new ActiveMQXAQueueConnectionFactory(true, initialServers);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_XA_CF)) {
-         factory = new ActiveMQXATopicConnectionFactory(true, initialServers);
-      }
-
-      return factory;
+      return jmsFactoryType.createConnectionFactoryWithHA(initialServers);
    }
 
    /**
@@ -175,47 +137,43 @@ public class ActiveMQJMSClient {
     */
    public static ActiveMQConnectionFactory createConnectionFactoryWithoutHA(JMSFactoryType jmsFactoryType,
                                                                             final TransportConfiguration... transportConfigurations) {
-      ActiveMQConnectionFactory factory = null;
-      if (jmsFactoryType.equals(JMSFactoryType.CF)) {
-         factory = new ActiveMQJMSConnectionFactory(false, transportConfigurations);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_CF)) {
-         factory = new ActiveMQQueueConnectionFactory(false, transportConfigurations);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_CF)) {
-         factory = new ActiveMQTopicConnectionFactory(false, transportConfigurations);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.XA_CF)) {
-         factory = new ActiveMQXAConnectionFactory(false, transportConfigurations);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.QUEUE_XA_CF)) {
-         factory = new ActiveMQXAQueueConnectionFactory(false, transportConfigurations);
-      }
-      else if (jmsFactoryType.equals(JMSFactoryType.TOPIC_XA_CF)) {
-         factory = new ActiveMQXATopicConnectionFactory(false, transportConfigurations);
-      }
-
-      return factory;
+      return jmsFactoryType.createConnectionFactoryWithoutHA(transportConfigurations);
    }
 
    /**
     * Creates a client-side representation of a JMS Topic.
     *
+    * This method is deprecated. Use {@link org.apache.activemq.artemis.jms.client.ActiveMQSession#createTopic(String)} as that method will know the proper
+    * prefix used at the target server.
+    *
     * @param name the name of the topic
     * @return The Topic
     */
+   @Deprecated
    public static Topic createTopic(final String name) {
-      return ActiveMQDestination.createTopic(name);
+      if (DEFAULT_ENABLE_1X_PREFIXES) {
+         return ActiveMQDestination.createTopic(PacketImpl.OLD_TOPIC_PREFIX + name, name);
+      } else {
+         return ActiveMQDestination.createTopic(name);
+      }
    }
 
    /**
     * Creates a client-side representation of a JMS Queue.
     *
+    * This method is deprecated. Use {@link org.apache.activemq.artemis.jms.client.ActiveMQSession#createQueue(String)} (String)} as that method will know the proper
+    * prefix used at the target server.
+    * *
     * @param name the name of the queue
     * @return The Queue
     */
+   @Deprecated
    public static Queue createQueue(final String name) {
-      return ActiveMQDestination.createQueue(name);
+      if (DEFAULT_ENABLE_1X_PREFIXES) {
+         return ActiveMQDestination.createQueue(PacketImpl.OLD_QUEUE_PREFIX + name, name);
+      } else {
+         return ActiveMQDestination.createQueue(name);
+      }
    }
 
    private ActiveMQJMSClient() {

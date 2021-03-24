@@ -17,6 +17,7 @@
 package org.apache.activemq.artemis.spi.core.remoting;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.locks.Lock;
 
 import io.netty.channel.ChannelPipeline;
@@ -26,6 +27,8 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 
 public interface ClientProtocolManager {
+
+   ClientProtocolManager setExecutor(Executor executor);
 
    /// Life Cycle Methods:
 
@@ -58,13 +61,13 @@ public interface ClientProtocolManager {
 
    void ping(long connectionTTL);
 
-   SessionContext createSessionContext(final String name,
-                                       final String username,
-                                       final String password,
-                                       final boolean xa,
-                                       final boolean autoCommitSends,
-                                       final boolean autoCommitAcks,
-                                       final boolean preAcknowledge,
+   SessionContext createSessionContext(String name,
+                                       String username,
+                                       String password,
+                                       boolean xa,
+                                       boolean autoCommitSends,
+                                       boolean autoCommitAcks,
+                                       boolean preAcknowledge,
                                        int minLargeMessageSize,
                                        int confirmationWindowSize) throws ActiveMQException;
 

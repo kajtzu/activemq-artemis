@@ -20,11 +20,14 @@ import java.util.Arrays;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.ICoreMessage;
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.core.paging.PagedMessage;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
+import org.apache.activemq.artemis.core.persistence.impl.journal.codec.LargeMessagePersister;
 import org.apache.activemq.artemis.core.server.LargeServerMessage;
-import org.apache.activemq.artemis.core.server.ServerMessage;
-import org.apache.activemq.artemis.core.server.impl.ServerMessageImpl;
+import org.apache.activemq.artemis.spi.core.protocol.MessagePersister;
 import org.apache.activemq.artemis.utils.DataConstants;
 
 /**
@@ -32,33 +35,91 @@ import org.apache.activemq.artemis.utils.DataConstants;
  */
 public class PagedMessageImpl implements PagedMessage {
 
+   // It encapsulates the logic to detect large message types
+   private static final class LargeMessageType {
+
+      private static final byte NONE = 0;
+      private static final byte CORE = 1;
+      private static final byte OLD_CORE = -1;
+      private static final byte NOT_CORE = 2;
+
+      public static boolean isLargeMessage(byte encodedValue) {
+         switch (encodedValue) {
+            case LargeMessageType.NONE:
+               return false;
+            case LargeMessageType.CORE:
+            case LargeMessageType.OLD_CORE:
+            case LargeMessageType.NOT_CORE:
+               return true;
+            default:
+               throw new IllegalStateException("This largeMessageType isn't supported: " + encodedValue);
+         }
+      }
+
+      public static boolean isCoreLargeMessage(Message message) {
+         return message.isLargeMessage() && message instanceof ICoreMessage;
+      }
+
+      public static boolean isCoreLargeMessageType(byte encodedValue) {
+         return encodedValue == LargeMessageType.CORE ||
+            encodedValue == LargeMessageType.OLD_CORE;
+      }
+
+      public static byte valueOf(Message message) {
+         if (!message.isLargeMessage()) {
+            return NONE;
+         }
+         if (message instanceof ICoreMessage) {
+            return CORE;
+         }
+         return NOT_CORE;
+      }
+   }
    /**
     * Large messages will need to be instantiated lazily during getMessage when the StorageManager
     * is available
     */
    private byte[] largeMessageLazyData;
 
-   private ServerMessage message;
+   private Message message;
 
    private long[] queueIDs;
 
    private long transactionID = 0;
 
-   public PagedMessageImpl(final ServerMessage message, final long[] queueIDs, final long transactionID) {
+   private final int storedSize;
+
+   private final StorageManager storageManager;
+
+   public PagedMessageImpl(final Message message, final long[] queueIDs, final long transactionID) {
       this(message, queueIDs);
       this.transactionID = transactionID;
    }
 
-   public PagedMessageImpl(final ServerMessage message, final long[] queueIDs) {
+   public PagedMessageImpl(final Message message, final long[] queueIDs) {
+      this.storageManager = null;
       this.queueIDs = queueIDs;
       this.message = message;
+      this.storedSize = 0;
    }
 
-   public PagedMessageImpl() {
+   public PagedMessageImpl(int storedSize, StorageManager storageManager) {
+      this.storageManager = storageManager;
+      this.storedSize = storedSize;
+   }
+
+
+   @Override
+   public int getStoredSize() {
+      if (storedSize <= 0) {
+         return getEncodeSize();
+      } else {
+         return storedSize;
+      }
    }
 
    @Override
-   public ServerMessage getMessage() {
+   public Message getMessage() {
       return message;
    }
 
@@ -66,12 +127,20 @@ public class PagedMessageImpl implements PagedMessage {
    public void initMessage(StorageManager storage) {
       if (largeMessageLazyData != null) {
          LargeServerMessage lgMessage = storage.createLargeMessage();
-         ActiveMQBuffer buffer = ActiveMQBuffers.dynamicBuffer(largeMessageLazyData);
-         lgMessage.decodeHeadersAndProperties(buffer);
-         lgMessage.incrementDelayDeletionCount();
+
+         ActiveMQBuffer buffer = ActiveMQBuffers.wrappedBuffer(largeMessageLazyData);
+         lgMessage = LargeMessagePersister.getInstance().decode(buffer, lgMessage, null);
+         if (lgMessage.toMessage() instanceof LargeServerMessage) {
+            ((LargeServerMessage)lgMessage.toMessage()).setStorageManager(storage);
+         }
+         lgMessage.toMessage().usageUp();
          lgMessage.setPaged();
-         message = lgMessage;
+         this.message = lgMessage.toMessage();
          largeMessageLazyData = null;
+      } else {
+         if (message != null && message instanceof LargeServerMessage) {
+            ((LargeServerMessage)message).setStorageManager(storageManager);
+         }
       }
    }
 
@@ -87,26 +156,39 @@ public class PagedMessageImpl implements PagedMessage {
 
    // EncodingSupport implementation --------------------------------
 
+   /**
+    * This method won't move the {@link ActiveMQBuffer#readerIndex()} of {@code buffer}.
+    */
+   public static boolean isLargeMessage(ActiveMQBuffer buffer) {
+      // skip transactionID
+      return LargeMessageType.isLargeMessage(buffer.getByte(buffer.readerIndex() + Long.BYTES));
+   }
+
    @Override
    public void decode(final ActiveMQBuffer buffer) {
       transactionID = buffer.readLong();
 
-      boolean isLargeMessage = buffer.readBoolean();
+      boolean isCoreLargeMessage = LargeMessageType.isCoreLargeMessageType(buffer.readByte());
 
-      if (isLargeMessage) {
+      if (isCoreLargeMessage) {
          int largeMessageHeaderSize = buffer.readInt();
 
-         largeMessageLazyData = new byte[largeMessageHeaderSize];
-
-         buffer.readBytes(largeMessageLazyData);
+         if (storageManager == null) {
+            largeMessageLazyData = new byte[largeMessageHeaderSize];
+            buffer.readBytes(largeMessageLazyData);
+         } else {
+            this.message = storageManager.createLargeMessage().toMessage();
+            LargeMessagePersister.getInstance().decode(buffer, (LargeServerMessage) message, null);
+            ((LargeServerMessage) message).setStorageManager(storageManager);
+            ((LargeServerMessage) message).toMessage().usageUp();
+         }
+      } else {
+         this.message = MessagePersister.getInstance().decode(buffer, null, null, storageManager);
+         if (message.isLargeMessage()) {
+            message.usageUp();
+         }
       }
-      else {
-         buffer.readInt(); // This value is only used on LargeMessages for now
 
-         message = new ServerMessageImpl(-1, 50);
-
-         message.decode(buffer);
-      }
 
       int queueIDsSize = buffer.readInt();
 
@@ -121,11 +203,16 @@ public class PagedMessageImpl implements PagedMessage {
    public void encode(final ActiveMQBuffer buffer) {
       buffer.writeLong(transactionID);
 
-      buffer.writeBoolean(message instanceof LargeServerMessage);
+      byte largeMessageType = LargeMessageType.valueOf(message);
 
-      buffer.writeInt(message.getEncodeSize());
+      buffer.writeByte(largeMessageType);
 
-      message.encode(buffer);
+      if (LargeMessageType.isCoreLargeMessageType(largeMessageType)) {
+         buffer.writeInt(LargeMessagePersister.getInstance().getEncodeSize((LargeServerMessage) message));
+         LargeMessagePersister.getInstance().encode(buffer, (LargeServerMessage) message);
+      } else {
+         message.getPersister().encode(buffer, message);
+      }
 
       buffer.writeInt(queueIDs.length);
 
@@ -136,8 +223,13 @@ public class PagedMessageImpl implements PagedMessage {
 
    @Override
    public int getEncodeSize() {
-      return DataConstants.SIZE_LONG + DataConstants.SIZE_BYTE + DataConstants.SIZE_INT + message.getEncodeSize() +
-         DataConstants.SIZE_INT + queueIDs.length * DataConstants.SIZE_LONG;
+      if (LargeMessageType.isCoreLargeMessage(message)) {
+         return DataConstants.SIZE_LONG + DataConstants.SIZE_BYTE + DataConstants.SIZE_INT + LargeMessagePersister.getInstance().getEncodeSize((LargeServerMessage)message) +
+            DataConstants.SIZE_INT + queueIDs.length * DataConstants.SIZE_LONG;
+      } else {
+         return DataConstants.SIZE_LONG + DataConstants.SIZE_BYTE + message.getPersister().getEncodeSize(message) +
+            DataConstants.SIZE_INT + queueIDs.length * DataConstants.SIZE_LONG;
+      }
    }
 
    @Override
@@ -148,5 +240,10 @@ public class PagedMessageImpl implements PagedMessage {
          ", message=" +
          message +
          "]";
+   }
+
+   @Override
+   public long getPersistentSize() throws ActiveMQException {
+      return message.getPersistentSize();
    }
 }

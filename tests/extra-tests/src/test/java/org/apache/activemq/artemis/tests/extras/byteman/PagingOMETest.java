@@ -21,6 +21,7 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -33,6 +34,7 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.jboss.byteman.contrib.bmunit.BMRule;
 import org.jboss.byteman.contrib.bmunit.BMRules;
 import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
@@ -108,7 +110,7 @@ public class PagingOMETest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, false, false);
 
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       Queue queue = server.locateQueue(ADDRESS);
       queue.getPageSubscription().getPagingStore().startPaging();
@@ -145,7 +147,7 @@ public class PagingOMETest extends ActiveMQTestBase {
 
       session.start();
 
-      assertEquals(numberOfMessages, queue.getMessageCount());
+      Wait.assertTrue(() -> numberOfMessages == queue.getMessageCount());
 
       // The consumer has to be created after the queue.getMessageCount assertion
       // otherwise delivery could alter the messagecount and give us a false failure
@@ -159,8 +161,7 @@ public class PagingOMETest extends ActiveMQTestBase {
       try {
          session.commit();
          Assert.fail("exception expected");
-      }
-      catch (Exception expected) {
+      } catch (Exception expected) {
       }
       failureActive = false;
       session.rollback();

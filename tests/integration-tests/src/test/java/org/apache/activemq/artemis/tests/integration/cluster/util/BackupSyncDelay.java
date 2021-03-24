@@ -25,6 +25,7 @@ import org.apache.activemq.artemis.core.protocol.core.ChannelHandler;
 import org.apache.activemq.artemis.core.protocol.core.CommandConfirmationHandler;
 import org.apache.activemq.artemis.core.protocol.core.CoreRemotingConnection;
 import org.apache.activemq.artemis.core.protocol.core.Packet;
+import org.apache.activemq.artemis.core.protocol.core.ResponseHandler;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ReplicationResponseMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ReplicationResponseMessageV2;
@@ -100,8 +101,7 @@ public class BackupSyncDelay implements Interceptor {
             repChannel.setHandler(handler);
             handler.setChannel(repChannel);
             live.getRemotingService().removeIncomingInterceptor(this);
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             throw new RuntimeException(e);
          }
       }
@@ -143,8 +143,7 @@ public class BackupSyncDelay implements Interceptor {
          try {
             handler.handlePacket(onHold);
             delivered = true;
-         }
-         finally {
+         } finally {
             handler.setChannel(channel);
             channel.setHandler(handler);
             onHold = null;
@@ -177,8 +176,7 @@ public class BackupSyncDelay implements Interceptor {
                   return;
                }
             }
-         }
-         else if (typeToIntercept == packet.getType()) {
+         } else if (typeToIntercept == packet.getType()) {
             channel.send(new ReplicationResponseMessage());
             return;
          }
@@ -194,6 +192,11 @@ public class BackupSyncDelay implements Interceptor {
 
       public ChannelWrapper(Channel channel) {
          this.channel = channel;
+      }
+
+      @Override
+      public boolean send(Packet packet, boolean flushConnection) {
+         return channel.send(packet, flushConnection);
       }
 
       @Override
@@ -220,6 +223,11 @@ public class BackupSyncDelay implements Interceptor {
       }
 
       @Override
+      public void flushConnection() {
+         throw new UnsupportedOperationException();
+      }
+
+      @Override
       public boolean sendAndFlush(Packet packet) {
          throw new UnsupportedOperationException();
       }
@@ -236,6 +244,11 @@ public class BackupSyncDelay implements Interceptor {
 
       @Override
       public ChannelHandler getHandler() {
+         throw new UnsupportedOperationException();
+      }
+
+      @Override
+      public void endOfBatch() {
          throw new UnsupportedOperationException();
       }
 
@@ -318,6 +331,11 @@ public class BackupSyncDelay implements Interceptor {
       }
 
       @Override
+      public void setResponseHandler(ResponseHandler handler) {
+         throw new UnsupportedOperationException();
+      }
+
+      @Override
       public void flushConfirmations() {
          throw new UnsupportedOperationException();
       }
@@ -345,6 +363,11 @@ public class BackupSyncDelay implements Interceptor {
 
       @Override
       public boolean supports(byte packetID) {
+         return true;
+      }
+
+      @Override
+      public boolean supports(byte packetID, int version) {
          return true;
       }
 

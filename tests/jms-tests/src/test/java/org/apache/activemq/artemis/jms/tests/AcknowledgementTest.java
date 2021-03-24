@@ -19,6 +19,8 @@ package org.apache.activemq.artemis.jms.tests;
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.DeliveryMode;
+import javax.jms.Destination;
+import javax.jms.JMSException;
 import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.MessageListener;
@@ -31,6 +33,7 @@ import javax.jms.TopicSession;
 import javax.jms.TopicSubscriber;
 import java.util.concurrent.CountDownLatch;
 
+import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
 import org.apache.activemq.artemis.jms.tests.util.ProxyAssertSupport;
 import org.junit.Assert;
 import org.junit.Test;
@@ -325,7 +328,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       consumerSess.recover();
 
-      Message m = consumer.receive(200);
+      Message m = consumer.receiveNoWait();
       ProxyAssertSupport.assertNull(m);
    }
 
@@ -381,7 +384,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
@@ -453,8 +456,7 @@ public class AcknowledgementTest extends JMSTestCase {
          }
 
          ProxyAssertSupport.assertEquals(NUM_MESSAGES - ACKED_MESSAGES, count);
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -517,13 +519,11 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
       ProxyAssertSupport.assertNull(m);
-
-      // Thread.sleep(3000000);
    }
 
    @Test
@@ -573,7 +573,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
@@ -619,8 +619,7 @@ public class AcknowledgementTest extends JMSTestCase {
          }
 
          consumerSess.close();
-      }
-      finally {
+      } finally {
 
          if (conn != null) {
             conn.close();
@@ -680,7 +679,7 @@ public class AcknowledgementTest extends JMSTestCase {
 
       log.trace("Session recover called");
 
-      m = consumer.receive(200);
+      m = consumer.receiveNoWait();
 
       log.trace("Message is:" + m);
 
@@ -780,13 +779,12 @@ public class AcknowledgementTest extends JMSTestCase {
 
       ProxyAssertSupport.assertEquals("two", messageReceived.getText());
 
-      messageReceived = (TextMessage)consumer.receiveNoWait();
+      messageReceived = (TextMessage) consumer.receiveNoWait();
 
       if (messageReceived != null) {
-         System.out.println("Message received " + messageReceived.getText());
+         log.debug("Message received " + messageReceived.getText());
       }
       Assert.assertNull(messageReceived);
-
 
       consumer.close();
 
@@ -991,8 +989,7 @@ public class AcknowledgementTest extends JMSTestCase {
                latch.countDown();
             }
 
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             failed = true;
             latch.countDown();
          }
@@ -1051,8 +1048,7 @@ public class AcknowledgementTest extends JMSTestCase {
                latch.countDown();
             }
 
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             failed = true;
             latch.countDown();
          }
@@ -1142,8 +1138,7 @@ public class AcknowledgementTest extends JMSTestCase {
                latch.countDown();
             }
 
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             log.error("Caught exception", e);
             failed = true;
             latch.countDown();
@@ -1225,8 +1220,7 @@ public class AcknowledgementTest extends JMSTestCase {
                assertRemainingMessages(0);
                latch.countDown();
             }
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             // log.error(e);
             failed = true;
             latch.countDown();
@@ -1303,5 +1297,64 @@ public class AcknowledgementTest extends JMSTestCase {
       assertRemainingMessages(0);
 
       checkEmpty(queue1);
+   }
+
+   /**
+    * Ensure no blocking calls in acknowledge flow when block on acknowledge = false.
+    * This is done by checking the performance compared to blocking is much improved.
+    */
+   @Test
+   public void testNonBlockingAckPerf() throws Exception {
+      ConnectionFactory cf1 = ActiveMQJMSClient.createConnectionFactory("tcp://127.0.0.1:61616?blockOnNonDurableSend=true&blockOnAcknowledge=false", "testsuitecf1");
+      ConnectionFactory cf2 = ActiveMQJMSClient.createConnectionFactory("tcp://127.0.0.1:61616?blockOnNonDurableSend=true&blockOnAcknowledge=true", "testsuitecf2");
+
+      int messageCount = 100;
+
+      long sendT1 = send(cf1, queue1, messageCount);
+      long sendT2 = send(cf2, queue2, messageCount);
+
+      long time1 = consume(cf1, queue1, messageCount);
+      long time2 = consume(cf2, queue2, messageCount);
+
+      log.debug("BlockOnAcknowledge=false MessageCount=" + messageCount + " TimeToConsume=" + time1);
+      log.debug("BlockOnAcknowledge=true MessageCount=" + messageCount + " TimeToConsume=" + time2);
+
+      Assert.assertTrue(time1 < (time2 / 2));
+
+   }
+
+   private long send(ConnectionFactory connectionFactory, Destination destination, int messageCount) throws JMSException {
+      try (Connection connection = connectionFactory.createConnection()) {
+         connection.start();
+         try (Session session = connection.createSession(true, Session.CLIENT_ACKNOWLEDGE)) {
+            MessageProducer producer = session.createProducer(destination);
+            Message m = session.createTextMessage("testing123");
+            long start = System.nanoTime();
+            for (int i = 0; i < messageCount; i++) {
+               producer.send(m);
+            }
+            session.commit();
+            long end = System.nanoTime();
+            return end - start;
+         }
+      }
+   }
+
+   private long consume(ConnectionFactory connectionFactory, Destination destination, int messageCount) throws JMSException {
+      try (Connection connection = connectionFactory.createConnection()) {
+         connection.start();
+         try (Session session = connection.createSession(false, Session.CLIENT_ACKNOWLEDGE)) {
+            MessageConsumer consumer = session.createConsumer(destination);
+            long start = System.nanoTime();
+            for (int i = 0; i < messageCount; i++) {
+               Message message = consumer.receive(100);
+               if (message != null) {
+                  message.acknowledge();
+               }
+            }
+            long end = System.nanoTime();
+            return end - start;
+         }
+      }
    }
 }

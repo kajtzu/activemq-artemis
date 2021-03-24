@@ -23,8 +23,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.io.IOCallback;
@@ -32,18 +36,22 @@ import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
 import org.apache.activemq.artemis.core.io.SequentialFile;
 import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
-import org.apache.activemq.artemis.core.message.impl.MessageInternal;
 import org.apache.activemq.artemis.core.paging.PageTransactionInfo;
 import org.apache.activemq.artemis.core.paging.PagedMessage;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PagePosition;
+import org.apache.activemq.artemis.core.persistence.AddressBindingInfo;
 import org.apache.activemq.artemis.core.persistence.GroupingInfo;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
+import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
-import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
+import org.apache.activemq.artemis.core.persistence.config.PersistedRole;
+import org.apache.activemq.artemis.core.persistence.config.PersistedSecuritySetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedUser;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.PostOffice;
@@ -51,8 +59,9 @@ import org.apache.activemq.artemis.core.replication.ReplicationManager;
 import org.apache.activemq.artemis.core.server.LargeServerMessage;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.RouteContextList;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.core.server.files.FileStoreMonitor;
 import org.apache.activemq.artemis.core.server.group.impl.GroupBinding;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.JournalLoader;
 import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.core.transaction.Transaction;
@@ -80,6 +89,35 @@ public class NullStorageManager implements StorageManager {
 
    @Override
    public void criticalError(Throwable error) {
+
+   }
+
+   @Override
+   public long storeQueueStatus(long queueID, AddressQueueStatus status) throws Exception {
+      return 0;
+   }
+
+   @Override
+   public void updateQueueBinding(long tx, Binding binding) throws Exception {
+   }
+
+   @Override
+   public void deleteQueueStatus(long recordID) throws Exception {
+
+   }
+
+   @Override
+   public long storeAddressStatus(long addressID, AddressQueueStatus status) throws Exception {
+      return 0;
+   }
+
+   @Override
+   public void deleteAddressStatus(long recordID) throws Exception {
+
+   }
+
+   @Override
+   public void injectMonitor(FileStoreMonitor monitor) throws Exception {
 
    }
 
@@ -138,12 +176,21 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
+   public void addAddressBinding(long tx, AddressInfo addressInfo) throws Exception {
+   }
+
+   @Override
+   public void deleteAddressBinding(long tx, long addressBindingID) throws Exception {
+   }
+
+   @Override
    public void commit(final long txID) throws Exception {
    }
 
    @Override
    public JournalLoadInformation loadBindingJournal(final List<QueueBindingInfo> queueBindingInfos,
-                                                    final List<GroupingInfo> groupingInfos) throws Exception {
+                                                    final List<GroupingInfo> groupingInfos,
+                                                    final List<AddressBindingInfo> addressBindingInfos) throws Exception {
       return new JournalLoadInformation();
    }
 
@@ -182,19 +229,21 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void deleteMessage(final long messageID) throws Exception {
+   public boolean deleteMessage(final long messageID) throws Exception {
+      return true;
    }
 
    @Override
-   public void storeMessage(final ServerMessage message) throws Exception {
+   public void storeMessage(final Message message) throws Exception {
    }
 
    @Override
-   public void storeMessageTransactional(final long txID, final ServerMessage message) throws Exception {
+   public void storeMessageTransactional(final long txID, final Message message) throws Exception {
    }
 
    @Override
-   public void updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
+   public boolean updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
+      return true;
    }
 
    @Override
@@ -206,7 +255,8 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void updateDeliveryCount(final MessageReference ref) throws Exception {
+   public boolean updateDeliveryCount(final MessageReference ref) throws Exception {
+      return true;
    }
 
    @Override
@@ -246,14 +296,19 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public LargeServerMessage createLargeMessage(final long id, final MessageInternal message) {
+   public LargeServerMessage createLargeMessage(final long id, final Message message) {
       NullStorageLargeServerMessage largeMessage = new NullStorageLargeServerMessage();
 
-      largeMessage.copyHeadersAndProperties(message);
+      largeMessage.moveHeadersAndProperties(message);
 
       largeMessage.setMessageID(id);
 
       return largeMessage;
+   }
+
+   @Override
+   public LargeServerMessage largeMessageCreated(long id, LargeServerMessage largeMessage) throws Exception {
+      return null;
    }
 
    @Override
@@ -385,12 +440,51 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public List<PersistedRoles> recoverPersistedRoles() throws Exception {
+   public List<PersistedSecuritySetting> recoverSecuritySettings() throws Exception {
       return Collections.emptyList();
    }
 
    @Override
-   public void storeSecurityRoles(final PersistedRoles persistedRoles) throws Exception {
+   public void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception {
+   }
+
+   @Override
+   public void deleteDivertConfiguration(String divertName) throws Exception {
+   }
+
+   @Override
+   public List<PersistedDivertConfiguration> recoverDivertConfigurations() {
+      return null;
+   }
+
+   @Override
+   public void storeUser(PersistedUser persistedUser) throws Exception {
+   }
+
+   @Override
+   public void deleteUser(String username) throws Exception {
+   }
+
+   @Override
+   public Map<String, PersistedUser> getPersistedUsers() {
+      return null;
+   }
+
+   @Override
+   public void storeRole(PersistedRole persistedRole) throws Exception {
+   }
+
+   @Override
+   public void deleteRole(String role) throws Exception {
+   }
+
+   @Override
+   public Map<String, PersistedRole> getPersistedRoles() {
+      return null;
+   }
+
+   @Override
+   public void storeSecuritySetting(final PersistedSecuritySetting persistedRoles) throws Exception {
    }
 
    @Override
@@ -398,7 +492,7 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void deleteSecurityRoles(final SimpleString addressMatch) throws Exception {
+   public void deleteSecuritySetting(final SimpleString addressMatch) throws Exception {
    }
 
    @Override
@@ -436,16 +530,12 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void updatePageTransaction(final PageTransactionInfo pageTransaction, final int depage) throws Exception {
-   }
-
-   @Override
-   public long storePageCounter(final long txID, final long queueID, final long value) throws Exception {
+   public long storePageCounter(final long txID, final long queueID, final long value, final long size) throws Exception {
       return 0;
    }
 
    @Override
-   public long storePendingCounter(long queueID, long pageID, int inc) throws Exception {
+   public long storePendingCounter(long queueID, long pageID) throws Exception {
       return -1;
    }
 
@@ -462,12 +552,12 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public long storePageCounterInc(final long txID, final long queueID, final int add) throws Exception {
+   public long storePageCounterInc(final long txID, final long queueID, final int add, final long size) throws Exception {
       return 0;
    }
 
    @Override
-   public long storePageCounterInc(final long queueID, final int add) throws Exception {
+   public long storePageCounterInc(final long queueID, final int add, final long size) throws Exception {
       return 0;
    }
 
@@ -490,7 +580,7 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public void stop(final boolean ioCriticalError) throws Exception {
+   public void stop(final boolean ioCriticalError, boolean sendFailover) throws Exception {
    }
 
    @Override
@@ -513,11 +603,35 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
-   public boolean addToPage(PagingStore s,
-                            ServerMessage msg,
+   public void deleteLargeMessageBody(LargeServerMessage largeServerMessage) throws ActiveMQException {
+
+   }
+
+   @Override
+   public void largeMessageClosed(LargeServerMessage largeServerMessage) throws ActiveMQException {
+
+   }
+
+   @Override
+   public boolean addToPage(PagingStore store,
+                            Message msg,
                             Transaction tx,
                             RouteContextList listCtx) throws Exception {
-      return false;
+      /**
+       * Exposing the read-lock here is an encapsulation violation done in order to keep the code
+       * simpler. The alternative would be to add a second method, say 'verifyPaging', to
+       * PagingStore.
+       * <p>
+       * Adding this second method would also be more surprise prone as it would require a certain
+       * calling order.
+       * <p>
+       * The reasoning is that exposing the lock is more explicit and therefore `less bad`.
+       */
+      if (store != null) {
+         return store.page(msg, tx, listCtx, null);
+      } else {
+         return false;
+      }
    }
 
    @Override
@@ -536,7 +650,17 @@ public class NullStorageManager implements StorageManager {
    }
 
    @Override
+   public void addBytesToLargeMessage(SequentialFile file, long messageId, ActiveMQBuffer bytes) throws Exception {
+
+   }
+
+   @Override
    public void beforePageRead() throws Exception {
+   }
+
+   @Override
+   public boolean beforePageRead(long timeout, TimeUnit unit) throws InterruptedException {
+      return true;
    }
 
    @Override

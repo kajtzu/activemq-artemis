@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -87,7 +88,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
 
    @Parameterized.Parameters(name = "storeType={0}")
    public static Collection<Object[]> data() {
-      Object[][] params = new Object[][] {{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
+      Object[][] params = new Object[][]{{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
       return Arrays.asList(params);
    }
 
@@ -100,8 +101,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
 
       if (storeType == StoreConfiguration.StoreType.DATABASE) {
          configuration = createDefaultJDBCConfig(true);
-      }
-      else {
+      } else {
          configuration = createBasicConfig();
       }
       configuration.setTransactionTimeoutScanPeriod(500).addAcceptorConfiguration(new TransportConfiguration(ActiveMQTestBase.INVM_ACCEPTOR_FACTORY));
@@ -113,7 +113,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
       locator = createInVMNonHALocator();
       sessionFactory = createSessionFactory(locator);
       clientSession = sessionFactory.createSession(true, false, false);
-      clientSession.createQueue(atestq, atestq, null, true);
+      clientSession.createQueue(new QueueConfiguration(atestq));
       clientProducer = clientSession.createProducer(atestq);
       clientConsumer = clientSession.createConsumer(atestq);
    }
@@ -138,8 +138,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
       Assert.assertTrue(latch.await(5, TimeUnit.SECONDS));
       try {
          clientSession.commit(xid, true);
-      }
-      catch (XAException e) {
+      } catch (XAException e) {
          Assert.assertTrue(e.errorCode == XAException.XAER_NOTA);
       }
       clientSession.start();
@@ -187,8 +186,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
       Assert.assertTrue(latch.await(5, TimeUnit.SECONDS));
       try {
          clientSession.commit(xid, true);
-      }
-      catch (XAException e) {
+      } catch (XAException e) {
          Assert.assertTrue(e.errorCode == XAException.XAER_NOTA);
       }
       clientSession.setTransactionTimeout(0);
@@ -263,8 +261,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
       Assert.assertTrue(latch.await(5, TimeUnit.SECONDS));
       try {
          clientSession.commit(xid, true);
-      }
-      catch (XAException e) {
+      } catch (XAException e) {
          Assert.assertTrue(e.errorCode == XAException.XAER_NOTA);
       }
       clientSession.setTransactionTimeout(0);
@@ -385,7 +382,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
          simpleTXSession.commit();
 
          // This test needs 2 queues
-         simpleTXSession.createQueue(outQueue, outQueue);
+         simpleTXSession.createQueue(new QueueConfiguration(outQueue));
 
          simpleTXSession.close();
       }
@@ -424,49 +421,43 @@ public class XaTimeoutTest extends ActiveMQTestBase {
                boolean rollback = false;
                if (msgCount.getAndIncrement() == 0) {
                   rollback = true;
-                  System.out.println("Forcing first message to time out");
+                  instanceLog.debug("Forcing first message to time out");
                   Thread.sleep(5000);
                }
 
                try {
                   clientSession.end(xid, XAResource.TMSUCCESS);
-               }
-               catch (Exception e) {
+               } catch (Exception e) {
                   e.printStackTrace();
                }
 
                try {
                   outProducerSession.end(xidOut, XAResource.TMSUCCESS);
-               }
-               catch (Exception e) {
+               } catch (Exception e) {
                   e.printStackTrace();
                }
 
                if (rollback) {
                   try {
                      clientSession.rollback(xid);
-                  }
-                  catch (Exception e) {
+                  } catch (Exception e) {
                      e.printStackTrace();
                      clientSession.rollback();
                   }
 
                   try {
                      outProducerSession.rollback(xidOut);
-                  }
-                  catch (Exception e) {
+                  } catch (Exception e) {
                      e.printStackTrace();
                      outProducerSession.rollback();
                   }
-               }
-               else {
+               } else {
                   clientSession.prepare(xid);
                   outProducerSession.prepare(xidOut);
                   clientSession.commit(xid, false);
                   outProducerSession.commit(xidOut, false);
                }
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
                errors.incrementAndGet();
             }
@@ -553,8 +544,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
       Assert.assertTrue(latch.await(2600, TimeUnit.MILLISECONDS));
       try {
          clientSession.commit(xid, true);
-      }
-      catch (XAException e) {
+      } catch (XAException e) {
          Assert.assertTrue(e.errorCode == XAException.XAER_NOTA);
       }
       clientSession.start();
@@ -613,8 +603,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
       for (int i = 0; i < clientSessions.length / 2; i++) {
          try {
             clientSessions[i].commit(xids[i], true);
-         }
-         catch (XAException e) {
+         } catch (XAException e) {
             Assert.assertTrue(e.errorCode == XAException.XAER_NOTA);
          }
       }
@@ -647,8 +636,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
             if (packet instanceof SessionXAStartMessage) {
                try {
                   latch.await(1, TimeUnit.MINUTES);
-               }
-               catch (InterruptedException e) {
+               } catch (InterruptedException e) {
                   e.printStackTrace();
                }
             }
@@ -658,7 +646,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
       }
       server.getRemotingService().addIncomingInterceptor(new SomeInterceptor());
 
-      ServerLocator locatorTimeout = createInVMNonHALocator().setCallTimeout(300);
+      ServerLocator locatorTimeout = createInVMNonHALocator().setCallTimeout(300).setReconnectAttempts(-1);
       ClientSessionFactory factoryTimeout = locatorTimeout.createSessionFactory();
 
       final ClientSession sessionTimeout = factoryTimeout.createSession(true, false, false);
@@ -669,8 +657,7 @@ public class XaTimeoutTest extends ActiveMQTestBase {
 
       try {
          sessionTimeout.start(xid, XAResource.TMNOFLAGS);
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          expectedException = true;
          e.printStackTrace();
       }

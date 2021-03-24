@@ -16,25 +16,20 @@
  */
 package org.apache.activemq.artemis.core.management.impl;
 
-import javax.management.MBeanAttributeInfo;
-import javax.management.MBeanOperationInfo;
-
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
 import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.management.BroadcastGroupControl;
-import org.apache.activemq.artemis.api.core.JsonUtil;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.server.cluster.BroadcastGroup;
+import org.apache.activemq.artemis.logs.AuditLogger;
 
-public class BroadcastGroupControlImpl extends AbstractControl implements BroadcastGroupControl {
+public class BroadcastGroupControlImpl extends BaseBroadcastGroupControlImpl implements BroadcastGroupControl {
 
    // Constants -----------------------------------------------------
 
    // Attributes ----------------------------------------------------
 
-   private final BroadcastGroup broadcastGroup;
-
-   private final BroadcastGroupConfiguration configuration;
+   private UDPBroadcastEndpointFactory endpointFactory;
 
    // Static --------------------------------------------------------
 
@@ -42,152 +37,56 @@ public class BroadcastGroupControlImpl extends AbstractControl implements Broadc
 
    public BroadcastGroupControlImpl(final BroadcastGroup broadcastGroup,
                                     final StorageManager storageManager,
-                                    final BroadcastGroupConfiguration configuration) throws Exception {
-      super(BroadcastGroupControl.class, storageManager);
-      this.broadcastGroup = broadcastGroup;
-      this.configuration = configuration;
+                                    final BroadcastGroupConfiguration configuration,
+                                    final UDPBroadcastEndpointFactory endpointFactory) throws Exception {
+      super(BroadcastGroupControl.class, broadcastGroup, storageManager, configuration);
+      this.endpointFactory = endpointFactory;
    }
 
    // BroadcastGroupControlMBean implementation ---------------------
 
-   @Override
-   public String getName() {
-      clearIO();
-      try {
-         return configuration.getName();
-      }
-      finally {
-         blockOnIO();
-      }
-   }
-
-   @Override
-   public long getBroadcastPeriod() {
-      clearIO();
-      try {
-         return configuration.getBroadcastPeriod();
-      }
-      finally {
-         blockOnIO();
-      }
-   }
-
-   @Override
-   public Object[] getConnectorPairs() {
-      clearIO();
-      try {
-         Object[] ret = new Object[configuration.getConnectorInfos().size()];
-
-         int i = 0;
-         for (String connector : configuration.getConnectorInfos()) {
-            ret[i++] = connector;
-         }
-
-         return ret;
-      }
-      finally {
-         blockOnIO();
-      }
-   }
-
-   @Override
-   public String getConnectorPairsAsJSON() throws Exception {
-      clearIO();
-      try {
-         return JsonUtil.toJsonArray(configuration.getConnectorInfos()).toString();
-      }
-      finally {
-         blockOnIO();
-      }
-   }
-
    //todo ghoward we should deal with this properly
    @Override
    public String getGroupAddress() throws Exception {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getGroupAddress(this.getBroadcastGroup());
+      }
       clearIO();
       try {
-         if (configuration.getEndpointFactory() instanceof UDPBroadcastEndpointFactory) {
-            return ((UDPBroadcastEndpointFactory) configuration.getEndpointFactory()).getGroupAddress();
-         }
-         throw new Exception("Invalid request because this is not a UDP Broadcast configuration.");
-      }
-      finally {
+         return endpointFactory.getGroupAddress();
+      } finally {
          blockOnIO();
       }
    }
 
    @Override
    public int getGroupPort() throws Exception {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getGroupPort(this.getBroadcastGroup());
+      }
       clearIO();
       try {
-         if (configuration.getEndpointFactory() instanceof UDPBroadcastEndpointFactory) {
-            return ((UDPBroadcastEndpointFactory) configuration.getEndpointFactory()).getGroupPort();
-         }
-         throw new Exception("Invalid request because this is not a UDP Broadcast configuration.");
-      }
-      finally {
+         return endpointFactory.getGroupPort();
+      } finally {
          blockOnIO();
       }
    }
 
    @Override
    public int getLocalBindPort() throws Exception {
+      if (AuditLogger.isEnabled()) {
+         AuditLogger.getLocalBindPort(this.getBroadcastGroup());
+      }
       clearIO();
       try {
-         if (configuration.getEndpointFactory() instanceof UDPBroadcastEndpointFactory) {
-            return ((UDPBroadcastEndpointFactory) configuration.getEndpointFactory()).getLocalBindPort();
-         }
-         throw new Exception("Invalid request because this is not a UDP Broadcast configuration.");
-      }
-      finally {
+         return endpointFactory.getLocalBindPort();
+      } finally {
          blockOnIO();
       }
    }
 
    // MessagingComponentControlMBean implementation -----------------
 
-   @Override
-   public boolean isStarted() {
-      clearIO();
-      try {
-         return broadcastGroup.isStarted();
-      }
-      finally {
-         blockOnIO();
-      }
-   }
-
-   @Override
-   public void start() throws Exception {
-      clearIO();
-      try {
-         broadcastGroup.start();
-      }
-      finally {
-         blockOnIO();
-      }
-   }
-
-   @Override
-   public void stop() throws Exception {
-      clearIO();
-      try {
-         broadcastGroup.stop();
-      }
-      finally {
-         blockOnIO();
-      }
-   }
-
-   @Override
-   protected MBeanOperationInfo[] fillMBeanOperationInfo() {
-      return MBeanInfoHelper.getMBeanOperationsInfo(BroadcastGroupControl.class);
-   }
-
-   @Override
-   protected MBeanAttributeInfo[] fillMBeanAttributeInfo() {
-      return MBeanInfoHelper.getMBeanAttributesInfo(BroadcastGroupControl.class);
-   }
 
    // Public --------------------------------------------------------
 

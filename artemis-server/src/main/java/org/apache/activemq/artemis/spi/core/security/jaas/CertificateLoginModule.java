@@ -22,7 +22,6 @@ import javax.security.auth.callback.CallbackHandler;
 import javax.security.auth.callback.UnsupportedCallbackException;
 import javax.security.auth.login.FailedLoginException;
 import javax.security.auth.login.LoginException;
-import javax.security.auth.spi.LoginModule;
 import javax.security.cert.X509Certificate;
 import java.io.IOException;
 import java.security.Principal;
@@ -37,7 +36,7 @@ import org.jboss.logging.Logger;
  * Allows for subclasses to define methods used to verify user certificates and
  * find user roles. Uses CertificateCallbacks to retrieve certificates.
  */
-public abstract class CertificateLoginModule extends PropertiesLoader implements LoginModule {
+public abstract class CertificateLoginModule extends PropertiesLoader implements AuditLoginModule {
 
    private static final Logger logger = Logger.getLogger(CertificateLoginModule.class);
 
@@ -46,13 +45,16 @@ public abstract class CertificateLoginModule extends PropertiesLoader implements
 
    private X509Certificate[] certificates;
    private String username;
-   private Set<Principal> principals = new HashSet<>();
+   private final Set<Principal> principals = new HashSet<>();
 
    /**
     * Overriding to allow for proper initialization. Standard JAAS.
     */
    @Override
-   public void initialize(Subject subject, CallbackHandler callbackHandler, Map<String, ?> sharedState, Map<String, ?> options) {
+   public void initialize(Subject subject,
+                          CallbackHandler callbackHandler,
+                          Map<String, ?> sharedState,
+                          Map<String, ?> options) {
       this.subject = subject;
       this.callbackHandler = callbackHandler;
 
@@ -69,12 +71,10 @@ public abstract class CertificateLoginModule extends PropertiesLoader implements
       callbacks[0] = new CertificateCallback();
       try {
          callbackHandler.handle(callbacks);
-      }
-      catch (IOException ioe) {
+      } catch (IOException ioe) {
          throw new LoginException(ioe.getMessage());
-      }
-      catch (UnsupportedCallbackException uce) {
-         throw new LoginException(uce.getMessage() + " Unable to obtain client certificates.");
+      } catch (UnsupportedCallbackException uce) {
+         throw new LoginException("Unable to obtain client certificates: " + uce.getMessage());
       }
       certificates = ((CertificateCallback) callbacks[0]).getCertificates();
 
@@ -115,6 +115,7 @@ public abstract class CertificateLoginModule extends PropertiesLoader implements
     */
    @Override
    public boolean abort() throws LoginException {
+      registerFailureForAudit(username);
       clear();
 
       if (debug) {
@@ -153,7 +154,7 @@ public abstract class CertificateLoginModule extends PropertiesLoader implements
     * @param certs The distinguished name.
     * @return The unique name if the certificate is recognized, null otherwise.
     */
-   protected abstract String getUserNameForCertificates(final X509Certificate[] certs) throws LoginException;
+   protected abstract String getUserNameForCertificates(X509Certificate[] certs) throws LoginException;
 
    /**
     * Should return a set of the roles this user belongs to. The roles
@@ -163,13 +164,12 @@ public abstract class CertificateLoginModule extends PropertiesLoader implements
     *                 getUserNameForDn returned for the user's DN.
     * @return A Set of the names of the roles this user belongs to.
     */
-   protected abstract Set<String> getUserRoles(final String username) throws LoginException;
+   protected abstract Set<String> getUserRoles(String username) throws LoginException;
 
    protected String getDistinguishedName(final X509Certificate[] certs) {
       if (certs != null && certs.length > 0 && certs[0] != null) {
          return certs[0].getSubjectDN().getName();
-      }
-      else {
+      } else {
          return null;
       }
    }

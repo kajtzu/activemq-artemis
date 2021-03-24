@@ -16,13 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Date;
-import java.util.Iterator;
-import java.util.List;
-
 import javax.jms.DeliveryMode;
 import javax.jms.Destination;
 import javax.jms.JMSException;
@@ -32,6 +25,12 @@ import javax.jms.MessageListener;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.TextMessage;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
 
 import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
 import org.junit.Before;
@@ -55,7 +54,6 @@ public abstract class JmsSendReceiveTestSupport extends BasicOpenWireTest implem
    protected boolean durable;
    protected int deliveryMode = DeliveryMode.PERSISTENT;
    protected final Object lock = new Object();
-   protected boolean verbose;
    protected boolean useSeparateSession;
 
    @Override
@@ -71,7 +69,6 @@ public abstract class JmsSendReceiveTestSupport extends BasicOpenWireTest implem
          }
       }
 
-      System.out.println("Message count for test case is: " + messageCount);
       data = new String[messageCount];
 
       for (int i = 0; i < messageCount; i++) {
@@ -113,7 +110,6 @@ public abstract class JmsSendReceiveTestSupport extends BasicOpenWireTest implem
       if (data.length != copyOfMessages.size()) {
          for (Iterator<Object> iter = copyOfMessages.iterator(); iter.hasNext(); ) {
             TextMessage message = (TextMessage) iter.next();
-            System.out.println("<== " + counter++ + " = " + message.getText());
          }
       }
 
@@ -124,10 +120,6 @@ public abstract class JmsSendReceiveTestSupport extends BasicOpenWireTest implem
          String text = received.getText();
          String stringProperty = received.getStringProperty("stringProperty");
          int intProperty = received.getIntProperty("intProperty");
-
-         if (verbose) {
-            System.out.println("Received Text: " + text);
-         }
 
          assertEquals("Message: " + i, data[i], text);
          assertEquals(data[i], stringProperty);
@@ -147,8 +139,7 @@ public abstract class JmsSendReceiveTestSupport extends BasicOpenWireTest implem
          while (messages.size() < data.length && waitTime >= 0) {
             try {
                lock.wait(200);
-            }
-            catch (InterruptedException e) {
+            } catch (InterruptedException e) {
                e.printStackTrace();
             }
 
@@ -193,9 +184,6 @@ public abstract class JmsSendReceiveTestSupport extends BasicOpenWireTest implem
     * @param messageList -list of consumed messages.
     */
    protected void consumeMessage(Message message, List<Message> messageList) {
-      if (verbose) {
-         System.out.println("Received message: " + message);
-      }
 
       messageList.add(message);
 

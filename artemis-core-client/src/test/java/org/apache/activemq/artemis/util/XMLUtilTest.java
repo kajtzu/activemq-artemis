@@ -16,12 +16,10 @@
  */
 package org.apache.activemq.artemis.util;
 
-import org.junit.Test;
-
-import org.junit.Assert;
-
 import org.apache.activemq.artemis.tests.util.SilentTestCase;
 import org.apache.activemq.artemis.utils.XMLUtil;
+import org.junit.Assert;
+import org.junit.Test;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
@@ -123,8 +121,7 @@ public class XMLUtilTest extends SilentTestCase {
       try {
          XMLUtil.assertEquivalent(XMLUtil.stringToElement(s), XMLUtil.stringToElement(s2));
          Assert.fail("this should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // expected
       }
    }
@@ -161,8 +158,7 @@ public class XMLUtilTest extends SilentTestCase {
       try {
          XMLUtil.assertEquivalent(XMLUtil.stringToElement(s), XMLUtil.stringToElement(s2));
          Assert.fail("this should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // OK
          e.printStackTrace();
       }
@@ -218,7 +214,27 @@ public class XMLUtilTest extends SilentTestCase {
       String after = "<configuration>\n" + "   <test name=\"test1\">content1</test>\n" + "   <test name=\"test2\">content2</test>\n" + "   <test name=\"test3\">content3</test>\n" + "   <test name=\"test4\">content4</test>\n" + "   <test name=\"test5\">content5</test>\n" + "   <test name=\"test6\">content6</test>\n" + "</configuration>";
       System.setProperty("sysprop1", "test1");
       System.setProperty("sysprop2", "content4");
-      String replaced = XMLUtil.replaceSystemProps(before);
+      String replaced = XMLUtil.replaceSystemPropsInString(before);
+      Assert.assertEquals(after, replaced);
+   }
+
+   @Test
+   public void testReplaceSystemPropertiesWithUnclosedPropertyReferenceInXML() {
+      String before = "<configuration>\n" + "   <test name=\"${sysprop1}\">content1</test>\n" + "   <test name=\"test2\">content2</test>\n" + "   <test name=\"test3\">content3</test>\n" + "   <test name=\"test4\">${sysprop2</test>\n" + "   <test name=\"test5\">content5</test>\n" + "   <test name=\"test6\">content6</test>\n" + "</configuration>";
+      String after = "<configuration>\n" + "   <test name=\"test1\">content1</test>\n" + "   <test name=\"test2\">content2</test>\n" + "   <test name=\"test3\">content3</test>\n" + "   <test name=\"test4\">${sysprop2</test>\n" + "   <test name=\"test5\">content5</test>\n" + "   <test name=\"test6\">content6</test>\n" + "</configuration>";
+      System.setProperty("sysprop1", "test1");
+      System.setProperty("sysprop2", "content4");
+      String replaced = XMLUtil.replaceSystemPropsInString(before);
+      Assert.assertEquals(after, replaced);
+   }
+
+   @Test
+   public void testReplaceSystemPropertiesWithMiscCurlyBracesInXML() {
+      String before = "<configuration>\n" + "   <test name=\"${sysprop1}\">content1{ }</test>\n" + "   <test name=\"test2\">content2 {</test>\n" + "   <test name=\"test3\">content3 }</test>\n" + "   <test name=\"test4\">${sysprop2}</test>\n" + "   <test name=\"test5\">content5{ }</test>\n" + "   <test name=\"test6\">content6 }</test>\n" + "</configuration>";
+      String after = "<configuration>\n" + "   <test name=\"test1\">content1{ }</test>\n" + "   <test name=\"test2\">content2 {</test>\n" + "   <test name=\"test3\">content3 }</test>\n" + "   <test name=\"test4\">content4</test>\n" + "   <test name=\"test5\">content5{ }</test>\n" + "   <test name=\"test6\">content6 }</test>\n" + "</configuration>";
+      System.setProperty("sysprop1", "test1");
+      System.setProperty("sysprop2", "content4");
+      String replaced = XMLUtil.replaceSystemPropsInString(before);
       Assert.assertEquals(after, replaced);
    }
 

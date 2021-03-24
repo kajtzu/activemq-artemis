@@ -16,7 +16,9 @@
  */
 package org.apache.activemq.artemis.core.server.cluster;
 
+import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.protocol.ServerPacketDecoder;
 import org.apache.activemq.artemis.core.protocol.core.impl.ActiveMQClientProtocolManager;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketDecoder;
@@ -28,8 +30,13 @@ import org.apache.activemq.artemis.spi.core.remoting.ClientProtocolManagerFactor
  */
 public class ActiveMQServerSideProtocolManagerFactory implements ClientProtocolManagerFactory {
 
-
    ServerLocator locator;
+
+   final StorageManager storageManager;
+
+   private ActiveMQServerSideProtocolManagerFactory(StorageManager storageManager) {
+      this.storageManager = storageManager;
+   }
 
    @Override
    public ServerLocator getLocator() {
@@ -41,16 +48,18 @@ public class ActiveMQServerSideProtocolManagerFactory implements ClientProtocolM
       this.locator = locator;
    }
 
-   public static ActiveMQServerSideProtocolManagerFactory getInstance(ServerLocator locator) {
-      ActiveMQServerSideProtocolManagerFactory instance = new ActiveMQServerSideProtocolManagerFactory();
+   public static ActiveMQServerSideProtocolManagerFactory getInstance(ServerLocator locator, StorageManager storageManager) {
+      ActiveMQServerSideProtocolManagerFactory instance = new ActiveMQServerSideProtocolManagerFactory(storageManager);
       instance.setLocator(locator);
       return instance;
    }
 
-   private ActiveMQServerSideProtocolManagerFactory() {
-   }
-
    private static final long serialVersionUID = 1;
+
+   @Override
+   public TransportConfiguration adaptTransportConfiguration(TransportConfiguration tc) {
+      return tc;
+   }
 
    @Override
    public ClientProtocolManager newProtocolManager() {
@@ -60,8 +69,8 @@ public class ActiveMQServerSideProtocolManagerFactory implements ClientProtocolM
    class ActiveMQReplicationProtocolManager extends ActiveMQClientProtocolManager {
 
       @Override
-      protected PacketDecoder getPacketDecoder() {
-         return ServerPacketDecoder.INSTANCE;
+      protected PacketDecoder createPacketDecoder() {
+         return new ServerPacketDecoder(storageManager);
       }
    }
 }

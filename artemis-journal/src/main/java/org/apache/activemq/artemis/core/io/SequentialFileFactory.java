@@ -20,10 +20,16 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.List;
 
+import org.apache.activemq.artemis.utils.critical.CriticalAnalyzer;
+
 /**
  * A SequentialFileFactory
  */
 public interface SequentialFileFactory {
+
+   default CriticalAnalyzer getCriticalAnalyzer() {
+      return null;
+   }
 
    SequentialFile createSequentialFile(String fileName);
 
@@ -68,6 +74,18 @@ public interface SequentialFileFactory {
     */
    ByteBuffer newBuffer(int size);
 
+   /**
+    * Note: You need to release the buffer if is used for reading operations. You don't need to do
+    * it if using writing operations (AIO Buffer Lister will take of writing operations)
+    *
+    * @param size
+    * @param zeroed if {@code true} the returned {@link ByteBuffer} must be zeroed, otherwise it tries to save zeroing it.
+    * @return the allocated ByteBuffer
+    */
+   default ByteBuffer newBuffer(int size, boolean zeroed) {
+      return newBuffer(size);
+   }
+
    void releaseBuffer(ByteBuffer buffer);
 
    void activateBuffer(SequentialFile file);
@@ -78,6 +96,8 @@ public interface SequentialFileFactory {
    ByteBuffer wrapBuffer(byte[] bytes);
 
    int getAlignment();
+
+   SequentialFileFactory setAlignment(int alignment);
 
    int calculateBlockSize(int bytes);
 
@@ -95,4 +115,10 @@ public interface SequentialFileFactory {
    void createDirs() throws Exception;
 
    void flush();
+
+   SequentialFileFactory setDatasync(boolean enabled);
+
+   boolean isDatasync();
+
+   long getBufferSize();
 }

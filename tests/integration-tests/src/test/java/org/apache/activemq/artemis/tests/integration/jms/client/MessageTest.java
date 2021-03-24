@@ -26,15 +26,13 @@ import javax.jms.Session;
 import javax.jms.StreamMessage;
 
 import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
+import org.apache.activemq.artemis.reader.MessageUtil;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class MessageTest extends JMSTestBase {
    // Constants -----------------------------------------------------
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    private static final long TIMEOUT = 1000;
 
@@ -87,8 +85,7 @@ public class MessageTest extends JMSTestBase {
             received.readObject();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -96,8 +93,7 @@ public class MessageTest extends JMSTestBase {
             received.readBoolean();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -105,8 +101,7 @@ public class MessageTest extends JMSTestBase {
             received.readByte();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -114,8 +109,7 @@ public class MessageTest extends JMSTestBase {
             received.readChar();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -123,8 +117,7 @@ public class MessageTest extends JMSTestBase {
             received.readDouble();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -132,8 +125,7 @@ public class MessageTest extends JMSTestBase {
             received.readFloat();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -141,8 +133,7 @@ public class MessageTest extends JMSTestBase {
             received.readInt();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -150,8 +141,7 @@ public class MessageTest extends JMSTestBase {
             received.readLong();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -159,8 +149,7 @@ public class MessageTest extends JMSTestBase {
             received.readShort();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
 
@@ -168,12 +157,10 @@ public class MessageTest extends JMSTestBase {
             received.readString();
 
             fail("Should throw exception");
-         }
-         catch (MessageEOFException e) {
+         } catch (MessageEOFException e) {
             //Ok
          }
-      }
-      finally {
+      } finally {
          conn.close();
       }
    }
@@ -204,6 +191,10 @@ public class MessageTest extends JMSTestBase {
 
       msg.setObjectProperty(MessageTest.propName1, null);
 
+      msg.setObjectProperty(MessageUtil.JMSXGROUPID, null);
+
+      msg.setObjectProperty(MessageUtil.JMSXUSERID, null);
+
       msg.setStringProperty(MessageTest.propName2, null);
 
       msg.getStringProperty(MessageTest.propName1);
@@ -232,42 +223,36 @@ public class MessageTest extends JMSTestBase {
       Assert.assertNull(message.getObjectProperty(MessageTest.propName3));
 
       try {
-         MessageTest.log.info(message.getIntProperty(MessageTest.propName1));
+         instanceLog.debug(message.getIntProperty(MessageTest.propName1));
          Assert.fail("Should throw exception");
-      }
-      catch (NumberFormatException e) {
+      } catch (NumberFormatException e) {
          // Ok
       }
 
       try {
-         MessageTest.log.info(message.getShortProperty(MessageTest.propName1));
-      }
-      catch (NumberFormatException e) {
+         instanceLog.debug(message.getShortProperty(MessageTest.propName1));
+      } catch (NumberFormatException e) {
          // Ok
       }
       try {
-         MessageTest.log.info(message.getByteProperty(MessageTest.propName1));
-      }
-      catch (NumberFormatException e) {
+         instanceLog.debug(message.getByteProperty(MessageTest.propName1));
+      } catch (NumberFormatException e) {
          // Ok
       }
       Assert.assertEquals(false, message.getBooleanProperty(MessageTest.propName1));
       try {
-         MessageTest.log.info(message.getLongProperty(MessageTest.propName1));
-      }
-      catch (NumberFormatException e) {
+         instanceLog.debug(message.getLongProperty(MessageTest.propName1));
+      } catch (NumberFormatException e) {
          // Ok
       }
       try {
-         MessageTest.log.info(message.getFloatProperty(MessageTest.propName1));
-      }
-      catch (NullPointerException e) {
+         instanceLog.debug(message.getFloatProperty(MessageTest.propName1));
+      } catch (NullPointerException e) {
          // Ok
       }
       try {
-         MessageTest.log.info(message.getDoubleProperty(MessageTest.propName1));
-      }
-      catch (NullPointerException e) {
+         instanceLog.debug(message.getDoubleProperty(MessageTest.propName1));
+      } catch (NullPointerException e) {
          // Ok
       }
    }
@@ -308,8 +293,7 @@ public class MessageTest extends JMSTestBase {
 
          assertNotNull(consGeral.receive(5000));
 
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }

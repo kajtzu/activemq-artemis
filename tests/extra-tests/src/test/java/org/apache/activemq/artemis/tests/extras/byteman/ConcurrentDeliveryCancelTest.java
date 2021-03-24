@@ -45,6 +45,7 @@ import org.apache.activemq.artemis.utils.ReusableLatch;
 import org.jboss.byteman.contrib.bmunit.BMRule;
 import org.jboss.byteman.contrib.bmunit.BMRules;
 import org.jboss.byteman.contrib.bmunit.BMUnitRunner;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -54,6 +55,7 @@ import org.junit.runner.RunWith;
  */
 @RunWith(BMUnitRunner.class)
 public class ConcurrentDeliveryCancelTest extends JMSTestBase {
+   private static final Logger log = Logger.getLogger(ConcurrentDeliveryCancelTest.class);
 
    // used to wait the thread to align at the same place and create the race
    private static final ReusableLatch latchEnter = new ReusableLatch(2);
@@ -61,11 +63,11 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
    private static final ReusableLatch latchFlag = new ReusableLatch(1);
 
    public static void enterCancel() {
-      latchEnter.countDown();
       try {
-         latchFlag.await();
-      }
-      catch (Exception ignored) {
+         latchEnter.countDown();
+         latchFlag.await(1, TimeUnit.SECONDS);
+      } catch (Throwable ignored) {
+         ignored.printStackTrace();
       }
    }
 
@@ -89,7 +91,7 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
          action = "org.apache.activemq.artemis.tests.extras.byteman.ConcurrentDeliveryCancelTest.enterCancel();")})
    public void testConcurrentCancels() throws Exception {
 
-      System.out.println(server.getConfiguration().getJournalLocation().toString());
+      log.debug(server.getConfiguration().getJournalLocation().toString());
       server.getAddressSettingsRepository().clear();
       AddressSettings settings = new AddressSettings();
       settings.setMaxDeliveryAttempts(-1);
@@ -98,15 +100,15 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
       cf.setReconnectAttempts(0);
       cf.setRetryInterval(10);
 
-      System.out.println(".....");
+      log.debug(".....");
       for (ServerSession srvSess : server.getSessions()) {
-         System.out.println(srvSess);
+         log.debug(srvSess);
       }
 
       String queueName = RandomUtil.randomString();
       Queue queue = createQueue(queueName);
 
-      int numberOfMessages = 10000;
+      int numberOfMessages = 100;
 
       {
          Connection connection = cf.createConnection();
@@ -123,7 +125,7 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
          connection.close();
       }
 
-      for (int i = 0; i < 100; i++) {
+      for (int i = 0; i < 10; i++) {
          XAConnectionFactory xacf = ActiveMQJMSClient.createConnectionFactory("tcp://localhost:61616", "test");
 
          final XAConnection connection = xacf.createXAConnection();
@@ -142,19 +144,23 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
             Assert.assertNotNull(consumer.receiveNoWait());
          }
 
-         System.out.println(".....");
+         log.debug(".....");
 
          final List<ServerSession> serverSessions = new LinkedList<>();
 
          // We will force now the failure simultaneously from several places
          for (ServerSession srvSess : server.getSessions()) {
             if (srvSess.getMetaData("theSession") != null) {
-               System.out.println(srvSess);
+               log.debug(srvSess);
                serverSessions.add(srvSess);
             }
          }
+         latchFlag.countDown();
 
-         resetLatches(2); // from Transactional reaper
+
+         latchFlag.countUp();
+         latchEnter.countUp();
+         latchEnter.countUp();
 
          List<Thread> threads = new LinkedList<>();
 
@@ -162,11 +168,10 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
             @Override
             public void run() {
                try {
-                  System.out.println(Thread.currentThread().getName() + " closing consumer");
+                  log.debug(Thread.currentThread().getName() + " closing consumer");
                   consumer.close();
-                  System.out.println(Thread.currentThread().getName() + " closed consumer");
-               }
-               catch (Exception e) {
+                  log.debug(Thread.currentThread().getName() + " closed consumer");
+               } catch (Exception e) {
                   e.printStackTrace();
                }
             }
@@ -176,17 +181,16 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
             @Override
             public void run() {
                for (ServerSession sess : serverSessions) {
-                  System.out.println("Thread " + Thread.currentThread().getName() + " starting");
+                  log.debug("Thread " + Thread.currentThread().getName() + " starting");
                   try {
                      // A session.close could sneak in through failover or some other scenarios.
                      // a call to RemotingConnection.fail wasn't replicating the issue.
                      // I needed to call Session.close() directly to replicate what was happening in production
                      sess.close(true);
-                  }
-                  catch (Exception e) {
+                  } catch (Exception e) {
                      e.printStackTrace();
                   }
-                  System.out.println("Thread " + Thread.currentThread().getName() + " done");
+                  log.debug("Thread " + Thread.currentThread().getName() + " done");
                }
             }
          });
@@ -195,7 +199,7 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
             t.start();
          }
 
-         Assert.assertTrue(latchEnter.await(10, TimeUnit.MINUTES));
+         latchEnter.await(1, TimeUnit.SECONDS);
          latchFlag.countDown();
 
          for (Thread t : threads) {
@@ -237,18 +241,16 @@ public class ConcurrentDeliveryCancelTest extends JMSTestBase {
          for (int i = 0; i < numberOfMessages; i++) {
             AtomicInteger count = mapCount.get(i);
             if (count == null) {
-               System.out.println("Message " + i + " not received");
+               log.debug("Message " + i + " not received");
                failed = true;
-            }
-            else if (count.get() > 1) {
-               System.out.println("Message " + i + " received " + count.get() + " times");
+            } else if (count.get() > 1) {
+               log.debug("Message " + i + " received " + count.get() + " times");
                failed = true;
             }
          }
 
          Assert.assertFalse("test failed, look at the system.out of the test for more information", failed);
-      }
-      finally {
+      } finally {
          connection.close();
       }
 

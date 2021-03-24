@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -23,9 +24,9 @@ import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -63,28 +64,34 @@ public class AckBatchSizeTest extends ActiveMQTestBase {
       ActiveMQServer server = createServer(false);
       server.start();
       int numMessages = 100;
-      ServerLocator locator = createInVMNonHALocator().setAckBatchSize(numMessages * getMessageEncodeSize(addressA)).setBlockOnAcknowledge(true);
+      int originalSize = getMessageEncodeSize(addressA);
+      ServerLocator locator = createInVMNonHALocator().setAckBatchSize(numMessages * originalSize).setBlockOnAcknowledge(true);
       ClientSessionFactory cf = createSessionFactory(locator);
       ClientSession sendSession = cf.createSession(false, true, true);
 
       ClientSession session = cf.createSession(false, true, true);
-      session.createQueue(addressA, queueA, false);
+      session.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       ClientProducer cp = sendSession.createProducer(addressA);
       for (int i = 0; i < numMessages; i++) {
-         cp.send(sendSession.createMessage(false));
+         ClientMessage message = (ClientMessage)sendSession.createMessage(false).setAddress(addressA);
+         Assert.assertEquals(originalSize, message.getEncodeSize());
+         cp.send(message);
+         Assert.assertEquals(originalSize, message.getEncodeSize());
       }
 
       ClientConsumer consumer = session.createConsumer(queueA);
       session.start();
       for (int i = 0; i < numMessages - 1; i++) {
+         instanceLog.debug("Receive ");
          ClientMessage m = consumer.receive(5000);
-
+         Assert.assertEquals(0, m.getPropertyNames().size());
+         Assert.assertEquals("expected to be " + originalSize, originalSize, m.getEncodeSize());
          m.acknowledge();
       }
 
       ClientMessage m = consumer.receive(5000);
       Queue q = (Queue) server.getPostOffice().getBinding(queueA).getBindable();
-      Assert.assertEquals(100, q.getDeliveringCount());
+      Assert.assertEquals(numMessages, q.getDeliveringCount());
       m.acknowledge();
       Assert.assertEquals(0, q.getDeliveringCount());
       sendSession.close();
@@ -105,7 +112,7 @@ public class AckBatchSizeTest extends ActiveMQTestBase {
       int numMessages = 100;
 
       ClientSession session = cf.createSession(false, true, true);
-      session.createQueue(addressA, queueA, false);
+      session.createQueue(new QueueConfiguration(queueA).setAddress(addressA).setDurable(false));
       ClientProducer cp = sendSession.createProducer(addressA);
       for (int i = 0; i < numMessages; i++) {
          cp.send(sendSession.createMessage(false));

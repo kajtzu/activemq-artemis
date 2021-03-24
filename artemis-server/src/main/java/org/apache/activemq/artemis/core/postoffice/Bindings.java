@@ -18,23 +18,33 @@ package org.apache.activemq.artemis.core.postoffice;
 
 import java.util.Collection;
 
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
 import org.apache.activemq.artemis.core.server.group.UnproposalListener;
 
 public interface Bindings extends UnproposalListener {
 
+   // this is to inform the parent there was an udpate on the bindings
+   void updated(QueueBinding binding);
+
    Collection<Binding> getBindings();
 
    void addBinding(Binding binding);
 
-   void removeBinding(Binding binding);
+   Binding removeBindingByUniqueName(SimpleString uniqueName);
+
+   SimpleString getName();
 
    void setMessageLoadBalancingType(MessageLoadBalancingType messageLoadBalancingType);
 
-   boolean redistribute(ServerMessage message, Queue originatingQueue, RoutingContext context) throws Exception;
+   MessageLoadBalancingType getMessageLoadBalancingType();
 
-   void route(ServerMessage message, RoutingContext context) throws Exception;
+   boolean redistribute(Message message, Queue originatingQueue, RoutingContext context) throws Exception;
+
+   void route(Message message, RoutingContext context) throws Exception;
+
+   boolean allowRedistribute();
 }

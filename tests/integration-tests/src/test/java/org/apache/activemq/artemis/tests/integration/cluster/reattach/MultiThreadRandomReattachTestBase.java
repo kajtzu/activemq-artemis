@@ -16,7 +16,15 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.reattach;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -29,22 +37,15 @@ import org.apache.activemq.artemis.core.remoting.impl.invm.InVMRegistry;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.jms.client.ActiveMQBytesMessage;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-
 public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReattachSupportTestBase {
 
-   private final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(MultiThreadRandomReattachTestBase.class);
 
    // Constants -----------------------------------------------------
 
@@ -251,7 +252,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       ClientSession session = addClientSession(sf.createSession(false, true, true));
 
-      session.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+      session.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
       ClientProducer producer = session.createProducer(MultiThreadRandomReattachTestBase.ADDRESS);
 
@@ -307,7 +308,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
          sessConsume.start();
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -363,7 +364,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestB(final ClientSessionFactory sf, final int threadNum) throws Exception {
@@ -383,7 +384,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
          ClientSession sessConsume = createAutoCommitSession(sf);
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -443,7 +444,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
 
    }
 
@@ -467,7 +468,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
          sessConsume.start();
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -544,7 +545,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestD(final ClientSessionFactory sf, final int threadNum) throws Exception {
@@ -566,7 +567,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
          ClientSession sessConsume = sf.createSession(false, false, false);
          sessConsume.addMetaData("data", RandomUtil.randomString());
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -669,7 +670,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    // Now with synchronous receive()
@@ -695,7 +696,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
          sessConsume.start();
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -728,7 +729,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestF(final ClientSessionFactory sf, final int threadNum) throws Exception {
@@ -750,7 +751,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
          ClientSession sessConsume = sf.createSession(false, true, true);
          sessConsume.addMetaData("data", RandomUtil.randomString());
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -787,7 +788,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestG(final ClientSessionFactory sf, final int threadNum) throws Exception {
@@ -811,7 +812,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
          sessConsume.start();
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -860,7 +861,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestH(final ClientSessionFactory sf, final int threadNum) throws Exception {
@@ -882,7 +883,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
          ClientSession sessConsume = sf.createSession(false, false, false);
          sessConsume.addMetaData("data", RandomUtil.randomString());
 
-         sessConsume.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -935,14 +936,14 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
 
       long end = System.currentTimeMillis();
 
-      log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestI(final ClientSessionFactory sf, final int threadNum) throws Exception {
       ClientSession sessCreate = sf.createSession(false, true, true);
       sessCreate.addMetaData("data", RandomUtil.randomString());
 
-      sessCreate.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString()), null, false);
+      sessCreate.createQueue(new QueueConfiguration(new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString())).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
       ClientSession sess = sf.createSession(false, true, true);
       sess.addMetaData("data", RandomUtil.randomString());
@@ -973,7 +974,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
       ClientSession sessCreate = sf.createSession(false, true, true);
       sessCreate.addMetaData("data", RandomUtil.randomString());
 
-      sessCreate.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString()), null, false);
+      sessCreate.createQueue(new QueueConfiguration(new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString())).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
       ClientSession sess = sf.createSession(false, true, true);
       sess.addMetaData("data", RandomUtil.randomString());
@@ -1004,7 +1005,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
       ClientSession s = sf.createSession(false, false, false);
       s.addMetaData("data", RandomUtil.randomString());
 
-      s.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString()), null, false);
+      s.createQueue(new QueueConfiguration(new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString())).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
       final int numConsumers = 100;
 
@@ -1037,7 +1038,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
    protected void doTestN(final ClientSessionFactory sf, final int threadNum) throws Exception {
       ClientSession sessCreate = sf.createSession(false, true, true);
 
-      sessCreate.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString()), null, false);
+      sessCreate.createQueue(new QueueConfiguration(new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString())).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
       ClientSession sess = sf.createSession(false, true, true);
       sess.addMetaData("data", RandomUtil.randomString());
@@ -1077,7 +1078,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
    protected void doTestO(final ClientSessionFactory sf, final int threadNum) throws Exception {
       ClientSession sessCreate = sf.createSession(false, true, true);
 
-      sessCreate.createQueue(MultiThreadRandomReattachTestBase.ADDRESS, new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString()), null, false);
+      sessCreate.createQueue(new QueueConfiguration(new SimpleString(threadNum + MultiThreadRandomReattachTestBase.ADDRESS.toString())).setAddress(MultiThreadRandomReattachTestBase.ADDRESS).setDurable(false));
 
       ClientSession sess = sf.createSession(false, true, true);
 
@@ -1129,7 +1130,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
     */
    @Override
    protected ServerLocator createLocator() throws Exception {
-      ServerLocator locator = createInVMNonHALocator().setReconnectAttempts(-1).setConfirmationWindowSize(1024 * 1024);
+      ServerLocator locator = createInVMNonHALocator().setReconnectAttempts(15).setConfirmationWindowSize(1024 * 1024);
       return locator;
    }
 
@@ -1236,8 +1237,7 @@ public abstract class MultiThreadRandomReattachTestBase extends MultiThreadReatt
       public synchronized void onMessage(final ClientMessage message) {
          try {
             message.acknowledge();
-         }
-         catch (ActiveMQException me) {
+         } catch (ActiveMQException me) {
             log.error("Failed to process", me);
          }
 

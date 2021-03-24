@@ -16,11 +16,12 @@
  */
 package org.apache.activemq.artemis.core.server.cluster.ha;
 
+import java.util.Map;
+
+import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
 import org.apache.activemq.artemis.core.server.impl.Activation;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.core.server.impl.LiveOnlyActivation;
-
-import java.util.Map;
 
 public class LiveOnlyPolicy implements HAPolicy<Activation> {
 
@@ -37,7 +38,7 @@ public class LiveOnlyPolicy implements HAPolicy<Activation> {
    public Activation createActivation(ActiveMQServerImpl server,
                                       boolean wasLive,
                                       Map<String, Object> activationParams,
-                                      ActiveMQServerImpl.ShutdownOnCriticalErrorListener shutdownOnCriticalIO) {
+                                      IOCriticalErrorListener ioCriticalErrorListener) {
       return new LiveOnlyActivation(server, this);
    }
 

@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.selector;
 
 import java.util.HashMap;
 
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.selector.filter.BooleanExpression;
 import org.apache.activemq.artemis.selector.filter.FilterException;
 import org.apache.activemq.artemis.selector.filter.Filterable;
@@ -25,9 +26,6 @@ import org.apache.activemq.artemis.selector.impl.SelectorParser;
 import org.junit.Assert;
 import org.junit.Test;
 
-/**
- * @version $Revision: 1.7 $
- */
 public class SelectorTest {
 
    class MockMessage implements Filterable {
@@ -100,14 +98,15 @@ public class SelectorTest {
       }
 
       @Override
-      public Object getProperty(String name) {
-         if ("JMSType".equals(name)) {
+      public Object getProperty(SimpleString name) {
+         String stringName = name.toString();
+         if ("JMSType".equals(stringName)) {
             return type;
          }
-         if ("JMSMessageID".equals(name)) {
+         if ("JMSMessageID".equals(stringName)) {
             return messageId;
          }
-         return properties.get(name);
+         return properties.get(stringName);
       }
 
       public Object getDestination() {
@@ -191,6 +190,16 @@ public class SelectorTest {
       assertSelector(message, "JMSType='1001'", true);
       assertSelector(message, "JMSType='1001' OR JMSType='1002'", true);
       assertSelector(message, "JMSType = 'crap'", false);
+   }
+
+   @Test
+   public void testDottedProperty() throws Exception {
+      MockMessage message = createMessage();
+      message.setJMSType("selector-test");
+      message.setStringProperty("a.test", "value");
+      message.setJMSMessageID("id:test:1:1:1:1");
+
+      assertSelector(message, "\"a.test\" = 'value'", true);
    }
 
    @Test
@@ -504,8 +513,7 @@ public class SelectorTest {
       try {
          SelectorParser.parse(text);
          Assert.fail("Created a valid selector");
-      }
-      catch (FilterException e) {
+      } catch (FilterException e) {
       }
    }
 

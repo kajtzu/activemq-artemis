@@ -16,11 +16,13 @@
  */
 package org.apache.activemq.artemis.api.core.management;
 
+import javax.json.JsonArray;
+
+import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.JsonUtil;
 import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
-
-import javax.json.JsonArray;
+import org.apache.activemq.artemis.core.message.impl.CoreMessage;
 
 /**
  * Helper class to use ActiveMQ Artemis Core messages to manage server resources.
@@ -46,6 +48,8 @@ public final class ManagementHelper {
 
    public static final SimpleString HDR_ADDRESS = new SimpleString("_AMQ_Address");
 
+   public static final SimpleString HDR_ROUTING_TYPE = new SimpleString("_AMQ_Routing_Type");
+
    public static final SimpleString HDR_BINDING_ID = new SimpleString("_AMQ_Binding_ID");
 
    public static final SimpleString HDR_BINDING_TYPE = new SimpleString("_AMQ_Binding_Type");
@@ -57,6 +61,10 @@ public final class ManagementHelper {
    public static final SimpleString HDR_CONSUMER_COUNT = new SimpleString("_AMQ_ConsumerCount");
 
    public static final SimpleString HDR_USER = new SimpleString("_AMQ_User");
+
+   public static final SimpleString HDR_VALIDATED_USER = new SimpleString("_AMQ_ValidatedUser");
+
+   public static final SimpleString HDR_CERT_SUBJECT_DN = new SimpleString("_AMQ_CertSubjectDN");
 
    public static final SimpleString HDR_CHECK_TYPE = new SimpleString("_AMQ_CheckType");
 
@@ -74,6 +82,12 @@ public final class ManagementHelper {
 
    public static final SimpleString HDR_CONNECTION_NAME = new SimpleString("_AMQ_ConnectionName");
 
+   public static final SimpleString HDR_MESSAGE_ID = new SimpleString("_AMQ_Message_ID");
+
+   public static final SimpleString HDR_PROTOCOL_NAME = new SimpleString("_AMQ_Protocol_Name");
+
+   public static final SimpleString HDR_CLIENT_ID = new SimpleString("_AMQ_Client_ID");
+
    // Attributes ----------------------------------------------------
 
    // Static --------------------------------------------------------
@@ -86,7 +100,7 @@ public final class ManagementHelper {
     * @param attribute    the name of the attribute
     * @see ResourceNames
     */
-   public static void putAttribute(final Message message, final String resourceName, final String attribute) {
+   public static void putAttribute(final ICoreMessage message, final String resourceName, final String attribute) {
       message.putStringProperty(ManagementHelper.HDR_RESOURCE_NAME, new SimpleString(resourceName));
       message.putStringProperty(ManagementHelper.HDR_ATTRIBUTE, new SimpleString(attribute));
    }
@@ -99,7 +113,7 @@ public final class ManagementHelper {
     * @param operationName the name of the operation to invoke on the resource
     * @see ResourceNames
     */
-   public static void putOperationInvocation(final Message message,
+   public static void putOperationInvocation(final ICoreMessage message,
                                              final String resourceName,
                                              final String operationName) throws Exception {
       ManagementHelper.putOperationInvocation(message, resourceName, operationName, (Object[]) null);
@@ -114,7 +128,7 @@ public final class ManagementHelper {
     * @param parameters    the parameters to use to invoke the server resource
     * @see ResourceNames
     */
-   public static void putOperationInvocation(final Message message,
+   public static void putOperationInvocation(final ICoreMessage message,
                                              final String resourceName,
                                              final String operationName,
                                              final Object... parameters) throws Exception {
@@ -130,8 +144,7 @@ public final class ManagementHelper {
          JsonArray jsonArray = JsonUtil.toJSONArray(parameters);
 
          paramString = jsonArray.toString();
-      }
-      else {
+      } else {
          paramString = null;
       }
 
@@ -142,15 +155,14 @@ public final class ManagementHelper {
     * Used by ActiveMQ Artemis management service.
     */
    public static Object[] retrieveOperationParameters(final Message message) throws Exception {
-      SimpleString sstring = message.getBodyBuffer().readNullableSimpleString();
+      SimpleString sstring = message.toCore().getReadOnlyBodyBuffer().readNullableSimpleString();
       String jsonString = (sstring == null) ? null : sstring.toString();
 
       if (jsonString != null) {
          JsonArray jsonArray = JsonUtil.readJsonArray(jsonString);
 
          return JsonUtil.fromJsonArray(jsonArray);
-      }
-      else {
+      } else {
          return null;
       }
    }
@@ -172,7 +184,7 @@ public final class ManagementHelper {
    /**
     * Used by ActiveMQ Artemis management service.
     */
-   public static void storeResult(final Message message, final Object result) throws Exception {
+   public static void storeResult(final CoreMessage message, final Object result) throws Exception {
       String resultString;
 
       if (result != null) {
@@ -181,8 +193,7 @@ public final class ManagementHelper {
          JsonArray jsonArray = JsonUtil.toJSONArray(new Object[]{result});
 
          resultString = jsonArray.toString();
-      }
-      else {
+      } else {
          resultString = null;
       }
 
@@ -195,15 +206,14 @@ public final class ManagementHelper {
     * If an error occurred on the server, {@link #hasOperationSucceeded(Message)} will return {@code false}.
     * and the result will be a String corresponding to the server exception.
     */
-   public static Object[] getResults(final Message message) throws Exception {
-      SimpleString sstring = message.getBodyBuffer().readNullableSimpleString();
+   public static Object[] getResults(final ICoreMessage message) throws Exception {
+      SimpleString sstring = message.getReadOnlyBodyBuffer().readNullableSimpleString();
       String jsonString = (sstring == null) ? null : sstring.toString();
 
       if (jsonString != null) {
          JsonArray jsonArray = JsonUtil.readJsonArray(jsonString);
          return JsonUtil.fromJsonArray(jsonArray);
-      }
-      else {
+      } else {
          return null;
       }
    }
@@ -214,23 +224,22 @@ public final class ManagementHelper {
     * If an error occurred on the server, {@link #hasOperationSucceeded(Message)} will return {@code false}.
     * and the result will be a String corresponding to the server exception.
     */
-   public static Object getResult(final Message message) throws Exception {
+   public static Object getResult(final ICoreMessage message) throws Exception {
       return getResult(message, null);
    }
 
-      /**
-       * Returns the result of an operation invocation or an attribute value.
-       * <br>
-       * If an error occurred on the server, {@link #hasOperationSucceeded(Message)} will return {@code false}.
-       * and the result will be a String corresponding to the server exception.
-       */
-   public static Object getResult(final Message message, Class desiredType) throws Exception {
+   /**
+    * Returns the result of an operation invocation or an attribute value.
+    * <br>
+    * If an error occurred on the server, {@link #hasOperationSucceeded(Message)} will return {@code false}.
+    * and the result will be a String corresponding to the server exception.
+    */
+   public static Object getResult(final ICoreMessage message, Class desiredType) throws Exception {
       Object[] res = ManagementHelper.getResults(message);
 
       if (res != null) {
          return JsonUtil.convertJsonValue(res[0], desiredType);
-      }
-      else {
+      } else {
          return null;
       }
    }

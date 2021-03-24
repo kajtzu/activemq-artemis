@@ -19,24 +19,18 @@ package org.apache.activemq.artemis.spi.core.security;
 import javax.security.auth.Subject;
 import javax.security.auth.login.LoginContext;
 import javax.security.auth.login.LoginException;
-import javax.security.cert.X509Certificate;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.security.Principal;
-import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Set;
 
 import org.apache.activemq.artemis.core.config.impl.SecurityConfiguration;
-import org.apache.activemq.artemis.core.remoting.impl.netty.NettyConnection;
 import org.apache.activemq.artemis.core.security.CheckType;
 import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.security.jaas.JaasCallbackHandler;
 import org.apache.activemq.artemis.spi.core.security.jaas.RolePrincipal;
-import org.apache.activemq.artemis.spi.core.security.jaas.UserPrincipal;
-import org.apache.activemq.artemis.utils.CertificateUtil;
+import org.apache.activemq.artemis.utils.SecurityManagerUtil;
 import org.jboss.logging.Logger;
+
+import static org.apache.activemq.artemis.core.remoting.CertificateUtil.getCertsFromConnection;
 
 /**
  * This implementation delegates to the JAAS security interfaces.
@@ -44,11 +38,9 @@ import org.jboss.logging.Logger;
  * The {@link Subject} returned by the login context is expecting to have a set of {@link RolePrincipal} for each
  * role of the user.
  */
-public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
+public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager5 {
 
    private static final Logger logger = Logger.getLogger(ActiveMQJAASSecurityManager.class);
-
-   private static final String WILDCARD = "*";
 
    private String configurationName;
    private String certificateConfigurationName;
@@ -73,7 +65,10 @@ public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
       this.configuration = configuration;
    }
 
-   public ActiveMQJAASSecurityManager(String configurationName, String certificateConfigurationName, SecurityConfiguration configuration, SecurityConfiguration certificateConfiguration) {
+   public ActiveMQJAASSecurityManager(String configurationName,
+                                      String certificateConfigurationName,
+                                      SecurityConfiguration configuration,
+                                      SecurityConfiguration certificateConfiguration) {
       this.configurationName = configurationName;
       this.configuration = configuration;
       this.certificateConfigurationName = certificateConfigurationName;
@@ -81,124 +76,75 @@ public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
    }
 
    @Override
-   public boolean validateUser(String user, String password) {
-      throw new UnsupportedOperationException("Invoke validateUser(String, String, X509Certificate[]) instead");
+   public String getDomain() {
+      return configurationName;
    }
 
    @Override
-   public String validateUser(final String user, final String password, X509Certificate[] certificates) {
+   public boolean validateUser(String user, String password) {
+      throw new UnsupportedOperationException("Invoke validateUser(String, String, RemotingConnection, String) instead");
+   }
+
+   @Override
+   public Subject authenticate(final String user, final String password, RemotingConnection remotingConnection, final String securityDomain) {
       try {
-         return getUserFromSubject(getAuthenticatedSubject(user, password, certificates));
-      }
-      catch (LoginException e) {
+         return getAuthenticatedSubject(user, password, remotingConnection, securityDomain);
+      } catch (LoginException e) {
          if (logger.isDebugEnabled()) {
             logger.debug("Couldn't validate user", e);
          }
          return null;
       }
-   }
-
-   public String getUserFromSubject(Subject subject) {
-      String validatedUser = "";
-      Set<UserPrincipal> users = subject.getPrincipals(UserPrincipal.class);
-
-      // should only ever be 1 UserPrincipal
-      for (UserPrincipal userPrincipal : users) {
-         validatedUser = userPrincipal.getName();
-      }
-      return validatedUser;
    }
 
    @Override
    public boolean validateUserAndRole(String user, String password, Set<Role> roles, CheckType checkType) {
-      throw new UnsupportedOperationException("Invoke validateUserAndRole(String, String, Set<Role>, CheckType, String, RemotingConnection) instead");
+      throw new UnsupportedOperationException("Invoke validateUserAndRole(String, String, Set<Role>, CheckType, String, RemotingConnection, String) instead");
    }
 
    @Override
-   public String validateUserAndRole(final String user,
-                                      final String password,
-                                      final Set<Role> roles,
-                                      final CheckType checkType,
-                                      final String address,
-                                      final RemotingConnection connection) {
-      X509Certificate[] certificates = null;
-      if (connection != null && connection.getTransportConnection() instanceof NettyConnection) {
-         certificates = CertificateUtil.getCertsFromChannel(((NettyConnection) connection.getTransportConnection()).getChannel());
-      }
-      Subject localSubject;
-      try {
-         localSubject = getAuthenticatedSubject(user, password, certificates);
-      }
-      catch (LoginException e) {
-         if (logger.isDebugEnabled()) {
-            logger.debug("Couldn't validate user", e);
-         }
-         return null;
+   public boolean authorize(final Subject subject,
+                            final Set<Role> roles,
+                            final CheckType checkType,
+                            final String address) {
+      boolean authorized = SecurityManagerUtil.authorize(subject, roles, checkType, rolePrincipalClass);
+
+      if (logger.isTraceEnabled()) {
+         logger.trace("user " + (authorized ? " is " : " is NOT ") + "authorized");
       }
 
-      boolean authorized = false;
-
-      if (localSubject != null) {
-         Set<RolePrincipal> rolesWithPermission = getPrincipalsInRole(checkType, roles);
-
-         // Check the caller's roles
-         Set<Principal> rolesForSubject = new HashSet<>();
-         try {
-            rolesForSubject.addAll(localSubject.getPrincipals(Class.forName(rolePrincipalClass).asSubclass(Principal.class)));
-         }
-         catch (Exception e) {
-            logger.info("Can't find roles for the subject", e);
-         }
-         if (rolesForSubject.size() > 0 && rolesWithPermission.size() > 0) {
-            Iterator<Principal> rolesForSubjectIter = rolesForSubject.iterator();
-            while (!authorized && rolesForSubjectIter.hasNext()) {
-               Iterator<RolePrincipal> rolesWithPermissionIter = rolesWithPermission.iterator();
-               Principal subjectRole = rolesForSubjectIter.next();
-               while (!authorized && rolesWithPermissionIter.hasNext()) {
-                  Principal roleWithPermission = rolesWithPermissionIter.next();
-                  authorized = subjectRole.equals(roleWithPermission);
-               }
-            }
-         }
-
-         if (logger.isTraceEnabled()) {
-            logger.trace("user " + (authorized ? " is " : " is NOT ") + "authorized");
-         }
-      }
-
-      if (authorized) {
-         return getUserFromSubject(localSubject);
-      }
-      else {
-         return null;
-      }
+      return authorized;
    }
 
-   private Subject getAuthenticatedSubject(final String user, final String password, final X509Certificate[] certificates) throws LoginException {
+   private Subject getAuthenticatedSubject(final String user,
+                                           final String password,
+                                           final RemotingConnection remotingConnection,
+                                           final String securityDomain) throws LoginException {
       LoginContext lc;
-      if (certificateConfigurationName != null && certificateConfigurationName.length() > 0 && certificates != null) {
-         lc = new LoginContext(certificateConfigurationName, null, new JaasCallbackHandler(user, password, certificates), certificateConfiguration);
-      }
-      else {
-         lc = new LoginContext(configurationName, null, new JaasCallbackHandler(user, password, certificates), configuration);
-      }
-      lc.login();
-      return lc.getSubject();
-   }
-
-   private Set<RolePrincipal> getPrincipalsInRole(final CheckType checkType, final Set<Role> roles) {
-      Set principals = new HashSet<>();
-      for (Role role : roles) {
-         if (checkType.hasRole(role)) {
-            try {
-               principals.add(createGroupPrincipal(role.getName(), rolePrincipalClass));
-            }
-            catch (Exception e) {
-               logger.info("Can't add role principal", e);
-            }
+      ClassLoader currentLoader = Thread.currentThread().getContextClassLoader();
+      ClassLoader thisLoader = this.getClass().getClassLoader();
+      try {
+         if (thisLoader != currentLoader) {
+            Thread.currentThread().setContextClassLoader(thisLoader);
+         }
+         if (securityDomain != null) {
+            lc = new LoginContext(securityDomain, null, new JaasCallbackHandler(user, password, remotingConnection), null);
+         } else if (certificateConfigurationName != null && certificateConfigurationName.length() > 0 && getCertsFromConnection(remotingConnection) != null) {
+            lc = new LoginContext(certificateConfigurationName, null, new JaasCallbackHandler(user, password, remotingConnection), certificateConfiguration);
+         } else {
+            lc = new LoginContext(configurationName, null, new JaasCallbackHandler(user, password, remotingConnection), configuration);
+         }
+         try {
+            lc.login();
+         } catch (LoginException e) {
+            throw e;
+         }
+         return lc.getSubject();
+      } finally {
+         if (thisLoader != currentLoader) {
+            Thread.currentThread().setContextClassLoader(currentLoader);
          }
       }
-      return principals;
    }
 
    public void setConfigurationName(final String configurationName) {
@@ -240,63 +186,4 @@ public class ActiveMQJAASSecurityManager implements ActiveMQSecurityManager3 {
    public void setRolePrincipalClass(String rolePrincipalClass) {
       this.rolePrincipalClass = rolePrincipalClass;
    }
-
-   public static Object createGroupPrincipal(String name, String groupClass) throws Exception {
-      if (WILDCARD.equals(name)) {
-         // simple match all group principal - match any name and class
-         return new Principal() {
-            @Override
-            public String getName() {
-               return WILDCARD;
-            }
-
-            @Override
-            public boolean equals(Object other) {
-               return true;
-            }
-
-            @Override
-            public int hashCode() {
-               return WILDCARD.hashCode();
-            }
-         };
-      }
-      Object[] param = new Object[]{name};
-
-      Class<?> cls = Class.forName(groupClass);
-
-      Constructor<?>[] constructors = cls.getConstructors();
-      int i;
-      Object instance;
-      for (i = 0; i < constructors.length; i++) {
-         Class<?>[] paramTypes = constructors[i].getParameterTypes();
-         if (paramTypes.length != 0 && paramTypes[0].equals(String.class)) {
-            break;
-         }
-      }
-      if (i < constructors.length) {
-         instance = constructors[i].newInstance(param);
-      }
-      else {
-         instance = cls.newInstance();
-         Method[] methods = cls.getMethods();
-         i = 0;
-         for (i = 0; i < methods.length; i++) {
-            Class<?>[] paramTypes = methods[i].getParameterTypes();
-            if (paramTypes.length != 0 && methods[i].getName().equals("setName") && paramTypes[0].equals(String.class)) {
-               break;
-            }
-         }
-
-         if (i < methods.length) {
-            methods[i].invoke(instance, param);
-         }
-         else {
-            throw new NoSuchMethodException();
-         }
-      }
-
-      return instance;
-   }
-
 }

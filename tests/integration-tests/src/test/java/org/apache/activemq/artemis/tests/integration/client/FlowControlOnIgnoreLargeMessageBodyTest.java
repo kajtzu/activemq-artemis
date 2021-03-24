@@ -16,12 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
-import org.junit.Before;
-
-import org.junit.Test;
-
-import java.util.concurrent.CountDownLatch;
-
 import javax.jms.BytesMessage;
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
@@ -31,13 +25,17 @@ import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.Topic;
 import javax.jms.TopicSubscriber;
+import java.util.concurrent.CountDownLatch;
 
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.JMSTestBase;
+import org.jboss.logging.Logger;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
 
-   IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(FlowControlOnIgnoreLargeMessageBodyTest.class);
 
    private Topic topic;
 
@@ -108,7 +106,7 @@ public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
          Connection connection = null;
          Session session = null;
          MessageProducer prod;
-         log.info("Starting producer for " + topic + " - " + getName());
+         log.debug("Starting producer for " + topic + " - " + getName());
          try {
             connection = cf.createConnection();
             session = connection.createSession(true, Session.SESSION_TRANSACTED);
@@ -129,26 +127,22 @@ public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
                   session.commit();
                }
                if (i % 100 == 0) {
-                  log.info("Address " + topic + " sent " + i + " messages");
+                  log.debug("Address " + topic + " sent " + i + " messages");
                }
             }
-            System.out.println("Ending producer for " + topic + " - " + getName() + " messages " + sentMessages);
-         }
-         catch (Exception e) {
+            log.debug("Ending producer for " + topic + " - " + getName() + " messages " + sentMessages);
+         } catch (Exception e) {
             error = true;
             e.printStackTrace();
-         }
-         finally {
+         } finally {
             try {
                session.commit();
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
             }
             try {
                connection.close();
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
             }
          }
@@ -210,7 +204,7 @@ public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
          Session session = null;
          stopped = false;
          requestForStop = false;
-         System.out.println("Starting consumer for " + topic + " - " + getName());
+         instanceLog.debug("Starting consumer for " + topic + " - " + getName());
          try {
             connection = cf.createConnection();
 
@@ -228,14 +222,13 @@ public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
 
             while (counter < numberOfMessages && !requestForStop && !error) {
                if (counter == 0) {
-                  System.out.println("Starting to consume for " + topic + " - " + getName());
+                  instanceLog.debug("Starting to consume for " + topic + " - " + getName());
                }
                BytesMessage msg = (BytesMessage) subscriber.receive(receiveTimeout);
                if (msg == null) {
-                  System.out.println("Cannot get message in specified timeout: " + topic + " - " + getName());
+                  instanceLog.debug("Cannot get message in specified timeout: " + topic + " - " + getName());
                   error = true;
-               }
-               else {
+               } else {
                   counter++;
                   if (msg.getIntProperty(FlowControlOnIgnoreLargeMessageBodyTest.ATTR_MSG_COUNTER) != counter) {
                      error = true;
@@ -245,36 +238,32 @@ public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
                   session.commit();
                }
                if (counter % 100 == 0) {
-                  log.info("## " + getName() + " " + topic + " received " + counter);
+                  log.debug("## " + getName() + " " + topic + " received " + counter);
                }
                receivedMessages = counter;
             }
             session.commit();
-         }
-         catch (Exception e) {
-            System.out.println("Exception in consumer " + getName() + " : " + e.getMessage());
+         } catch (Exception e) {
+            instanceLog.debug("Exception in consumer " + getName() + " : " + e.getMessage());
             e.printStackTrace();
-         }
-         finally {
+         } finally {
             if (session != null) {
                try {
                   session.close();
-               }
-               catch (JMSException e) {
+               } catch (JMSException e) {
                   System.err.println("Cannot close session " + e.getMessage());
                }
             }
             if (connection != null) {
                try {
                   connection.close();
-               }
-               catch (JMSException e) {
+               } catch (JMSException e) {
                   System.err.println("Cannot close connection " + e.getMessage());
                }
             }
          }
          stopped = true;
-         System.out.println("Stopping consumer for " + topic +
+         instanceLog.debug("Stopping consumer for " + topic +
                                " - " +
                                getName() +
                                ", received " +
@@ -314,8 +303,7 @@ public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
          String errorMessage = null;
          if (producer.getSentMessages() != FlowControlOnIgnoreLargeMessageBodyTest.TOTAL_MESSAGES_COUNT) {
             errorMessage = "Producer did not send defined count of messages";
-         }
-         else {
+         } else {
             for (LoadConsumer consumer : consumers) {
                if (consumer.getReceivedMessages() != FlowControlOnIgnoreLargeMessageBodyTest.TOTAL_MESSAGES_COUNT) {
                   errorMessage = "Consumer did not send defined count of messages";
@@ -325,17 +313,14 @@ public class FlowControlOnIgnoreLargeMessageBodyTest extends JMSTestBase {
          }
 
          if (errorMessage != null) {
-            System.err.println(" ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ");
             System.err.println(errorMessage);
-         }
-         else {
-            System.out.println(" OK ");
          }
 
          assertFalse(error);
-         assertNull(errorMessage);
-      }
-      catch (Exception e) {
+         if (errorMessage != null) {
+            Assert.fail(errorMessage);
+         }
+      } catch (Exception e) {
          log.warn(e.getMessage(), e);
       }
    }

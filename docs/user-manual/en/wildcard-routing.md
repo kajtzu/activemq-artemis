@@ -8,13 +8,17 @@ receive any messages sent to addresses that match this, for instance
 you create a consumer on this queue, this allows a consumer to consume
 messages which are sent to a *hierarchy* of addresses.
 
-> **Note**
+> **Note:**
 >
 > In JMS terminology this allows "topic hierarchies" to be created.
 
-To enable this functionality set the property
-`wild-card-routing-enabled` in the `broker.xml` file to
-`true`. This is `true` by default.
+This functionality is enabled by default. To turn it off add the following to the `broker.xml` configuration.
 
-For more information on the wild card syntax take a look at [wildcard syntax](wildcard-syntax.md) chapter,
+```xml
+<wildcard-addresses>
+   <routing-enabled>false</routing-enabled>
+</wildcard-addresses>
+```
+
+For more information on the wild card syntax and how to configure it, take a look at [wildcard syntax](wildcard-syntax.md) chapter,
 also see the topic hierarchy example in the [examples](examples.md).

@@ -31,9 +31,10 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.activemq.artemis.tests.util.JMSTestBase;
 import org.apache.activemq.artemis.jms.server.config.ConnectionFactoryConfiguration;
+import org.apache.activemq.artemis.tests.util.JMSTestBase;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -43,7 +44,7 @@ import org.junit.runners.Parameterized;
 @RunWith(Parameterized.class)
 public class JmsProducerCompletionListenerTest extends JMSTestBase {
 
-   static final int TOTAL_MSGS = 20;
+   static final int TOTAL_MSGS = 200;
 
    private JMSContext context;
    private JMSProducer producer;
@@ -85,7 +86,7 @@ public class JmsProducerCompletionListenerTest extends JMSTestBase {
       JMSConsumer consumer = context.createConsumer(queue);
       sendMessages(context, producer, queue, TOTAL_MSGS);
       receiveMessages(consumer, 0, TOTAL_MSGS, true);
-
+      assertEquals(TOTAL_MSGS, cl.completion.get());
       context.close();
       Assert.assertTrue("completion listener should be called", cl.completionLatch.await(3, TimeUnit.SECONDS));
    }
@@ -99,11 +100,9 @@ public class JmsProducerCompletionListenerTest extends JMSTestBase {
          MessageProducer prod = session.createProducer(queue);
          prod.send(session.createMessage(), null);
          Assert.fail("Didn't get expected exception!");
-      }
-      catch (IllegalArgumentException expected) {
+      } catch (IllegalArgumentException expected) {
          //ok
-      }
-      finally {
+      } finally {
          if (connection != null) {
             connection.close();
          }
@@ -162,22 +161,38 @@ public class JmsProducerCompletionListenerTest extends JMSTestBase {
                default:
                   throw new IllegalArgumentException("call code " + call);
             }
-         }
-         catch (Exception error1) {
+         } catch (Exception error1) {
             this.error = error1;
          }
       }
 
       @Override
       public void onException(Message message, Exception exception) {
-         // TODO Auto-generated method stub
+         latch.countDown();
+         try {
+            switch (call) {
+               case 0:
+                  context.rollback();
+                  break;
+               case 1:
+                  context.commit();
+                  break;
+               case 2:
+                  context.close();
+                  break;
+               default:
+                  throw new IllegalArgumentException("call code " + call);
+            }
+         } catch (Exception error1) {
+            this.error = error1;
+         }
       }
 
    }
 
    public static final class CountingCompletionListener implements CompletionListener {
 
-      public int completion;
+      public AtomicInteger completion = new AtomicInteger(0);
       public int error;
       public CountDownLatch completionLatch;
       public Message lastMessage;
@@ -188,7 +203,7 @@ public class JmsProducerCompletionListenerTest extends JMSTestBase {
 
       @Override
       public void onCompletion(Message message) {
-         completion++;
+         completion.incrementAndGet();
          completionLatch.countDown();
          lastMessage = message;
       }

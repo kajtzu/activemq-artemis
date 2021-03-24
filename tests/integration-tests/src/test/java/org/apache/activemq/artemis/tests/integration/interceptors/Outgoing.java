@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,12 +23,15 @@ import org.apache.activemq.artemis.core.protocol.core.Packet;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionSendMessage;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
+import org.jboss.logging.Logger;
 
 public class Outgoing implements Interceptor {
 
+   private static final Logger log = Logger.getLogger(Outgoing.class);
+
    @Override
    public boolean intercept(final Packet packet, final RemotingConnection connection) throws ActiveMQException {
-      System.out.println("Outgoin:Packet : " + packet);
+      log.debug("Outgoin:Packet : " + packet);
       if (packet.getType() == PacketImpl.SESS_SEND) {
          SessionSendMessage p = (SessionSendMessage) packet;
 

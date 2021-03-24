@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,15 +16,6 @@
  */
 package org.apache.activemq;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
-import java.net.URI;
-import java.util.Iterator;
-import java.util.Set;
-
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
 import javax.jms.JMSException;
@@ -33,6 +24,9 @@ import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.TextMessage;
 import javax.jms.Topic;
+import java.net.URI;
+import java.util.Iterator;
+import java.util.Set;
 
 import org.apache.activemq.advisory.DestinationSource;
 import org.apache.activemq.artemis.api.core.SimpleString;
@@ -44,8 +38,15 @@ import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.command.ActiveMQTopic;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+@Ignore
 public class RemoveDestinationTest {
 
    private static final String TCP_BROKER_URL = "tcp://localhost:61616?create=false";
@@ -130,8 +131,7 @@ public class RemoveDestinationTest {
       try {
          amqConnection.destroyDestination((ActiveMQDestination) topic);
          fail("expect exception on destroy if comsumer present");
-      }
-      catch (JMSException expected) {
+      } catch (JMSException expected) {
          assertTrue(expected.getMessage().indexOf(amqTopic.getTopicName()) != -1);
       }
 
@@ -160,7 +160,7 @@ public class RemoveDestinationTest {
       PostOffice po = wrapper.getServer().getPostOffice();
       Set<SimpleString> addressSet = po.getAddresses();
       Iterator<SimpleString> iter = addressSet.iterator();
-      String addressToFind = "jms.topic." + amqTopic.getPhysicalName();
+      String addressToFind = amqTopic.getPhysicalName();
       while (iter.hasNext()) {
          if (addressToFind.equals(iter.next().toString())) {
             found = true;

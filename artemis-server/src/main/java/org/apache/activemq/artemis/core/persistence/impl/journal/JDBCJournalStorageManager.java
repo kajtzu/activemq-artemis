@@ -18,53 +18,80 @@ package org.apache.activemq.artemis.core.persistence.impl.journal;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.storage.DatabaseStorageConfiguration;
 import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
 import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
-import org.apache.activemq.artemis.core.journal.Journal;
+import org.apache.activemq.artemis.jdbc.store.drivers.JDBCConnectionProvider;
 import org.apache.activemq.artemis.jdbc.store.file.JDBCSequentialFileFactory;
 import org.apache.activemq.artemis.jdbc.store.journal.JDBCJournalImpl;
+import org.apache.activemq.artemis.jdbc.store.sql.PropertySQLProvider;
+import org.apache.activemq.artemis.jdbc.store.sql.SQLProvider;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
+import org.apache.activemq.artemis.utils.critical.CriticalAnalyzer;
 
 public class JDBCJournalStorageManager extends JournalStorageManager {
 
-   public JDBCJournalStorageManager(Configuration config, ExecutorFactory executorFactory) {
-      super(config, executorFactory);
+   public JDBCJournalStorageManager(Configuration config,
+                                    CriticalAnalyzer analyzer,
+                                    ExecutorFactory executorFactory,
+                                    ExecutorFactory ioExecutorFactory,
+                                    ScheduledExecutorService scheduledExecutorService) {
+      super(config, analyzer, executorFactory, scheduledExecutorService, ioExecutorFactory);
    }
 
    public JDBCJournalStorageManager(final Configuration config,
-                                final ExecutorFactory executorFactory,
-                                final IOCriticalErrorListener criticalErrorListener) {
-      super(config, executorFactory, criticalErrorListener);
+                                    final CriticalAnalyzer analyzer,
+                                    final ScheduledExecutorService scheduledExecutorService,
+                                    final ExecutorFactory executorFactory,
+                                    final ExecutorFactory ioExecutorFactory,
+                                    final IOCriticalErrorListener criticalErrorListener) {
+      super(config, analyzer, executorFactory, scheduledExecutorService, ioExecutorFactory, criticalErrorListener);
    }
 
    @Override
    protected synchronized void init(Configuration config, IOCriticalErrorListener criticalErrorListener) {
       try {
-         DatabaseStorageConfiguration dbConf = (DatabaseStorageConfiguration) config.getStoreConfiguration();
-
-         Journal localBindings = new JDBCJournalImpl(dbConf.getJdbcConnectionUrl(), dbConf.getBindingsTableName(), dbConf.getJdbcDriverClassName());
-         bindingsJournal = localBindings;
-
-         Journal localMessage = new JDBCJournalImpl(dbConf.getJdbcConnectionUrl(), dbConf.getMessageTableName(), dbConf.getJdbcDriverClassName());
-         messageJournal = localMessage;
-
-         bindingsJournal.start();
-         messageJournal.start();
-
-         largeMessagesFactory = new JDBCSequentialFileFactory(dbConf.getJdbcConnectionUrl(), dbConf.getLargeMessageTableName(), dbConf.getJdbcDriverClassName(), executor);
+         final DatabaseStorageConfiguration dbConf = (DatabaseStorageConfiguration) config.getStoreConfiguration();
+         final JDBCConnectionProvider connectionProvider = dbConf.getConnectionProvider();
+         final JDBCJournalImpl bindingsJournal;
+         final JDBCJournalImpl messageJournal;
+         final JDBCSequentialFileFactory largeMessagesFactory;
+         SQLProvider.Factory sqlProviderFactory = dbConf.getSqlProviderFactory();
+         if (sqlProviderFactory == null) {
+            sqlProviderFactory = new PropertySQLProvider.Factory(connectionProvider);
+         }
+         bindingsJournal = new JDBCJournalImpl(
+                 connectionProvider,
+                 sqlProviderFactory.create(dbConf.getBindingsTableName(), SQLProvider.DatabaseStoreType.BINDINGS_JOURNAL),
+                 scheduledExecutorService,
+                 executorFactory.getExecutor(),
+                 criticalErrorListener,dbConf.getJdbcJournalSyncPeriodMillis());
+         messageJournal = new JDBCJournalImpl(
+                 connectionProvider,
+                 sqlProviderFactory.create(dbConf.getMessageTableName(), SQLProvider.DatabaseStoreType.MESSAGE_JOURNAL),
+                 scheduledExecutorService, executorFactory.getExecutor(),
+                 criticalErrorListener,
+                 dbConf.getJdbcJournalSyncPeriodMillis());
+         largeMessagesFactory = new JDBCSequentialFileFactory(
+                 connectionProvider,
+                 sqlProviderFactory.create(dbConf.getLargeMessageTableName(), SQLProvider.DatabaseStoreType.LARGE_MESSAGE),
+                 executorFactory.getExecutor(),
+                 criticalErrorListener);
+         this.bindingsJournal = bindingsJournal;
+         this.messageJournal = messageJournal;
+         this.largeMessagesFactory = largeMessagesFactory;
          largeMessagesFactory.start();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          criticalErrorListener.onIOException(e, e.getMessage(), null);
       }
    }
 
    @Override
-   public synchronized void stop(boolean ioCriticalError) throws Exception {
+   public synchronized void stop(boolean ioCriticalError, boolean sendFailover) throws Exception {
       if (!started) {
          return;
       }
@@ -91,8 +118,6 @@ public class JDBCJournalStorageManager extends JournalStorageManager {
       bindingsJournal.stop();
       messageJournal.stop();
       largeMessagesFactory.stop();
-
-      singleThreadExecutor.shutdown();
 
       journalLoaded = false;
 

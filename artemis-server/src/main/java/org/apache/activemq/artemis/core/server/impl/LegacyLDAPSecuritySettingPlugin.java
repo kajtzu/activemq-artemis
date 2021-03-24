@@ -65,6 +65,8 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
    public static final String READ_PERMISSION_VALUE = "readPermissionValue";
    public static final String WRITE_PERMISSION_VALUE = "writePermissionValue";
    public static final String ENABLE_LISTENER = "enableListener";
+   public static final String MAP_ADMIN_TO_MANAGE = "mapAdminToManage";
+   public static final String ALLOW_QUEUE_ADMIN_ON_READ = "allowQueueAdminOnRead";
 
    private String initialContextFactory = "com.sun.jndi.ldap.LdapCtxFactory";
    private String connectionURL = "ldap://localhost:1024";
@@ -79,6 +81,8 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
    private String readPermissionValue = "read";
    private String writePermissionValue = "write";
    private boolean enableListener = true;
+   private boolean mapAdminToManage = false;
+   private boolean allowQueueAdminOnRead = false;
 
    private DirContext context;
    private EventDirContext eventContext;
@@ -101,6 +105,8 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
          readPermissionValue = getOption(options, READ_PERMISSION_VALUE, readPermissionValue);
          writePermissionValue = getOption(options, WRITE_PERMISSION_VALUE, writePermissionValue);
          enableListener = getOption(options, ENABLE_LISTENER, Boolean.TRUE.toString()).equalsIgnoreCase(Boolean.TRUE.toString());
+         mapAdminToManage = getOption(options, MAP_ADMIN_TO_MANAGE, Boolean.FALSE.toString()).equalsIgnoreCase(Boolean.TRUE.toString());
+         allowQueueAdminOnRead = getOption(options, ALLOW_QUEUE_ADMIN_ON_READ, Boolean.FALSE.toString()).equalsIgnoreCase(Boolean.TRUE.toString());
       }
 
       return this;
@@ -232,14 +238,31 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
       return this;
    }
 
+   public boolean isMapAdminToManage() {
+      return mapAdminToManage;
+   }
+
+   public LegacyLDAPSecuritySettingPlugin setMapAdminToManage(boolean mapAdminToManage) {
+      this.mapAdminToManage = mapAdminToManage;
+      return this;
+   }
+
+   public boolean isAllowQueueAdminOnRead() {
+      return allowQueueAdminOnRead;
+   }
+
+   public LegacyLDAPSecuritySettingPlugin setAllowQueueAdminOnRead(boolean allowQueueAdminOnRead) {
+      this.allowQueueAdminOnRead = allowQueueAdminOnRead;
+      return this;
+   }
+
    protected boolean isContextAlive() {
       boolean alive = false;
       if (context != null) {
          try {
             context.getAttributes("");
             alive = true;
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
          }
       }
       return alive;
@@ -267,14 +290,12 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
       env.put(Context.INITIAL_CONTEXT_FACTORY, initialContextFactory);
       if (connectionUsername != null && !"".equals(connectionUsername)) {
          env.put(Context.SECURITY_PRINCIPAL, connectionUsername);
-      }
-      else {
+      } else {
          throw new NamingException("Empty username is not allowed");
       }
       if (connectionPassword != null && !"".equals(connectionPassword)) {
          env.put(Context.SECURITY_CREDENTIALS, connectionPassword);
-      }
-      else {
+      } else {
          throw new NamingException("Empty password is not allowed");
       }
       env.put(Context.SECURITY_PROTOCOL, connectionProtocol);
@@ -295,8 +316,7 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
       ActiveMQServerLogger.LOGGER.populatingSecurityRolesFromLDAP(connectionURL);
       try {
          open();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          ActiveMQServerLogger.LOGGER.errorOpeningContextForLDAP(e);
          return this;
       }
@@ -307,12 +327,18 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
 
       securityRoles = new HashMap<>();
       try {
+         if (logger.isDebugEnabled()) {
+            logger.debug(new StringBuilder().append("Performing LDAP search: ").append(destinationBase)
+                                            .append("\n\tfilter: ").append(filter)
+                                            .append("\n\tcontrols:")
+                                            .append("\n\t\treturningAttributes: ").append(roleAttribute)
+                                            .append("\n\t\tsearchScope: SUBTREE_SCOPE"));
+         }
          NamingEnumeration<SearchResult> searchResults = context.search(destinationBase, filter, searchControls);
          while (searchResults.hasMore()) {
             processSearchResult(securityRoles, searchResults.next());
          }
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          ActiveMQServerLogger.LOGGER.errorPopulatingSecurityRolesFromLDAP(e);
       }
 
@@ -324,64 +350,92 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
       this.securityRepository = securityRepository;
    }
 
-   private void processSearchResult(Map<String, Set<Role>> securityRoles, SearchResult searchResult) throws NamingException {
+   private void processSearchResult(Map<String, Set<Role>> securityRoles,
+                                    SearchResult searchResult) throws NamingException {
+      LdapName searchResultLdapName = new LdapName(searchResult.getName());
       Attributes attrs = searchResult.getAttributes();
       if (attrs == null || attrs.size() == 0) {
+         if (logger.isDebugEnabled()) {
+            logger.debug("Skipping LDAP search result \"" + searchResultLdapName + "\" with " + (attrs == null ? "null" : attrs.size()) + " attributes");
+         }
          return;
       }
-      LdapName searchResultLdapName = new LdapName(searchResult.getName());
-      logger.debug("LDAP search result : " + searchResultLdapName);
-      String permissionType = null;
-      String destination = null;
-      String destinationType = "unknown";
-      for (Rdn rdn : searchResultLdapName.getRdns()) {
-         if (rdn.getType().equals("cn")) {
-            logger.debug("\tPermission type: " + rdn.getValue());
-            permissionType = rdn.getValue().toString();
+      List<Rdn> rdns = searchResultLdapName.getRdns();
+      if (rdns.size() < 3) {
+         if (logger.isDebugEnabled()) {
+            logger.debug("\tSkipping LDAP search result \"" + searchResultLdapName + "\" with " + rdns.size() + " RDNs.");
          }
-         if (rdn.getType().equals("uid")) {
-            logger.debug("\tDestination name: " + rdn.getValue());
-            destination = rdn.getValue().toString();
-         }
-         if (rdn.getType().equals("ou")) {
-            String rawDestinationType = rdn.getValue().toString();
-            if (rawDestinationType.toLowerCase().contains("queue")) {
-               destinationType = "queue";
-            }
-            else if (rawDestinationType.toLowerCase().contains("topic")) {
-               destinationType = "topic";
-            }
-            logger.debug("\tDestination type: " + destinationType);
-         }
+         return;
       }
-      logger.debug("\tAttributes: " + attrs);
+      StringBuilder logMessage = new StringBuilder();
+      if (logger.isDebugEnabled()) {
+         logMessage.append("LDAP search result: ").append(searchResultLdapName);
+      }
+      // we can count on the RDNs being in order from right to left
+      Rdn rdn = rdns.get(rdns.size() - 3);
+      String rawDestinationType = rdn.getValue().toString();
+      String destinationType = "unknown";
+      if (rawDestinationType.toLowerCase().contains("queue")) {
+         destinationType = "queue";
+      } else if (rawDestinationType.toLowerCase().contains("topic")) {
+         destinationType = "topic";
+      }
+      if (logger.isDebugEnabled()) {
+         logMessage.append("\n\tDestination type: ").append(destinationType);
+      }
+
+      rdn = rdns.get(rdns.size() - 2);
+      if (logger.isDebugEnabled()) {
+         logMessage.append("\n\tDestination name: ").append(rdn.getValue());
+      }
+      String destination = rdn.getValue().toString();
+
+      rdn = rdns.get(rdns.size() - 1);
+      if (logger.isDebugEnabled()) {
+         logMessage.append("\n\tPermission type: ").append(rdn.getValue());
+      }
+      String permissionType = rdn.getValue().toString();
+
+      if (logger.isDebugEnabled()) {
+         logMessage.append("\n\tAttributes: ").append(attrs);
+      }
       Attribute attr = attrs.get(roleAttribute);
       NamingEnumeration<?> e = attr.getAll();
       Set<Role> roles = securityRoles.get(destination);
       boolean exists = false;
       if (roles == null) {
          roles = new HashSet<>();
-      }
-      else {
+      } else {
          exists = true;
       }
 
       while (e.hasMore()) {
          String value = (String) e.next();
          LdapName ldapname = new LdapName(value);
-         Rdn rdn = ldapname.getRdn(ldapname.size() - 1);
+         rdn = ldapname.getRdn(ldapname.size() - 1);
          String roleName = rdn.getValue().toString();
-         logger.debug("\tRole name: " + roleName);
+         if (logger.isDebugEnabled()) {
+            logMessage.append("\n\tRole name: ").append(roleName);
+         }
+         boolean write = permissionType.equalsIgnoreCase(writePermissionValue);
+         boolean read = permissionType.equalsIgnoreCase(readPermissionValue);
+         boolean admin = permissionType.equalsIgnoreCase(adminPermissionValue);
          Role role = new Role(roleName,
-                              permissionType.equalsIgnoreCase(writePermissionValue),
-                              permissionType.equalsIgnoreCase(readPermissionValue),
-                              permissionType.equalsIgnoreCase(adminPermissionValue),
-                              permissionType.equalsIgnoreCase(adminPermissionValue),
-                              permissionType.equalsIgnoreCase(adminPermissionValue),
-                              permissionType.equalsIgnoreCase(adminPermissionValue),
-                              false, // there is no permission from ActiveMQ 5.x that corresponds to the "manage" permission in ActiveMQ Artemis
-                              permissionType.equalsIgnoreCase(readPermissionValue)); // the "browse" permission matches "read" from ActiveMQ 5.x
+                              write,                                     // send
+                              read,                                      // consume
+                              (allowQueueAdminOnRead && read) || admin,  // createDurableQueue
+                              (allowQueueAdminOnRead && read) || admin,  // deleteDurableQueue
+                              (allowQueueAdminOnRead && read) || admin,  // createNonDurableQueue
+                              admin,                                     // deleteNonDurableQueue
+                              mapAdminToManage ? admin : false,          // manage - map to admin based on configuration
+                              read,                                      // browse
+                              admin,                                     // createAddress
+                              admin);                                    // deleteAddress
          roles.add(role);
+      }
+
+      if (logger.isDebugEnabled()) {
+         logger.debug(logMessage);
       }
 
       if (!exists) {
@@ -393,8 +447,7 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
    public SecuritySettingPlugin stop() {
       try {
          eventContext.close();
-      }
-      catch (NamingException e) {
+      } catch (NamingException e) {
          // ignore
       }
 
@@ -402,8 +455,7 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
          if (context != null) {
             context.close();
          }
-      }
-      catch (NamingException e) {
+      } catch (NamingException e) {
          // ignore
       }
 
@@ -413,85 +465,100 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
    /**
     * Handler for new policy entries in the directory.
     *
-    * @param namingEvent
-    *            the new entry event that occurred
+    * @param namingEvent the new entry event that occurred
     */
    public void objectAdded(NamingEvent namingEvent) {
+      if (logger.isDebugEnabled()) {
+         logger.debug("objectAdded:\n\told binding: " + namingEvent.getOldBinding() + "\n\tnew binding: " + namingEvent.getNewBinding());
+      }
       Map<String, Set<Role>> newRoles = new HashMap<>();
 
       try {
          processSearchResult(newRoles, (SearchResult) namingEvent.getNewBinding());
          for (Map.Entry<String, Set<Role>> entry : newRoles.entrySet()) {
             Set<Role> existingRoles = securityRepository.getMatch(entry.getKey());
-            for (Role role : entry.getValue()) {
-               existingRoles.add(role);
+            // see if this the *actual* default object, not just "equals"; we don't want to change the default security match
+            if (existingRoles != securityRepository.getDefault()) {
+               for (Role role : entry.getValue()) {
+                  logger.debug("adding role " + role + " to existing roles " + existingRoles + " at " + entry.getKey());
+                  existingRoles.add(role);
+               }
+            } else {
+               logger.debug("adding new roles " + entry.getValue() + " at " + entry.getKey());
+               securityRepository.addMatch(entry.getKey(), entry.getValue());
             }
          }
-      }
-      catch (NamingException e) {
-         e.printStackTrace();
+      } catch (NamingException e) {
+         ActiveMQServerLogger.LOGGER.failedToProcessEvent(e);
       }
    }
 
    /**
     * Handler for removed policy entries in the directory.
     *
-    * @param namingEvent
-    *            the removed entry event that occurred
+    * @param namingEvent the removed entry event that occurred
     */
    public void objectRemoved(NamingEvent namingEvent) {
+      if (logger.isDebugEnabled()) {
+         logger.debug("objectRemoved:\n\told binding: " + namingEvent.getOldBinding() + "\n\tnew binding: " + namingEvent.getNewBinding());
+      }
+
       try {
          LdapName ldapName = new LdapName(namingEvent.getOldBinding().getName());
-         String match = null;
-         for (Rdn rdn : ldapName.getRdns()) {
-            if (rdn.getType().equals("uid")) {
-               match = rdn.getValue().toString();
+         List<Rdn> rdns = ldapName.getRdns();
+         if (rdns.size() < 3) {
+            if (logger.isDebugEnabled()) {
+               logger.debug("Skipping old binding name \"" + namingEvent.getOldBinding().getName() + "\" with " + rdns.size() + " RDNs.");
             }
+            return;
          }
 
-         Set<Role> roles = securityRepository.getMatch(match);
+         String match = rdns.get(rdns.size() - 2).getValue().toString();
+         if (logger.isDebugEnabled()) {
+            logger.debug("Destination name: " + match);
+         }
 
-         List<Role> rolesToRemove = new ArrayList<>();
+         if (match != null) {
+            Set<Role> roles = securityRepository.getMatch(match);
 
-         for (Rdn rdn : ldapName.getRdns()) {
-            if (rdn.getValue().equals(writePermissionValue)) {
-               logger.debug("Removing write permission");
-               for (Role role : roles) {
-                  if (role.isSend()) {
-                     rolesToRemove.add(role);
+            List<Role> rolesToRemove = new ArrayList<>();
+
+            for (Rdn rdn : ldapName.getRdns()) {
+               if (rdn.getValue().equals(writePermissionValue)) {
+                  logger.debug("Removing write permission from " + match);
+                  for (Role role : roles) {
+                     if (role.isSend()) {
+                        rolesToRemove.add(role);
+                     }
+                  }
+               } else if (rdn.getValue().equals(readPermissionValue)) {
+                  logger.debug("Removing read permission from " + match);
+                  for (Role role : roles) {
+                     if (role.isConsume()) {
+                        rolesToRemove.add(role);
+                     }
+                  }
+               } else if (rdn.getValue().equals(adminPermissionValue)) {
+                  logger.debug("Removing admin permission from " + match);
+                  for (Role role : roles) {
+                     if (role.isCreateDurableQueue() || role.isCreateNonDurableQueue() || role.isDeleteDurableQueue() || role.isDeleteNonDurableQueue()) {
+                        rolesToRemove.add(role);
+                     }
                   }
                }
-            }
-            else if (rdn.getValue().equals(readPermissionValue)) {
-               logger.debug("Removing read permission");
-               for (Role role : roles) {
-                  if (role.isConsume()) {
-                     rolesToRemove.add(role);
-                  }
-               }
-            }
-            else if (rdn.getValue().equals(adminPermissionValue)) {
-               logger.debug("Removing admin permission");
-               for (Role role : roles) {
-                  if (role.isCreateDurableQueue() || role.isCreateNonDurableQueue() || role.isDeleteDurableQueue() || role.isDeleteNonDurableQueue()) {
-                     rolesToRemove.add(role);
-                  }
-               }
-            }
 
-            for (Role roleToRemove : rolesToRemove) {
-               roles.remove(roleToRemove);
+               for (Role roleToRemove : rolesToRemove) {
+                  roles.remove(roleToRemove);
+               }
             }
          }
-      }
-      catch (NamingException e) {
-         e.printStackTrace();
+      } catch (NamingException e) {
+         ActiveMQServerLogger.LOGGER.failedToProcessEvent(e);
       }
    }
 
    /**
-    * @param namingEvent
-    *            the renaming entry event that occurred
+    * @param namingEvent the renaming entry event that occurred
     */
    public void objectRenamed(NamingEvent namingEvent) {
 
@@ -500,10 +567,12 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
    /**
     * Handler for changed policy entries in the directory.
     *
-    * @param namingEvent
-    *            the changed entry event that occurred
+    * @param namingEvent the changed entry event that occurred
     */
    public void objectChanged(NamingEvent namingEvent) {
+      if (logger.isDebugEnabled()) {
+         logger.debug("objectChanged:\n\told binding: " + namingEvent.getOldBinding() + "\n\tnew binding: " + namingEvent.getNewBinding());
+      }
       objectRemoved(namingEvent);
       objectAdded(namingEvent);
    }
@@ -511,15 +580,15 @@ public class LegacyLDAPSecuritySettingPlugin implements SecuritySettingPlugin {
    /**
     * Handler for exception events from the registry.
     *
-    * @param namingExceptionEvent
-    *            the exception event
+    * @param namingExceptionEvent the exception event
     */
    public void namingExceptionThrown(NamingExceptionEvent namingExceptionEvent) {
       context = null;
-      ActiveMQServerLogger.LOGGER.error("Caught unexpected exception.", namingExceptionEvent.getException());
+      ActiveMQServerLogger.LOGGER.caughtUnexpectedException(namingExceptionEvent.getException());
    }
 
    protected class LDAPNamespaceChangeListener implements NamespaceChangeListener, ObjectChangeListener {
+
       @Override
       public void namingExceptionThrown(NamingExceptionEvent evt) {
          LegacyLDAPSecuritySettingPlugin.this.namingExceptionThrown(evt);

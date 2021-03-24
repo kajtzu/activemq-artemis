@@ -16,13 +16,15 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
-import org.junit.Before;
-
-import org.junit.Test;
-
-import org.junit.Assert;
+import javax.jms.Connection;
+import javax.jms.ConnectionFactory;
+import javax.jms.MessageConsumer;
+import javax.jms.MessageProducer;
+import javax.jms.Session;
 
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -34,7 +36,12 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.qpid.jms.JmsConnectionFactory;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class MessageExpirationTest extends ActiveMQTestBase {
 
@@ -53,7 +60,7 @@ public class MessageExpirationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
       ClientMessage message = session.createMessage(false);
@@ -73,6 +80,50 @@ public class MessageExpirationTest extends ActiveMQTestBase {
    }
 
    @Test
+   public void testAmqpJmsReloaded() throws Exception {
+      SimpleString queue = RandomUtil.randomSimpleString();
+      SimpleString expiry = RandomUtil.randomSimpleString();
+
+      server.createQueue(new QueueConfiguration(queue).setRoutingType(RoutingType.ANYCAST));
+      server.createQueue(new QueueConfiguration(expiry));
+      server.getAddressSettingsRepository().addMatch(queue.toString(), new AddressSettings().setExpiryAddress(expiry));
+
+      ConnectionFactory cf = new JmsConnectionFactory("amqp://localhost:61616");
+      Connection connection = cf.createConnection();
+      Session session = connection.createSession();
+      MessageProducer producer = session.createProducer(session.createQueue(queue.toString()));
+      producer.setTimeToLive(EXPIRATION);
+
+      for (int i = 0; i < 20; i++) {
+         javax.jms.Message message = session.createMessage();
+         producer.send(message);
+      }
+      connection.close();
+      Wait.assertEquals(20L, () -> server.locateQueue(queue).getMessageCount(), 2000, 100);
+      Wait.assertEquals(0L, () -> server.locateQueue(expiry).getMessageCount(), 2000, 100);
+
+      server.stop();
+      server.start();
+
+      Thread.sleep(EXPIRATION * 2);
+
+      Wait.assertEquals(0L, () -> server.locateQueue(queue).getMessageCount(), 2000, 100);
+      Wait.assertEquals(20L, () -> server.locateQueue(expiry).getMessageCount(), 2000, 100);
+
+      connection = cf.createConnection();
+      session = connection.createSession();
+      MessageConsumer consumer = session.createConsumer(session.createQueue(queue.toString()));
+      connection.start();
+
+      for (int i = 0; i < 20; i++) {
+         javax.jms.Message message2 = consumer.receiveNoWait();
+         Assert.assertNull(message2);
+      }
+
+      consumer.close();
+   }
+
+   @Test
    public void testMessageExpiredWithoutExpiryAddressWithExpiryDelayOverride() throws Exception {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
@@ -80,7 +131,7 @@ public class MessageExpirationTest extends ActiveMQTestBase {
       session.close();
 
       session = addClientSession(sf.createSession(false, false, false));
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
       ClientMessage message = session.createMessage(false);
@@ -133,7 +184,7 @@ public class MessageExpirationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
       ClientConsumer consumer = session.createConsumer(queue);
@@ -162,7 +213,7 @@ public class MessageExpirationTest extends ActiveMQTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
       ClientMessage message = session.createMessage(false);
@@ -200,8 +251,8 @@ public class MessageExpirationTest extends ActiveMQTestBase {
          }
       });
 
-      session.createQueue(address, queue, false);
-      session.createQueue(expiryAddress, expiryQueue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
+      session.createQueue(new QueueConfiguration(expiryQueue).setAddress(expiryAddress).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
       ClientMessage message = session.createMessage(false);
@@ -237,7 +288,9 @@ public class MessageExpirationTest extends ActiveMQTestBase {
    public void setUp() throws Exception {
       super.setUp();
 
-      server = createServer(false);
+      server = createServer(true);
+      server.getConfiguration().addAcceptorConfiguration("amqp", "tcp://127.0.0.1:61616");
+      server.getConfiguration().setMessageExpiryScanPeriod(200);
       server.start();
       locator = createInVMNonHALocator();
       sf = createSessionFactory(locator);

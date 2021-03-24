@@ -20,6 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
@@ -42,7 +43,7 @@ import org.junit.runner.RunWith;
 @RunWith(BMUnitRunner.class)
 public class StompInternalStateTest extends ActiveMQTestBase {
 
-   private static final String STOMP_QUEUE_NAME = "jms.queue.StompTestQueue";
+   private static final String STOMP_QUEUE_NAME = "StompTestQueue";
 
    private String resultTestStompProtocolManagerLeak = null;
 
@@ -64,12 +65,11 @@ public class StompInternalStateTest extends ActiveMQTestBase {
          ServerLocator locator = createNettyNonHALocator();
          ClientSessionFactory factory = createSessionFactory(locator);
          session = factory.createSession();
-         session.createTemporaryQueue(STOMP_QUEUE_NAME, STOMP_QUEUE_NAME);
+         session.createQueue(new QueueConfiguration(STOMP_QUEUE_NAME).setDurable(false).setTemporary(true));
          session.deleteQueue(STOMP_QUEUE_NAME);
 
          assertNull(resultTestStompProtocolManagerLeak);
-      }
-      finally {
+      } finally {
          if (session != null) {
             session.close();
          }
@@ -96,8 +96,7 @@ public class StompInternalStateTest extends ActiveMQTestBase {
          if (!destinations.contains(STOMP_QUEUE_NAME)) {
             resultTestStompProtocolManagerLeak += "didn't save the queue when binding added " + destinations;
          }
-      }
-      else if (noti.getType() == CoreNotificationType.BINDING_REMOVED) {
+      } else if (noti.getType() == CoreNotificationType.BINDING_REMOVED) {
          if (destinations.contains(STOMP_QUEUE_NAME)) {
             resultTestStompProtocolManagerLeak = "didn't remove the queue when binding removed " + destinations;
          }

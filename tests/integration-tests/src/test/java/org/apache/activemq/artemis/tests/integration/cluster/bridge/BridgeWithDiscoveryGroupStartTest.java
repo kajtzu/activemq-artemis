@@ -25,18 +25,18 @@ import java.util.Map;
 
 import org.apache.activemq.artemis.api.core.BroadcastGroupConfiguration;
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
+import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
-import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnectorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.netty.NettyConnectorFactory;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
@@ -76,8 +76,7 @@ public class BridgeWithDiscoveryGroupStartTest extends ActiveMQTestBase {
       Map<String, Object> server1Params = new HashMap<>();
       if (isNetty()) {
          server1Params.put("port", TransportConstants.DEFAULT_PORT + 1);
-      }
-      else {
+      } else {
          server1Params.put(org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants.SERVER_ID_PROP_NAME, 1);
       }
       ActiveMQServer server1 = createClusteredServerWithParams(isNetty(), 1, true, server1Params);
@@ -121,15 +120,15 @@ public class BridgeWithDiscoveryGroupStartTest extends ActiveMQTestBase {
          bridgeConfigs.add(bridgeConfiguration);
          server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-         CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-         List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+         QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+         List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
          queueConfigs0.add(queueConfig0);
-         server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+         server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-         CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-         List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+         QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+         List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
          queueConfigs1.add(queueConfig1);
-         server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+         server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
          server1.start();
          server0.start();
@@ -209,8 +208,7 @@ public class BridgeWithDiscoveryGroupStartTest extends ActiveMQTestBase {
          sf0.close();
 
          sf1.close();
-      }
-      finally {
+      } finally {
          if (locator != null) {
             locator.close();
          }
@@ -227,8 +225,7 @@ public class BridgeWithDiscoveryGroupStartTest extends ActiveMQTestBase {
    private String getConnector() {
       if (isNetty()) {
          return NettyConnectorFactory.class.getName();
-      }
-      else {
+      } else {
          return InVMConnectorFactory.class.getName();
       }
    }

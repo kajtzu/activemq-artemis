@@ -19,27 +19,32 @@ package org.apache.activemq.artemis.core.io;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedChannelException;
+import java.nio.file.Files;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import io.netty.buffer.ByteBuf;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQIOErrorException;
+import org.apache.activemq.artemis.core.io.buffer.TimedBuffer;
+import org.apache.activemq.artemis.core.io.buffer.TimedBufferObserver;
 import org.apache.activemq.artemis.core.io.util.FileIOUtil;
 import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.impl.SimpleWaitIOCallback;
-import org.apache.activemq.artemis.core.io.buffer.TimedBuffer;
-import org.apache.activemq.artemis.core.io.buffer.TimedBufferObserver;
 import org.apache.activemq.artemis.journal.ActiveMQJournalBundle;
 import org.apache.activemq.artemis.journal.ActiveMQJournalLogger;
+import org.apache.activemq.artemis.utils.ByteUtil;
+import org.jboss.logging.Logger;
 
 public abstract class AbstractSequentialFile implements SequentialFile {
 
-   private File file;
+   private static final Logger logger = Logger.getLogger(AbstractSequentialFile.class);
+
+   protected File file;
 
    protected final File directory;
 
@@ -55,12 +60,7 @@ public abstract class AbstractSequentialFile implements SequentialFile {
     * Instead of having AIOSequentialFile implementing the Observer, I have done it on an inner class.
     * This is the class returned to the factory when the file is being activated.
     */
-   protected final TimedBufferObserver timedBufferObserver = new LocalBufferObserver();
-
-   /**
-    * Used for asynchronous writes
-    */
-   protected final Executor writerExecutor;
+   protected final TimedBufferObserver timedBufferObserver = createTimedBufferObserver();
 
    /**
     * @param file
@@ -74,7 +74,10 @@ public abstract class AbstractSequentialFile implements SequentialFile {
       this.file = new File(directory, file);
       this.directory = directory;
       this.factory = factory;
-      this.writerExecutor = writerExecutor;
+   }
+
+   protected TimedBufferObserver createTimedBufferObserver() {
+      return new LocalBufferObserver();
    }
 
    // Public --------------------------------------------------------
@@ -91,11 +94,13 @@ public abstract class AbstractSequentialFile implements SequentialFile {
 
    @Override
    public final void delete() throws IOException, InterruptedException, ActiveMQException {
-      if (isOpen()) {
-         close();
-      }
-
-      if (file.exists() && !file.delete()) {
+      try {
+         if (isOpen()) {
+            close(false, false);
+         }
+         Files.deleteIfExists(file.toPath());
+      } catch (Throwable t) {
+         logger.trace("Fine error while deleting file", t);
          ActiveMQJournalLogger.LOGGER.errorDeletingFile(this);
       }
    }
@@ -117,8 +122,9 @@ public abstract class AbstractSequentialFile implements SequentialFile {
          FileIOUtil.copyData(this, newFileName, buffer);
          newFileName.close();
          this.close();
-      }
-      catch (IOException e) {
+      } catch (ClosedChannelException e) {
+         throw e;
+      } catch (IOException e) {
          factory.onIOError(new ActiveMQIOErrorException(e.getMessage(), e), e.getMessage(), this);
          throw e;
       }
@@ -141,8 +147,9 @@ public abstract class AbstractSequentialFile implements SequentialFile {
    public final void renameTo(final String newFileName) throws IOException, InterruptedException, ActiveMQException {
       try {
          close();
-      }
-      catch (IOException e) {
+      } catch (ClosedChannelException e) {
+         throw e;
+      } catch (IOException e) {
          factory.onIOError(new ActiveMQIOErrorException(e.getMessage(), e), e.getMessage(), this);
          throw e;
       }
@@ -163,28 +170,13 @@ public abstract class AbstractSequentialFile implements SequentialFile {
     */
    @Override
    public synchronized void close() throws IOException, InterruptedException, ActiveMQException {
-      final CountDownLatch donelatch = new CountDownLatch(1);
-
-      if (writerExecutor != null) {
-         writerExecutor.execute(new Runnable() {
-            @Override
-            public void run() {
-               donelatch.countDown();
-            }
-         });
-
-         while (!donelatch.await(60, TimeUnit.SECONDS)) {
-            ActiveMQJournalLogger.LOGGER.couldNotCompleteTask(new Exception("trace"), file.getName());
-         }
-      }
    }
 
    @Override
    public final boolean fits(final int size) {
       if (timedBuffer == null) {
          return position.get() + size <= fileSize;
-      }
-      else {
+      } else {
          return timedBuffer.checkSize(size);
       }
    }
@@ -208,11 +200,13 @@ public abstract class AbstractSequentialFile implements SequentialFile {
       if (timedBuffer != null) {
          bytes.setIndex(0, bytes.capacity());
          timedBuffer.addBytes(bytes, sync, callback);
-      }
-      else {
-         ByteBuffer buffer = factory.newBuffer(bytes.capacity());
-         buffer.put(bytes.toByteBuffer().array());
-         buffer.rewind();
+      } else {
+         final int readableBytes = bytes.readableBytes();
+         final ByteBuffer buffer = factory.newBuffer(readableBytes);
+         //factory::newBuffer doesn't necessary return a buffer with limit == readableBytes!!
+         buffer.limit(readableBytes);
+         bytes.getBytes(bytes.readerIndex(), buffer);
+         buffer.flip();
          writeDirect(buffer, sync, callback);
       }
    }
@@ -226,8 +220,7 @@ public abstract class AbstractSequentialFile implements SequentialFile {
          write(bytes, true, completion);
 
          completion.waitCompletion();
-      }
-      else {
+      } else {
          write(bytes, false, DummyCallback.getInstance());
       }
    }
@@ -236,17 +229,13 @@ public abstract class AbstractSequentialFile implements SequentialFile {
    public void write(final EncodingSupport bytes, final boolean sync, final IOCallback callback) {
       if (timedBuffer != null) {
          timedBuffer.addBytes(bytes, sync, callback);
-      }
-      else {
-         ByteBuffer buffer = factory.newBuffer(bytes.getEncodeSize());
-
-         // If not using the TimedBuffer, a final copy is necessary
-         // Because AIO will need a specific Buffer
-         // And NIO will also need a whole buffer to perform the write
-
+      } else {
+         final int encodedSize = bytes.getEncodeSize();
+         ByteBuffer buffer = factory.newBuffer(encodedSize);
          ActiveMQBuffer outBuffer = ActiveMQBuffers.wrappedBuffer(buffer);
          bytes.encode(outBuffer);
-         buffer.rewind();
+         buffer.clear();
+         buffer.limit(encodedSize);
          writeDirect(buffer, sync, callback);
       }
    }
@@ -259,8 +248,7 @@ public abstract class AbstractSequentialFile implements SequentialFile {
          write(bytes, true, completion);
 
          completion.waitCompletion();
-      }
-      else {
+      } else {
          write(bytes, false, DummyCallback.getInstance());
       }
    }
@@ -269,73 +257,41 @@ public abstract class AbstractSequentialFile implements SequentialFile {
       return file;
    }
 
-   private static final class DelegateCallback implements IOCallback {
+   protected ByteBuffer newBuffer(int requiredCapacity, boolean zeroed) {
+      final int alignedRequiredCapacity = factory.calculateBlockSize(requiredCapacity);
 
-      final List<IOCallback> delegates;
-
-      private DelegateCallback(final List<IOCallback> delegates) {
-         this.delegates = delegates;
-      }
-
-      @Override
-      public void done() {
-         for (IOCallback callback : delegates) {
-            try {
-               callback.done();
-            }
-            catch (Throwable e) {
-               ActiveMQJournalLogger.LOGGER.errorCompletingCallback(e);
-            }
-         }
-      }
-
-      @Override
-      public void onError(final int errorCode, final String errorMessage) {
-         for (IOCallback callback : delegates) {
-            try {
-               callback.onError(errorCode, errorMessage);
-            }
-            catch (Throwable e) {
-               ActiveMQJournalLogger.LOGGER.errorCallingErrorCallback(e);
-            }
-         }
-      }
-   }
-
-   protected ByteBuffer newBuffer(int size, int limit) {
-      size = factory.calculateBlockSize(size);
-      limit = factory.calculateBlockSize(limit);
-
-      ByteBuffer buffer = factory.newBuffer(size);
-      buffer.limit(limit);
+      ByteBuffer buffer = factory.newBuffer(alignedRequiredCapacity, zeroed);
+      buffer.limit(alignedRequiredCapacity);
       return buffer;
    }
 
    protected class LocalBufferObserver implements TimedBufferObserver {
 
       @Override
-      public void flushBuffer(final ByteBuffer buffer, final boolean requestedSync, final List<IOCallback> callbacks) {
-         buffer.flip();
-
-         if (buffer.limit() == 0) {
-            factory.releaseBuffer(buffer);
-         }
-         else {
+      public void flushBuffer(final ByteBuf byteBuf, final boolean requestedSync, final List<IOCallback> callbacks) {
+         final int bytes = byteBuf.readableBytes();
+         if (bytes > 0) {
+            final ByteBuffer buffer = newBuffer(bytes, false);
+            final int alignedLimit = buffer.limit();
+            assert alignedLimit == factory.calculateBlockSize(bytes);
+            buffer.limit(bytes);
+            byteBuf.getBytes(byteBuf.readerIndex(), buffer);
+            final int missingNonZeroedBytes = alignedLimit - bytes;
+            if (missingNonZeroedBytes > 0) {
+               ByteUtil.zeros(buffer, bytes, missingNonZeroedBytes);
+            }
+            buffer.flip();
             writeDirect(buffer, requestedSync, new DelegateCallback(callbacks));
+         } else {
+            IOCallback.done(callbacks);
          }
-      }
-
-      @Override
-      public ByteBuffer newBuffer(final int size, final int limit) {
-         return AbstractSequentialFile.this.newBuffer(size, limit);
       }
 
       @Override
       public int getRemainingBytes() {
          if (fileSize - position.get() > Integer.MAX_VALUE) {
             return Integer.MAX_VALUE;
-         }
-         else {
+         } else {
             return (int) (fileSize - position.get());
          }
       }

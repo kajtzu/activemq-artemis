@@ -75,16 +75,14 @@ public class TemporaryDestinationTest extends JMSTestCase {
          try {
             tempTopic.delete();
             ProxyAssertSupport.fail();
-         }
-         catch (javax.jms.IllegalStateException e) {
+         } catch (javax.jms.IllegalStateException e) {
             // Can't delete temp dest if there are open consumers
          }
 
          consumer.close();
 
          tempTopic.delete();
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -121,14 +119,12 @@ public class TemporaryDestinationTest extends JMSTestCase {
          ProxyAssertSupport.assertNotNull(m2);
 
          ProxyAssertSupport.assertEquals(messageText, m2.getText());
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
       }
    }
-
    /**
     * http://jira.jboss.com/jira/browse/JBMESSAGING-93
     */
@@ -146,12 +142,10 @@ public class TemporaryDestinationTest extends JMSTestCase {
          try {
             producerSession.createTemporaryQueue();
             ProxyAssertSupport.fail("should throw exception");
-         }
-         catch (javax.jms.IllegalStateException e) {
+         } catch (javax.jms.IllegalStateException e) {
             // OK
          }
-      }
-      finally {
+      } finally {
          if (producerConnection != null) {
             producerConnection.close();
          }
@@ -177,14 +171,12 @@ public class TemporaryDestinationTest extends JMSTestCase {
             tempQueue.delete();
 
             ProxyAssertSupport.fail("Should throw JMSException");
-         }
-         catch (JMSException e) {
+         } catch (JMSException e) {
             // Should fail - you can't delete a temp queue if it has active consumers
          }
 
          consumer.close();
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -210,14 +202,12 @@ public class TemporaryDestinationTest extends JMSTestCase {
             tempTopic.delete();
 
             ProxyAssertSupport.fail("Should throw JMSException");
-         }
-         catch (JMSException e) {
+         } catch (JMSException e) {
             // Should fail - you can't delete a temp topic if it has active consumers
          }
 
          consumer.close();
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -265,11 +255,9 @@ public class TemporaryDestinationTest extends JMSTestCase {
          try {
             producer.send(m);
             ProxyAssertSupport.fail();
+         } catch (JMSException e) {
          }
-         catch (JMSException e) {
-         }
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -306,8 +294,7 @@ public class TemporaryDestinationTest extends JMSTestCase {
                   // this is needed to make sure the main thread has enough time to block
                   Thread.sleep(500);
                   producer.send(m);
-               }
-               catch (Exception e) {
+               } catch (Exception e) {
                   log.error(e);
                }
             }
@@ -321,8 +308,7 @@ public class TemporaryDestinationTest extends JMSTestCase {
          ProxyAssertSupport.assertEquals(messageText, m2.getText());
 
          t.join();
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -346,12 +332,10 @@ public class TemporaryDestinationTest extends JMSTestCase {
          try {
             producerSession.createTemporaryTopic();
             ProxyAssertSupport.fail("should throw exception");
-         }
-         catch (javax.jms.IllegalStateException e) {
+         } catch (javax.jms.IllegalStateException e) {
             // OK
          }
-      }
-      finally {
+      } finally {
          if (producerConnection != null) {
             producerConnection.close();
          }
@@ -370,8 +354,7 @@ public class TemporaryDestinationTest extends JMSTestCase {
       try {
          ic.lookup("/topic/" + topicName);
          ProxyAssertSupport.fail("The temporary queue should not be bound to JNDI");
-      }
-      catch (NamingException e) {
+      } catch (NamingException e) {
          // Expected
       }
    }
@@ -388,8 +371,7 @@ public class TemporaryDestinationTest extends JMSTestCase {
       try {
          ic.lookup("/queue/" + queueName);
          ProxyAssertSupport.fail("The temporary queue should not be bound to JNDI");
-      }
-      catch (NamingException e) {
+      } catch (NamingException e) {
          // Expected
       }
    }
@@ -412,8 +394,7 @@ public class TemporaryDestinationTest extends JMSTestCase {
       try {
          sessFromAnotherConn.createConsumer(tempQueue);
          ProxyAssertSupport.fail("Only temporary destination's own connection is allowed to create MessageConsumers for them.");
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
       }
 
       conn.close();
@@ -438,8 +419,7 @@ public class TemporaryDestinationTest extends JMSTestCase {
       try {
          sessFromAnotherConn.createConsumer(tempTopic);
          ProxyAssertSupport.fail("Only temporary destination's own connection is allowed to create MessageConsumers for them.");
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
       }
    }
 

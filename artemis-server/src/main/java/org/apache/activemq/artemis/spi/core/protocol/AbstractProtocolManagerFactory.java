@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import org.apache.activemq.artemis.api.core.BaseInterceptor;
+import org.apache.activemq.artemis.core.server.ActiveMQComponent;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
 
 public abstract class AbstractProtocolManagerFactory<P extends BaseInterceptor> implements ProtocolManagerFactory<P> {
 
@@ -37,8 +39,7 @@ public abstract class AbstractProtocolManagerFactory<P extends BaseInterceptor> 
    protected List<P> internalFilterInterceptors(Class<P> type, List<? extends BaseInterceptor> listIn) {
       if (listIn == null) {
          return Collections.emptyList();
-      }
-      else {
+      } else {
          CopyOnWriteArrayList<P> listOut = new CopyOnWriteArrayList<>();
          for (BaseInterceptor<?> in : listIn) {
             if (type.isInstance(in)) {
@@ -47,5 +48,9 @@ public abstract class AbstractProtocolManagerFactory<P extends BaseInterceptor> 
          }
          return listOut;
       }
+   }
+
+   @Override
+   public void loadProtocolServices(ActiveMQServer server, List<ActiveMQComponent> services) {
    }
 }

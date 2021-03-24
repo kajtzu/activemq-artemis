@@ -16,16 +16,17 @@
  */
 package org.apache.activemq.artemis.core.settings;
 
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.activemq.artemis.core.config.WildcardConfiguration;
 import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.core.settings.impl.HierarchicalObjectRepository;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class RepositoryTest extends ActiveMQTestBase {
 
@@ -59,6 +60,82 @@ public class RepositoryTest extends ActiveMQTestBase {
       Assert.assertEquals("ab#", repo.getMatch("a.b.c"));
       Assert.assertEquals("abd#", repo.getMatch("a.b.d.lll"));
       Assert.assertEquals("root", repo.getMatch("z.z.z.z.z"));
+      Assert.assertEquals("root", repo.getMatch("a.babc"));
+      Assert.assertEquals("ab#", repo.getMatch("a.b.dabc"));
+      Assert.assertEquals("abd#", repo.getMatch("a.b.d"));
+   }
+
+   @Test
+   public void testCacheWithWildcards() throws Throwable {
+      HierarchicalObjectRepository<String> repo = new HierarchicalObjectRepository<>();
+
+      repo.addMatch("#", "root");
+      Assert.assertEquals("root", repo.getMatch("b"));
+
+      repo.addMatch("b", "leaf");
+      Assert.assertEquals("leaf", repo.getMatch("b"));
+   }
+
+   @Test
+   public void testMultipleMatchesHasRightOrder() {
+      HierarchicalRepository<String> repository = new HierarchicalObjectRepository<>();
+      repository.addMatch("a.b.c.d.e.f", "a.b.c.d.e.f");//1
+      repository.addMatch("a.b.c.d.e.*", "a.b.c.d.e.*");//2
+      repository.addMatch("a.*.*.*.*.*", "a.*.*.*.*.*");//3
+      repository.addMatch("*.b.c.d.*.f", "*.b.c.d.*.f");//4
+      repository.addMatch("*.b.*.d.*.f", "*.b.*.d.*.f");//5
+      repository.addMatch("a.b.c.d.e.#", "a.b.c.d.e.#");//6
+
+      String val = repository.getMatch("a.b.c.d.e.f");//matches all
+      Assert.assertEquals("a.b.c.d.e.f", val);
+      val = repository.getMatch("a.b.c.d.e.x");//matches 2,3,6
+      Assert.assertEquals("a.b.c.d.e.*", val);
+      val = repository.getMatch("a.b.x.d.x.f");//matches 3,5
+      Assert.assertEquals("a.*.*.*.*.*", val);
+      val = repository.getMatch("x.b.c.d.e.f");//matches 4,5
+      Assert.assertEquals("*.b.c.d.*.f", val);
+      val = repository.getMatch("x.b.x.d.e.f");//matches 5
+      Assert.assertEquals("*.b.*.d.*.f", val);
+      val = repository.getMatch("a.b.c.d.e.f.g");//matches 6
+      Assert.assertEquals("a.b.c.d.e.#", val);
+   }
+
+   @Test
+   public void testMatchingDocsCustomUnderscorDelimiter() throws Throwable {
+      WildcardConfiguration wildcardConfiguration = new WildcardConfiguration();
+      wildcardConfiguration.setDelimiter('_');
+      HierarchicalObjectRepository<String> repo = new HierarchicalObjectRepository<>(wildcardConfiguration);
+
+      repo.addMatch("a_b_#", "ab#");
+      repo.addMatch("a_b_d_#", "abd#");
+      repo.addMatch("#", "root");
+
+      Assert.assertEquals("ab#", repo.getMatch("a_b"));
+      Assert.assertEquals("ab#", repo.getMatch("a_b_c"));
+      Assert.assertEquals("abd#", repo.getMatch("a_b_d_lll"));
+      Assert.assertEquals("root", repo.getMatch("z_z_z_z_z"));
+      Assert.assertEquals("root", repo.getMatch("a_babc"));
+      Assert.assertEquals("ab#", repo.getMatch("a_b_dabc"));
+      Assert.assertEquals("abd#", repo.getMatch("a_b_d"));
+   }
+
+   @Test
+   public void testMatchingDocsCustomForwardSlashDelimiter() throws Throwable {
+      WildcardConfiguration wildcardConfiguration = new WildcardConfiguration();
+      wildcardConfiguration.setDelimiter('/');
+      HierarchicalObjectRepository<String> repo = new HierarchicalObjectRepository<>(wildcardConfiguration);
+
+      repo.addMatch("a/b/#", "ab#");
+      repo.addMatch("a/b/d/#", "abd#");
+      repo.addMatch("#", "root");
+
+      Assert.assertEquals("ab#", repo.getMatch("a/b"));
+      Assert.assertEquals("ab#", repo.getMatch("a/b/c"));
+      Assert.assertEquals("abd#", repo.getMatch("a/b/d/lll"));
+      Assert.assertEquals("root", repo.getMatch("z/z/z/z/z"));
+      Assert.assertEquals("root", repo.getMatch("a/babc"));
+      Assert.assertEquals("ab#", repo.getMatch("a/b/dabc"));
+      Assert.assertEquals("abd#", repo.getMatch("a/b/d"));
    }
 
    @Test
@@ -72,13 +149,13 @@ public class RepositoryTest extends ActiveMQTestBase {
    public void testSingletwo() {
       securityRepository.addMatch("queues.another.aq.*", new HashSet<Role>());
       HashSet<Role> roles = new HashSet<>(2);
-      roles.add(new Role("test1", true, true, true, true, true, true, true, true));
-      roles.add(new Role("test2", true, true, true, true, true, true, true, true));
+      roles.add(new Role("test1", true, true, true, true, true, true, true, true, true, true));
+      roles.add(new Role("test2", true, true, true, true, true, true, true, true, true, true));
       securityRepository.addMatch("queues.aq", roles);
       HashSet<Role> roles2 = new HashSet<>(2);
-      roles2.add(new Role("test1", true, true, true, true, true, true, true, true));
-      roles2.add(new Role("test2", true, true, true, true, true, true, true, true));
-      roles2.add(new Role("test3", true, true, true, true, true, true, true, true));
+      roles2.add(new Role("test1", true, true, true, true, true, true, true, true, true, true));
+      roles2.add(new Role("test2", true, true, true, true, true, true, true, true, true, true));
+      roles2.add(new Role("test3", true, true, true, true, true, true, true, true, true, true));
       securityRepository.addMatch("queues.another.andanother", roles2);
 
       HashSet<Role> hashSet = securityRepository.getMatch("queues.another.andanother");
@@ -89,8 +166,8 @@ public class RepositoryTest extends ActiveMQTestBase {
    public void testWithoutWildcard() {
       securityRepository.addMatch("queues.1.*", new HashSet<Role>());
       HashSet<Role> roles = new HashSet<>(2);
-      roles.add(new Role("test1", true, true, true, true, true, true, true, true));
-      roles.add(new Role("test2", true, true, true, true, true, true, true, true));
+      roles.add(new Role("test1", true, true, true, true, true, true, true, true, true, true));
+      roles.add(new Role("test2", true, true, true, true, true, true, true, true, true, true));
       securityRepository.addMatch("queues.2.aq", roles);
       HashSet<Role> hashSet = securityRepository.getMatch("queues.2.aq");
       Assert.assertEquals(hashSet.size(), 2);
@@ -217,15 +294,13 @@ public class RepositoryTest extends ActiveMQTestBase {
       try {
          repository.addMatch("hjhjhjhjh.#.hhh", "test");
          fail("expected exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // pass
       }
       try {
          repository.addMatch(null, "test");
          fail("expected exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // pass
       }
    }

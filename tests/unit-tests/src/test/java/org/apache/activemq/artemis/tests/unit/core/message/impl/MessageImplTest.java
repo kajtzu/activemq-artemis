@@ -21,17 +21,32 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ICoreMessage;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.api.core.client.ClientConsumer;
+import org.apache.activemq.artemis.api.core.client.ClientMessage;
+import org.apache.activemq.artemis.api.core.client.ClientProducer;
+import org.apache.activemq.artemis.api.core.client.ClientSession;
+import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
+import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.core.client.impl.ClientMessageImpl;
+import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
+import org.apache.activemq.artemis.core.message.impl.CoreMessage;
+import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionSendMessage;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
-import org.apache.activemq.artemis.core.client.impl.ClientMessageImpl;
-import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionSendMessage;
-import org.apache.activemq.artemis.core.server.impl.ServerMessageImpl;
+import org.apache.activemq.artemis.utils.UUID;
+import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.apache.activemq.artemis.utils.Wait;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class MessageImplTest extends ActiveMQTestBase {
+   private static final Logger log = Logger.getLogger(MessageImplTest.class);
 
    @Test
    public void getSetAttributes() {
@@ -46,9 +61,9 @@ public class MessageImplTest extends ActiveMQTestBase {
          final long expiration = RandomUtil.randomLong();
          final long timestamp = RandomUtil.randomLong();
          final byte priority = RandomUtil.randomByte();
-         Message message1 = new ClientMessageImpl(type, durable, expiration, timestamp, priority, 100);
+         ICoreMessage message1 = new ClientMessageImpl(type, durable, expiration, timestamp, priority, 100);
 
-         Message message = message1;
+         ICoreMessage message = message1;
 
          Assert.assertEquals(type, message.getType());
          Assert.assertEquals(durable, message.isDurable());
@@ -63,7 +78,7 @@ public class MessageImplTest extends ActiveMQTestBase {
          final byte priority2 = RandomUtil.randomByte();
 
          message.setAddress(destination);
-         Assert.assertEquals(destination, message.getAddress());
+         Assert.assertEquals(destination, message.getAddressSimpleString());
 
          message.setDurable(durable2);
          Assert.assertEquals(durable2, message.isDurable());
@@ -225,17 +240,75 @@ public class MessageImplTest extends ActiveMQTestBase {
    public void testMessageCopyIssue() throws Exception {
       for (long i = 0; i < 300; i++) {
          if (i % 10 == 0)
-            System.out.println("#test " + i);
+            log.debug("#test " + i);
          internalMessageCopy();
       }
    }
 
+   @Test
+   public void testMessageCopyHeadersAndProperties() {
+      CoreMessage msg1 = new CoreMessage(123, 18);
+      SimpleString address = new SimpleString("address");
+      msg1.setAddress(address);
+      UUID uid = UUIDGenerator.getInstance().generateUUID();
+      msg1.setUserID(uid);
+      byte type = 3;
+      msg1.setType(type);
+      boolean durable = true;
+      msg1.setDurable(durable);
+      long expiration = System.currentTimeMillis();
+      msg1.setExpiration(expiration);
+      long timestamp = System.currentTimeMillis();
+      msg1.setTimestamp(timestamp);
+      byte priority = 9;
+      msg1.setPriority(priority);
+
+      String routeTo = "_HQ_ROUTE_TOsomething";
+      String value = "Byte array substitute";
+      msg1.putStringProperty(routeTo, value);
+
+      CoreMessage msg2 = new CoreMessage(456, 18);
+
+      msg2.moveHeadersAndProperties(msg1);
+
+      assertEquals(msg1.getAddress(), msg2.getAddress());
+      assertEquals(msg1.getUserID(), msg2.getUserID());
+      assertEquals(msg1.getType(), msg2.getType());
+      assertEquals(msg1.isDurable(), msg2.isDurable());
+      assertEquals(msg1.getExpiration(), msg2.getExpiration());
+      assertEquals(msg1.getTimestamp(), msg2.getTimestamp());
+      assertEquals(msg1.getPriority(), msg2.getPriority());
+
+      assertEquals(value, msg2.getStringProperty(routeTo));
+
+      //now change the property on msg2 shouldn't affect msg1
+      msg2.setAddress(address.concat("new"));
+      msg2.setUserID(UUIDGenerator.getInstance().generateUUID());
+      msg2.setType(--type);
+      msg2.setDurable(!durable);
+      msg2.setExpiration(expiration + 1000);
+      msg2.setTimestamp(timestamp + 1000);
+      msg2.setPriority(--priority);
+
+      msg2.putStringProperty(routeTo, value + "new");
+
+      assertNotEquals(msg1.getAddress(), msg2.getAddress());
+      assertNotEquals(msg1.getUserID(), msg2.getUserID());
+      assertNotEquals(msg1.getType(), msg2.getType());
+      assertNotEquals(msg1.isDurable(), msg2.isDurable());
+      assertNotEquals(msg1.getExpiration(), msg2.getExpiration());
+      assertNotEquals(msg1.getTimestamp(), msg2.getTimestamp());
+      assertNotEquals(msg1.getPriority(), msg2.getPriority());
+
+      assertNotEquals(msg1.getStringProperty(routeTo), msg2.getStringProperty(routeTo));
+
+   }
+
    private void internalMessageCopy() throws Exception {
       final long RUNS = 2;
-      final ServerMessageImpl msg = new ServerMessageImpl(123, 18);
+      final CoreMessage msg = new CoreMessage(123, 18);
 
       msg.setMessageID(RandomUtil.randomLong());
-      msg.encodeMessageIDToBuffer();
       msg.setAddress(new SimpleString("Batatantkashf aksjfh aksfjh askfdjh askjfh "));
 
       final AtomicInteger errors = new AtomicInteger(0);
@@ -252,15 +325,13 @@ public class MessageImplTest extends ActiveMQTestBase {
             latchAlign.countDown();
             try {
                latchReady.await();
-            }
-            catch (Exception ignored) {
+            } catch (Exception ignored) {
             }
 
             for (int i = 0; i < RUNS; i++) {
                try {
-                  ServerMessageImpl newMsg = (ServerMessageImpl) msg.copy();
-               }
-               catch (Throwable e) {
+                  Message newMsg = msg.copy();
+               } catch (Throwable e) {
                   e.printStackTrace();
                   errors.incrementAndGet();
                }
@@ -284,19 +355,22 @@ public class MessageImplTest extends ActiveMQTestBase {
             latchAlign.countDown();
             try {
                latchReady.await();
-            }
-            catch (Exception ignored) {
+            } catch (Exception ignored) {
             }
 
             for (int i = 0; i < RUNS; i++) {
+               ActiveMQBuffer buf = null;
                try {
                   SessionSendMessage ssm = new SessionSendMessage(msg);
-                  ActiveMQBuffer buf = ssm.encode(null);
+                  buf = ssm.encode(null);
                   simulateRead(buf);
-               }
-               catch (Throwable e) {
+               } catch (Throwable e) {
                   e.printStackTrace();
                   errors.incrementAndGet();
+               } finally {
+                  if ( buf != null ) {
+                     buf.release();
+                  }
                }
             }
          }
@@ -333,6 +407,56 @@ public class MessageImplTest extends ActiveMQTestBase {
       // ok this is not actually happening during the read process, but changing this shouldn't affect the buffer on copy
       // this is to exaggerate the isolation on this test
       buf.writeBytes(new byte[1024]);
+   }
+
+   @Test
+   public void testCloseCallBuffer() throws Exception {
+
+      SimpleString ADDRESS = new SimpleString("SimpleAddress");
+
+      final int messageSize = 1024 * 1024 - 64;
+
+      final int journalsize = 10 * 1024 * 1024;
+
+      ServerLocator locator = createInVMNonHALocator();
+
+      locator.setMinLargeMessageSize(1024 * 1024);
+
+      ClientSession session = null;
+
+      ConfigurationImpl config = (ConfigurationImpl)createDefaultConfig(false);
+      config.setJournalFileSize(journalsize).setJournalBufferSize_AIO(1024 * 1024).setJournalBufferSize_NIO(1024 * 1024);
+
+      ActiveMQServer server = createServer(true, config);
+
+      server.start();
+
+      ClientSessionFactory sf = addSessionFactory(createSessionFactory(locator));
+
+      session = addClientSession(sf.createSession(false, false, 0));
+
+      session.createQueue(new QueueConfiguration(ADDRESS));
+
+      ClientProducer producer = session.createProducer(ADDRESS);
+
+      ClientConsumer consumer = session.createConsumer(ADDRESS);
+
+      ClientMessage clientFile = session.createMessage(true);
+      for (int i = 0; i < messageSize; i++) {
+         clientFile.getBodyBuffer().writeByte(getSamplebyte(i));
+      }
+
+      producer.send(clientFile);
+
+      session.commit();
+
+      session.start();
+
+      ClientMessage msg1 = consumer.receive(1000);
+
+      Wait.assertTrue(server::isActive);
+
+      assertNotNull(msg1);
    }
 
    // Protected -------------------------------------------------------------------------------

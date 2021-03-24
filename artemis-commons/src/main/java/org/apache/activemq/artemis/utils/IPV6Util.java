@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,8 +16,6 @@
  */
 
 package org.apache.activemq.artemis.utils;
-
-import com.google.common.net.InetAddresses;
 
 public class IPV6Util {
 
@@ -41,6 +39,21 @@ public class IPV6Util {
          }
       }
 
+      return host;
+   }
+
+   public static String stripBracketsAndZoneID(String host) {
+      // if the host contains a ':' then we know it's not IPv4
+      if (host != null && host.length() > 2 && host.contains(":")) {
+         // Strip opening/closing brackets
+         if (host.startsWith("[") && host.endsWith("]")) {
+            host = host.substring(1, host.length() - 1);
+         }
+
+         if (host.contains("%")) {
+            return host.substring(0, host.indexOf("%"));
+         }
+      }
       return host;
    }
 }

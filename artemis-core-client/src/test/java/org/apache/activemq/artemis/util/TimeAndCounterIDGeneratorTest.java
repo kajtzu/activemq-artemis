@@ -16,13 +16,13 @@
  */
 package org.apache.activemq.artemis.util;
 
-import org.apache.activemq.artemis.utils.ConcurrentHashSet;
-import org.apache.activemq.artemis.utils.TimeAndCounterIDGenerator;
-import org.junit.Assert;
-import org.junit.Test;
-
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+
+import org.apache.activemq.artemis.utils.TimeAndCounterIDGenerator;
+import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class TimeAndCounterIDGeneratorTest extends Assert {
 
@@ -77,8 +77,6 @@ public class TimeAndCounterIDGeneratorTest extends Assert {
 
       final TimeAndCounterIDGenerator seq = new TimeAndCounterIDGenerator();
 
-      System.out.println("Time = " + TimeAndCounterIDGeneratorTest.hex(System.currentTimeMillis()) + ", " + seq);
-
       final int NUMBER_OF_THREADS = 100;
 
       final int NUMBER_OF_IDS = 10;
@@ -108,8 +106,7 @@ public class TimeAndCounterIDGeneratorTest extends Assert {
 
                   hashSet.add(value);
                }
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                this.e = e;
             }
          }
@@ -144,8 +141,6 @@ public class TimeAndCounterIDGeneratorTest extends Assert {
    public void testWrapID() throws Throwable {
       TimeAndCounterIDGenerator seq = new TimeAndCounterIDGenerator();
 
-      System.out.println("Current Time = " + TimeAndCounterIDGeneratorTest.hex(System.currentTimeMillis()) + " " + seq);
-
       seq.setInternalDate(System.currentTimeMillis() + 10000L); // 10 seconds in the future
 
       seq.setInternalID(TimeAndCounterIDGenerator.ID_MASK); // 1 ID about to explode
@@ -154,8 +149,7 @@ public class TimeAndCounterIDGeneratorTest extends Assert {
          // This is simulating a situation where we generated more than 268 million messages on the same time interval
          seq.generateID();
          Assert.fail("It was supposed to throw an exception, as the counter was set to explode on this test");
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
       }
 
       seq = new TimeAndCounterIDGenerator();

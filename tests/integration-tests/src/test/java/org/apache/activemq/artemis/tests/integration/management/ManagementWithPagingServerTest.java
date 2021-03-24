@@ -16,8 +16,16 @@
  */
 package org.apache.activemq.artemis.tests.integration.management;
 
+import javax.json.JsonArray;
+import javax.json.JsonObject;
+import javax.json.JsonValue;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.JsonUtil;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -32,12 +40,10 @@ import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.apache.johnzon.core.JsonLongImpl;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-
-import javax.json.JsonArray;
-import java.nio.ByteBuffer;
 
 /**
  * This class contains tests for core management
@@ -56,7 +62,7 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session1.createQueue(address, queue, null, true);
+      session1.createQueue(new QueueConfiguration(queue).setAddress(address));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -79,7 +85,12 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
       String result = queueControl.listMessagesAsJSON(null);
 
       JsonArray array = JsonUtil.readJsonArray(result);
-
+      List<Long> longs = new ArrayList<>();
+      for (JsonValue jsonValue : array) {
+         JsonValue val = ((JsonObject) jsonValue).get("messageID");
+         Long l = ((JsonLongImpl) val).longValue();
+         longs.add(l);
+      }
       assertEquals(num, array.size());
 
       //kick off receiver
@@ -99,7 +110,7 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session1.createQueue(address, queue, null, true);
+      session1.createQueue(new QueueConfiguration(queue).setAddress(address));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -121,8 +132,7 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
          ClientMessage message = session1.createMessage(true);
          if (i % 2 == 0) {
             message.putLongProperty(key, matchingValue);
-         }
-         else {
+         } else {
             message.putLongProperty(key, unmatchingValue);
          }
          producer.send(message);
@@ -132,7 +142,9 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
       Assert.assertNotNull(jsonString);
       JsonArray array = JsonUtil.readJsonArray(jsonString);
       Assert.assertEquals(num / 2, array.size());
-      Assert.assertEquals(matchingValue, array.getJsonObject(0).getJsonNumber("key").longValue());
+
+      long l = Long.parseLong(array.getJsonObject(0).get("key").toString().replaceAll("\"", ""));
+      Assert.assertEquals(matchingValue, l);
 
       long n = queueControl.countMessages(filter);
       assertEquals(num / 2, n);
@@ -152,7 +164,7 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
       SimpleString address = RandomUtil.randomSimpleString();
       SimpleString queue = RandomUtil.randomSimpleString();
 
-      session1.createQueue(address, queue, null, true);
+      session1.createQueue(new QueueConfiguration(queue).setAddress(address));
 
       QueueControl queueControl = createManagementControl(address, queue);
 
@@ -194,7 +206,7 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
 
       server = addServer(ActiveMQServers.newActiveMQServer(config, mbeanServer, true));
 
-      AddressSettings defaultSetting = new AddressSettings().setPageSizeBytes(5120).setMaxSizeBytes(10240).setAddressFullMessagePolicy(AddressFullMessagePolicy.PAGE);
+      AddressSettings defaultSetting = new AddressSettings().setPageSizeBytes(5120).setMaxSizeBytes(10240).setAddressFullMessagePolicy(AddressFullMessagePolicy.PAGE).setManagementBrowsePageSize(1000);
 
       server.getAddressSettingsRepository().addMatch("#", defaultSetting);
 
@@ -236,18 +248,17 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
 
             for (int i = 0; i < num; i++) {
                ClientMessage message = session1.createMessage(true);
+               message.setPriority((byte) 1);
                ActiveMQBuffer buffer = message.getBodyBuffer();
                buffer.writeBytes(body);
                producer.send(message);
                try {
                   Thread.sleep(delay);
-               }
-               catch (InterruptedException e) {
+               } catch (InterruptedException e) {
                   //ignore
                }
             }
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             error = e;
          }
       }
@@ -282,13 +293,11 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
                session2.commit();
                try {
                   Thread.sleep(delay);
-               }
-               catch (InterruptedException e) {
+               } catch (InterruptedException e) {
                   //ignore
                }
             }
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             error = e;
          }
       }
@@ -316,13 +325,11 @@ public class ManagementWithPagingServerTest extends ManagementTestBase {
                queueControl.listMessagesAsJSON(null);
                try {
                   Thread.sleep(1000);
-               }
-               catch (InterruptedException e) {
+               } catch (InterruptedException e) {
                   //ignore
                }
             }
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             error = e;
          }
       }

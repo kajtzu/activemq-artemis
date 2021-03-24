@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -33,13 +34,13 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
-import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.JournalType;
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
@@ -258,9 +259,8 @@ public class NIOMultiThreadCompactorStressTest extends ActiveMQTestBase {
    private void addBogusData(final int nmessages, final String queue) throws ActiveMQException {
       ClientSession session = sf.createSession(false, false);
       try {
-         session.createQueue(queue, queue, true);
-      }
-      catch (Exception ignored) {
+         session.createQueue(new QueueConfiguration(queue));
+      } catch (Exception ignored) {
       }
 
       ClientProducer prod = session.createProducer(queue);
@@ -284,8 +284,7 @@ public class NIOMultiThreadCompactorStressTest extends ActiveMQTestBase {
          if (server != null && server.isStarted()) {
             server.stop();
          }
-      }
-      catch (Throwable e) {
+      } catch (Throwable e) {
          e.printStackTrace(System.out); // System.out => junit reports
       }
 
@@ -316,9 +315,8 @@ public class NIOMultiThreadCompactorStressTest extends ActiveMQTestBase {
       ClientSession sess = sf.createSession();
 
       try {
-         sess.createQueue(ADDRESS, QUEUE, true);
-      }
-      catch (Exception ignored) {
+         sess.createQueue(new QueueConfiguration(QUEUE).setAddress(ADDRESS));
+      } catch (Exception ignored) {
       }
 
       sess.close();
@@ -401,16 +399,13 @@ public class NIOMultiThreadCompactorStressTest extends ActiveMQTestBase {
                                   " sent " +
                                   numberOfMessages +
                                   "  messages");
-         }
-         catch (Throwable e) {
+         } catch (Throwable e) {
             e.printStackTrace();
             this.e = e;
-         }
-         finally {
+         } finally {
             try {
                session.close();
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                this.e = e;
             }
          }
@@ -454,15 +449,12 @@ public class NIOMultiThreadCompactorStressTest extends ActiveMQTestBase {
                                   " messages");
 
             session.commit();
-         }
-         catch (Throwable e) {
+         } catch (Throwable e) {
             this.e = e;
-         }
-         finally {
+         } finally {
             try {
                session.close();
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                this.e = e;
             }
          }

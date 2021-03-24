@@ -16,12 +16,19 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -30,18 +37,24 @@ import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.core.client.impl.ServerLocatorImpl;
+import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.config.impl.SecurityConfiguration;
+import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
+import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
+import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
+import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
+import org.apache.activemq.artemis.spi.core.security.jaas.InVMLoginModule;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
+import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class CoreClientTest extends ActiveMQTestBase {
-
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    @Test
    public void testCoreClientNetty() throws Exception {
@@ -57,9 +70,9 @@ public class CoreClientTest extends ActiveMQTestBase {
    public void testCoreClientWithInjectedThreadPools() throws Exception {
 
       ExecutorService threadPool = Executors.newCachedThreadPool(ActiveMQThreadFactory.defaultThreadFactory());
-      ScheduledThreadPoolExecutor scheduledThreadPool =  new ScheduledThreadPoolExecutor(10);
+      ScheduledThreadPoolExecutor scheduledThreadPool = new ScheduledThreadPoolExecutor(10);
 
-      ServerLocator locator =  createNonHALocator(false);
+      ServerLocator locator = createNonHALocator(false);
       boolean setThreadPools = locator.setThreadPools(threadPool, scheduledThreadPool);
 
       assertTrue(setThreadPools);
@@ -83,8 +96,7 @@ public class CoreClientTest extends ActiveMQTestBase {
          ActiveMQClient.clearThreadPools();
          ServerLocator locator = createNonHALocator(false);
          testCoreClient(true, locator);
-      }
-      finally {
+      } finally {
          // restoring original value otherwise future tests would be screwed up
          ActiveMQClient.setGlobalThreadPoolProperties(originalGlobal, originalScheduled);
          ActiveMQClient.clearThreadPools();
@@ -104,7 +116,7 @@ public class CoreClientTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -126,8 +138,6 @@ public class CoreClientTest extends ActiveMQTestBase {
          producer.send(message);
       }
 
-      CoreClientTest.log.info("sent messages");
-
       ClientConsumer consumer = session.createConsumer(QUEUE);
 
       session.start();
@@ -140,6 +150,123 @@ public class CoreClientTest extends ActiveMQTestBase {
          Assert.assertEquals("testINVMCoreClient", buffer.readString());
 
          message2.acknowledge();
+      }
+
+      sf.close();
+   }
+
+   @Test
+   public void testCoreClientPrefixes() throws Exception {
+      internalTestCoreClientPrefixes(false);
+   }
+
+   @Test
+   public void testCoreClientPrefixesWithSecurity() throws Exception {
+      internalTestCoreClientPrefixes(true);
+   }
+
+   public void internalTestCoreClientPrefixes(boolean security) throws Exception {
+
+      Configuration configuration = createBasicConfig();
+      configuration.clearAcceptorConfigurations();
+      configuration.addAddressesSetting("#", new AddressSettings().setMaxSizeBytes(10 * 1024 * 1024).setPageSizeBytes(1024 * 1024));
+
+      String baseAddress = "foo";
+
+      List<String> anycastPrefixes = new ArrayList<>();
+      anycastPrefixes.add("anycast://");
+      anycastPrefixes.add("queue://");
+      anycastPrefixes.add("jms.queue.");
+
+      List<String> multicastPrefixes = new ArrayList<>();
+      multicastPrefixes.add("multicast://");
+      multicastPrefixes.add("topic://");
+      multicastPrefixes.add("jms.topic.");
+
+      String locatorString = "tcp://localhost:5445";
+      StringBuilder acceptor = new StringBuilder(locatorString + "?PROTOCOLS=CORE;anycastPrefix=");
+      for (String prefix : anycastPrefixes) {
+         acceptor.append(prefix + ",");
+      }
+      acceptor.append(";multicastPrefix=");
+      for (String prefix : multicastPrefixes) {
+         acceptor.append(prefix + ",");
+      }
+
+      configuration.addAcceptorConfiguration("prefix", acceptor.toString());
+
+      ActiveMQJAASSecurityManager securityManager = null;
+
+      if (security) {
+         configuration.setSecurityEnabled(true);
+
+         SecurityConfiguration securityConfiguration = new SecurityConfiguration();
+         securityConfiguration.addUser("myUser", "myPass");
+         securityConfiguration.addRole("myUser", "myrole");
+         securityManager = new ActiveMQJAASSecurityManager(InVMLoginModule.class.getName(), securityConfiguration);
+      }
+
+      ActiveMQServer server = addServer(new ActiveMQServerImpl(configuration, securityManager));
+
+      server.start();
+
+      Role myRole = new Role("myrole", true, true, true, true, true, true, true, true, true, true);
+      Set<Role> anySet = new HashSet<>();
+      anySet.add(myRole);
+      server.getSecurityRepository().addMatch(baseAddress, anySet);
+
+      ServerLocator locator = addServerLocator(ServerLocatorImpl.newLocator(locatorString));
+
+      ClientSessionFactory sf = createSessionFactory(locator);
+
+      ClientSession session = sf.createSession("myUser", "myPass", false, true, true, false, 0);
+
+      Map<String, ClientConsumer> consumerMap = new HashMap<>();
+
+      for (String prefix : anycastPrefixes) {
+         String queueName = UUIDGenerator.getInstance().generateSimpleStringUUID().toString();
+         String address = prefix + baseAddress;
+
+         session.createQueue(new QueueConfiguration(queueName).setAddress(prefix + baseAddress).setDurable(false));
+         consumerMap.put(address, session.createConsumer(queueName));
+      }
+
+      for (String prefix : multicastPrefixes) {
+         String queueName = UUIDGenerator.getInstance().generateSimpleStringUUID().toString();
+         String address = prefix + baseAddress;
+
+         session.createQueue(new QueueConfiguration(queueName).setAddress(prefix + baseAddress).setDurable(false));
+         consumerMap.put(address, session.createConsumer(queueName));
+      }
+
+      session.start();
+
+      final int numMessages = 3;
+
+      for (String prefix : anycastPrefixes) {
+         ClientProducer producer = session.createProducer(prefix + baseAddress);
+         for (int i = 0; i < numMessages; i++) {
+            ClientMessage message = session.createMessage(ActiveMQTextMessage.TYPE, false, 0, System.currentTimeMillis(), (byte) 1);
+            message.getBodyBuffer().writeString("testINVMCoreClient");
+            producer.send(message);
+         }
+
+         // Ensure that messages are load balanced across all queues
+
+         for (String queuePrefix : anycastPrefixes) {
+            ClientConsumer consumer = consumerMap.get(queuePrefix + baseAddress);
+            for (int i = 0; i < numMessages / anycastPrefixes.size(); i++) {
+               ClientMessage message = consumer.receive(1000);
+               assertNotNull(message);
+               message.acknowledge();
+            }
+            assertNull(consumer.receiveImmediate());
+         }
+
+         for (String multicastPrefix : multicastPrefixes) {
+            ClientConsumer consumer = consumerMap.get(multicastPrefix + baseAddress);
+            assertNull(consumer.receiveImmediate());
+         }
       }
 
       sf.close();

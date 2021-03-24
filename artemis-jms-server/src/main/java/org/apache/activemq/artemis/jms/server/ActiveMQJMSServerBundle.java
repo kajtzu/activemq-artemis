@@ -19,15 +19,15 @@ package org.apache.activemq.artemis.jms.server;
 import org.apache.activemq.artemis.api.core.ActiveMQAddressExistsException;
 import org.apache.activemq.artemis.api.core.ActiveMQIllegalStateException;
 import org.apache.activemq.artemis.api.core.ActiveMQInternalErrorException;
+import org.jboss.logging.Messages;
 import org.jboss.logging.annotations.Cause;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageBundle;
-import org.jboss.logging.Messages;
 
 /**
  * Logger Code 12
  *
- * each message id must be 6 digits long starting with 10, the 3rd digit should be 9
+ * each message id must be 6 digits long starting with 12, the 3rd digit should be 9
  *
  * so 129000 to 129999
  */

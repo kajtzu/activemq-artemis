@@ -16,9 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.jms.cluster;
 
-import org.apache.activemq.artemis.tests.util.JMSClusteredTestBase;
-import org.junit.Test;
-
 import javax.jms.Connection;
 import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
@@ -26,7 +23,12 @@ import javax.jms.Queue;
 import javax.jms.Session;
 import javax.jms.TextMessage;
 
+import org.apache.activemq.artemis.tests.util.JMSClusteredTestBase;
+import org.junit.Test;
+
 public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
+
+   public static final String QUEUE_NAME = "target";
 
    // Constants -----------------------------------------------------
 
@@ -40,10 +42,8 @@ public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
 
    @Test
    public void testClusteredQueue() throws Exception {
-      System.out.println("Server1 = " + server1.getNodeID());
-      System.out.println("Server2 = " + server2.getNodeID());
-      jmsServer1.createQueue(false, "target", null, true, "/queue/target");
-      jmsServer2.createQueue(false, "target", null, true, "/queue/target");
+      jmsServer1.createQueue(false, QUEUE_NAME, null, true, "/queue/target");
+      jmsServer2.createQueue(false, QUEUE_NAME, null, true, "/queue/target");
 
       Connection conn1 = cf1.createConnection();
       Connection conn2 = cf2.createConnection();
@@ -54,13 +54,17 @@ public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
 
       try {
          Session session1 = conn1.createSession(false, Session.AUTO_ACKNOWLEDGE);
-         Queue targetQueue1 = session1.createQueue("target");
+         Queue targetQueue1 = session1.createQueue(QUEUE_NAME);
 
          Session session2 = conn2.createSession(false, Session.AUTO_ACKNOWLEDGE);
-         Queue targetQueue2 = session2.createQueue("target");
+         Queue targetQueue2 = session2.createQueue(QUEUE_NAME);
 
-         // sleep a little bit to have the temp queue propagated to server #2
-         Thread.sleep(3000);
+         this.waitForBindings(jmsServer1.getActiveMQServer(), QUEUE_NAME, true, 1, 0, 2000);
+         this.waitForBindings(jmsServer1.getActiveMQServer(), QUEUE_NAME, true, 1, 0, 2000);
+         this.waitForBindings(jmsServer2.getActiveMQServer(), QUEUE_NAME, false, 1, 0, 2000);
+         this.waitForBindings(jmsServer1.getActiveMQServer(), QUEUE_NAME, false, 1, 0, 2000);
+
+
          MessageProducer prod1 = session1.createProducer(targetQueue1);
          MessageConsumer cons2 = session2.createConsumer(targetQueue2);
 
@@ -75,8 +79,7 @@ public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
          assertNotNull(msgReceived);
          assertEquals(msgReceived.getText(), msg.getText());
 
-      }
-      finally {
+      } finally {
          conn1.close();
          conn2.close();
       }
@@ -84,8 +87,8 @@ public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
 
    @Test
    public void testTemporaryQueue() throws Exception {
-      jmsServer1.createQueue(false, "target", null, false, "/queue/target");
-      jmsServer2.createQueue(false, "target", null, false, "/queue/target");
+      jmsServer1.createQueue(false, QUEUE_NAME, null, false, "/queue/target");
+      jmsServer2.createQueue(false, QUEUE_NAME, null, false, "/queue/target");
 
       Connection conn1 = cf1.createConnection();
       Connection conn2 = cf2.createConnection();
@@ -95,17 +98,23 @@ public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
 
       try {
          Session session1 = conn1.createSession(false, Session.AUTO_ACKNOWLEDGE);
-         Queue targetQueue1 = session1.createQueue("target");
+         Queue targetQueue1 = session1.createQueue(QUEUE_NAME);
          Queue tempQueue = session1.createTemporaryQueue();
-         System.out.println("temp queue is " + tempQueue.getQueueName());
          Session session2 = conn2.createSession(false, Session.AUTO_ACKNOWLEDGE);
-         Queue targetQueue2 = session2.createQueue("target");
+         Queue targetQueue2 = session2.createQueue(QUEUE_NAME);
+
+         this.waitForBindings(jmsServer1.getActiveMQServer(), QUEUE_NAME, true, 1, 0, 2000);
+         this.waitForBindings(jmsServer1.getActiveMQServer(), QUEUE_NAME, true, 1, 0, 2000);
+         this.waitForBindings(jmsServer2.getActiveMQServer(), QUEUE_NAME, false, 1, 0, 2000);
+         this.waitForBindings(jmsServer1.getActiveMQServer(), QUEUE_NAME, false, 1, 0, 2000);
+
+         MessageConsumer tempCons1 = session1.createConsumer(tempQueue);
+
+         this.waitForBindings(jmsServer1.getActiveMQServer(), tempQueue.getQueueName(), true, 1, 1, 2000);
+         this.waitForBindings(jmsServer2.getActiveMQServer(), tempQueue.getQueueName(), false, 1, 0, 2000);
 
          MessageProducer prod1 = session1.createProducer(targetQueue1);
          MessageConsumer cons2 = session2.createConsumer(targetQueue2);
-         MessageConsumer tempCons1 = session1.createConsumer(tempQueue);
-         // sleep a little bit to have the temp queue propagated to server #2
-         Thread.sleep(3000);
 
          for (int i = 0; i < 10; i++) {
             TextMessage message = session1.createTextMessage("" + i);
@@ -116,8 +125,6 @@ public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
          for (int i = 0; i < 10; i++) {
             if (i % 2 == 0) {
                TextMessage received = (TextMessage) cons2.receive(5000);
-               System.out.println(received.getText());
-               System.out.println("check temp queue on server #2");
                MessageProducer tempProducer = session2.createProducer(received.getJMSReplyTo());
                tempProducer.send(session2.createTextMessage(">>> " + received.getText()));
                tempProducer.close();
@@ -127,17 +134,16 @@ public class TemporaryQueueClusterTest extends JMSClusteredTestBase {
          for (int i = 0; i < 10; i++) {
             if (i % 2 == 0) {
                TextMessage received = (TextMessage) tempCons1.receive(5000);
-               System.out.println(received.getText());
+               assertNotNull(received);
             }
          }
-      }
-      finally {
+      } finally {
          conn1.close();
          conn2.close();
       }
 
-      jmsServer1.destroyQueue("target");
-      jmsServer2.destroyQueue("target");
+      jmsServer1.destroyQueue(QUEUE_NAME);
+      jmsServer2.destroyQueue(QUEUE_NAME);
 
    }
 

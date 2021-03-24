@@ -16,16 +16,15 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import java.util.Arrays;
-import java.util.Collection;
-
 import javax.jms.DeliveryMode;
 import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.Session;
+import java.util.Arrays;
+import java.util.Collection;
 
-import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
+import org.apache.activemq.command.ActiveMQDestination;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -68,12 +67,10 @@ public class JMSConsumer3Test extends BasicOpenWireTest {
       // Send the messages
       sendMessages(session, destination, 4);
 
-      System.out.println("messages are sent.");
       // Make sure 4 messages were delivered.
       Message message = null;
       for (int i = 0; i < 4; i++) {
          message = consumer.receive(5000);
-         System.out.println("message received: " + message + " ack mode: " + ackMode);
          assertNotNull(message);
       }
       assertNull(consumer.receiveNoWait());

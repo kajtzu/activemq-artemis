@@ -24,20 +24,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.apache.activemq.artemis.ArtemisConstants;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.core.io.IOCallback;
-import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.io.SequentialFile;
 import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.io.buffer.TimedBuffer;
+import org.apache.activemq.artemis.core.journal.EncodingSupport;
+import org.apache.activemq.artemis.core.journal.impl.SimpleWaitIOCallback;
 
 public class FakeSequentialFileFactory implements SequentialFileFactory {
 
    private final Map<String, FakeSequentialFile> fileMap = new ConcurrentHashMap<>();
 
-   private final int alignment;
+   private volatile int alignment;
 
    private final boolean supportsCallback;
 
@@ -60,6 +62,21 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
    }
 
    @Override
+   public SequentialFileFactory setDatasync(boolean enabled) {
+      return null;
+   }
+
+   @Override
+   public boolean isDatasync() {
+      return false;
+   }
+
+   @Override
+   public long getBufferSize() {
+      return ArtemisConstants.DEFAULT_JOURNAL_BUFFER_SIZE_AIO;
+   }
+
+   @Override
    public int getMaxIO() {
       return 1;
    }
@@ -74,8 +91,7 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
          sf = newSequentialFile(fileName);
 
          fileMap.put(fileName, sf);
-      }
-      else {
+      } else {
          sf.getData().position(0);
 
          // log.debug("positioning data to 0");
@@ -189,6 +205,12 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
       return alignment;
    }
 
+   @Override
+   public FakeSequentialFileFactory setAlignment(int alignment) {
+      this.alignment = alignment;
+      return this;
+   }
+
    // Package protected ---------------------------------------------
 
    // Protected -----------------------------------------------------
@@ -206,7 +228,7 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
     */
    public interface ListenerHoldCallback {
 
-      void callbackAdded(final ByteBuffer bytes);
+      void callbackAdded(ByteBuffer bytes);
    }
 
    private class CallbackRunnable implements Runnable {
@@ -230,15 +252,13 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
 
          if (sendError) {
             callback.onError(ActiveMQExceptionType.UNSUPPORTED_PACKET.getCode(), "Fake aio error");
-         }
-         else {
+         } else {
             try {
                file.data.put(bytes);
                if (callback != null) {
                   callback.done();
                }
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                e.printStackTrace();
                callback.onError(ActiveMQExceptionType.GENERIC_EXCEPTION.getCode(), e.getMessage());
             }
@@ -286,12 +306,16 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
       }
 
       @Override
+      public ByteBuffer map(int position, long size) throws IOException {
+         return null;
+      }
+
+      @Override
       public void delete() {
+         fileMap.remove(fileName);
          if (open) {
             close();
          }
-
-         fileMap.remove(fileName);
       }
 
       @Override
@@ -339,7 +363,7 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
             throw new IllegalStateException("Is closed");
          }
 
-         byte[] bytesRead = new byte[bytes.limit()];
+         byte[] bytesRead = new byte[Math.min(bytes.remaining(), data.remaining())];
 
          data.get(bytesRead);
 
@@ -392,11 +416,22 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
 
          if (holdCallbacks) {
             addCallback(bytes, action);
-         }
-         else {
+         } else {
             action.run();
          }
 
+      }
+
+      @Override
+      public synchronized void blockingWriteDirect(ByteBuffer bytes,
+                                                   boolean sync,
+                                                   boolean releaseBuffer) throws Exception {
+         SimpleWaitIOCallback callback = new SimpleWaitIOCallback();
+         try {
+            writeDirect(bytes, sync, callback);
+         } finally {
+            callback.waitCompletion();
+         }
       }
 
       @Override
@@ -410,8 +445,7 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
       public long size() throws Exception {
          if (data == null) {
             return 0;
-         }
-         else {
+         } else {
             return data.limit();
          }
       }
@@ -455,11 +489,6 @@ public class FakeSequentialFileFactory implements SequentialFileFactory {
                holdCallbackListener.callbackAdded(bytes);
             }
          }
-      }
-
-      @Override
-      public int getAlignment() throws Exception {
-         return alignment;
       }
 
       @Override

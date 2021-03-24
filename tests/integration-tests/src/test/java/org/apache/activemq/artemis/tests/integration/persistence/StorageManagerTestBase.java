@@ -20,9 +20,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.StoreConfiguration;
+import org.apache.activemq.artemis.core.persistence.AddressBindingInfo;
 import org.apache.activemq.artemis.core.persistence.GroupingInfo;
 import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
@@ -35,6 +38,7 @@ import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakePostOff
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
 import org.apache.activemq.artemis.utils.TimeAndCounterIDGenerator;
+import org.apache.activemq.artemis.utils.critical.EmptyCriticalAnalyzer;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.runner.RunWith;
@@ -46,6 +50,8 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
    protected ExecutorService executor;
 
    protected ExecutorFactory execFactory;
+
+   protected ScheduledExecutorService scheduledExecutorService;
 
    protected StorageManager journal;
 
@@ -59,7 +65,7 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
 
    @Parameterized.Parameters(name = "storeType={0}")
    public static Collection<Object[]> data() {
-      Object[][] params = new Object[][] {{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
+      Object[][] params = new Object[][]{{StoreConfiguration.StoreType.FILE}, {StoreConfiguration.StoreType.DATABASE}};
       return Arrays.asList(params);
    }
 
@@ -73,6 +79,8 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
       super.setUp();
 
       execFactory = getOrderedExecutor();
+
+      scheduledExecutorService = new ScheduledThreadPoolExecutor(5);
    }
 
    @Override
@@ -83,8 +91,7 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
       if (journal != null) {
          try {
             journal.stop();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             exception = e;
          }
 
@@ -94,8 +101,7 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
       if (jmsJournal != null) {
          try {
             jmsJournal.stop();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             if (exception != null)
                exception = e;
          }
@@ -103,7 +109,9 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
          jmsJournal = null;
       }
 
-      destroyTables(Arrays.asList(new String[] {"MESSAGE", "BINDINGS", "LARGE_MESSAGE"}));
+      scheduledExecutorService.shutdown();
+
+      destroyTables(Arrays.asList(new String[]{"MESSAGE", "BINDINGS", "LARGE_MESSAGE", "NODE_MANAGER_STORE"}));
       super.tearDown();
       if (exception != null)
          throw exception;
@@ -116,14 +124,13 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
 
       if (storeType == StoreConfiguration.StoreType.DATABASE) {
          journal = createJDBCJournalStorageManager(createDefaultJDBCConfig(true));
-      }
-      else {
+      } else {
          journal = createJournalStorageManager(createDefaultInVMConfig());
       }
 
       journal.start();
 
-      journal.loadBindingJournal(new ArrayList<QueueBindingInfo>(), new ArrayList<GroupingInfo>());
+      journal.loadBindingJournal(new ArrayList<QueueBindingInfo>(), new ArrayList<GroupingInfo>(), new ArrayList<AddressBindingInfo>());
 
       journal.loadMessageJournal(new FakePostOffice(), null, null, null, null, null, null, new FakeJournalLoader());
    }
@@ -132,7 +139,7 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
     * @param configuration
     */
    protected JournalStorageManager createJournalStorageManager(Configuration configuration) {
-      JournalStorageManager jsm = new JournalStorageManager(configuration, execFactory, null);
+      JournalStorageManager jsm = new JournalStorageManager(configuration, EmptyCriticalAnalyzer.getInstance(), execFactory, execFactory);
       addActiveMQComponent(jsm);
       return jsm;
    }
@@ -141,7 +148,7 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
     * @param configuration
     */
    protected JDBCJournalStorageManager createJDBCJournalStorageManager(Configuration configuration) {
-      JDBCJournalStorageManager jsm = new JDBCJournalStorageManager(configuration, execFactory, null);
+      JDBCJournalStorageManager jsm = new JDBCJournalStorageManager(configuration, EmptyCriticalAnalyzer.getInstance(), execFactory, execFactory, scheduledExecutorService);
       addActiveMQComponent(jsm);
       return jsm;
    }
@@ -150,7 +157,7 @@ public abstract class StorageManagerTestBase extends ActiveMQTestBase {
     * @throws Exception
     */
    protected void createJMSStorage() throws Exception {
-      jmsJournal = new JMSJournalStorageManagerImpl(new TimeAndCounterIDGenerator(), createDefaultInVMConfig(), null);
+      jmsJournal = new JMSJournalStorageManagerImpl(null, new TimeAndCounterIDGenerator(), createDefaultInVMConfig(), null);
       addActiveMQComponent(jmsJournal);
       jmsJournal.start();
       jmsJournal.load();

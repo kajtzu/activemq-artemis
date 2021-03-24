@@ -24,7 +24,13 @@ import org.w3c.dom.NodeList;
 public class XMLConfigurationUtil {
 
    public static final String getAttributeValue(Node element, String attribute) {
-      return element.getAttributes().getNamedItem(attribute).getNodeValue();
+      Node node = element.getAttributes().getNamedItem(attribute);
+      if (node == null) {
+         return null;
+      } else {
+         return node.getNodeValue();
+      }
+
    }
 
    public static final String getTrimmedTextContent(Node element) {
@@ -43,9 +49,7 @@ public class XMLConfigurationUtil {
          double val = XMLUtil.parseDouble(nl.item(0));
          validator.validate(name, val);
          return val;
-      }
-      else {
-         validator.validate(name, def);
+      } else {
          return def;
       }
    }
@@ -59,9 +63,7 @@ public class XMLConfigurationUtil {
          String val = nl.item(0).getTextContent().trim();
          validator.validate(name, val);
          return val;
-      }
-      else {
-         validator.validate(name, def);
+      } else {
          return def;
       }
    }
@@ -75,45 +77,84 @@ public class XMLConfigurationUtil {
          long val = XMLUtil.parseLong(nl.item(0));
          validator.validate(name, val);
          return val;
+      } else {
+         return def;
       }
-      else {
-         validator.validate(name, def);
+   }
+
+   public static final Long getTextBytesAsLongBytes(final Element e,
+                                    final String name,
+                                    final long def,
+                                    final Validators.Validator validator) {
+      NodeList nl = e.getElementsByTagName(name);
+      if (nl.getLength() > 0) {
+         long val = ByteUtil.convertTextBytes(nl.item(0).getTextContent().trim());
+         validator.validate(name, val);
+         return val;
+      } else {
+         return def;
+      }
+   }
+
+   public static final Integer getAttributeInteger(final Element e,
+                                          final String name,
+                                          final Integer def,
+                                          final Validators.Validator validator) {
+      String attribute = e.getAttribute(name);
+      if (attribute != null && !attribute.equals("")) {
+         int val = XMLUtil.parseInt(e, attribute);
+         validator.validate(name, val);
+         return val;
+      } else {
          return def;
       }
    }
 
    public static final Integer getInteger(final Element e,
                                           final String name,
-                                          final int def,
+                                          final Integer def,
                                           final Validators.Validator validator) {
       NodeList nl = e.getElementsByTagName(name);
       if (nl.getLength() > 0) {
          int val = XMLUtil.parseInt(nl.item(0));
          validator.validate(name, val);
          return val;
-      }
-      else {
-         validator.validate(name, def);
+      } else {
          return def;
       }
    }
 
-   public static final Boolean getBoolean(final Element e, final String name, final boolean def) {
+   public static final Integer getTextBytesAsIntBytes(final Element e,
+                                          final String name,
+                                          final int def,
+                                          final Validators.Validator validator) {
+      return getTextBytesAsLongBytes(e, name, def, validator).intValue();
+   }
+
+   public static final Boolean getBoolean(final Element e, final String name, final Boolean def) {
       NodeList nl = e.getElementsByTagName(name);
       if (nl.getLength() > 0) {
          return XMLUtil.parseBoolean(nl.item(0));
-      }
-      else {
+      } else {
          return def;
       }
    }
+
+   public static final Boolean getBooleanAttribute(final Element e, final String name, final Boolean def) {
+      String attributeValue = e.getAttribute(name);
+      if (attributeValue == null || attributeValue.isEmpty()) {
+         return def;
+      } else {
+         return Boolean.parseBoolean(attributeValue);
+      }
+   }
+
 
    public static final Boolean parameterExists(final Element e, final String name) {
       NodeList nl = e.getElementsByTagName(name);
       if (nl.getLength() > 0) {
          return true;
-      }
-      else {
+      } else {
          return false;
       }
    }

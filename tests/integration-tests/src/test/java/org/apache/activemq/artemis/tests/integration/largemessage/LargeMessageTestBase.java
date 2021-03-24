@@ -16,30 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.largemessage;
 
-import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
-import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
-import org.apache.activemq.artemis.api.core.ActiveMQException;
-import org.apache.activemq.artemis.api.core.Message;
-import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.api.core.client.ClientConsumer;
-import org.apache.activemq.artemis.api.core.client.ClientMessage;
-import org.apache.activemq.artemis.api.core.client.ClientProducer;
-import org.apache.activemq.artemis.api.core.client.ClientSession;
-import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
-import org.apache.activemq.artemis.api.core.client.MessageHandler;
-import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.StoreConfiguration;
-import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.utils.DataConstants;
-import org.apache.activemq.artemis.utils.DeflaterReader;
-import org.junit.Assert;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
 import javax.transaction.xa.XAResource;
 import javax.transaction.xa.Xid;
 import java.io.IOException;
@@ -53,11 +29,37 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.api.core.client.ClientConsumer;
+import org.apache.activemq.artemis.api.core.client.ClientMessage;
+import org.apache.activemq.artemis.api.core.client.ClientProducer;
+import org.apache.activemq.artemis.api.core.client.ClientSession;
+import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
+import org.apache.activemq.artemis.api.core.client.MessageHandler;
+import org.apache.activemq.artemis.api.core.client.ServerLocator;
+import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.config.StoreConfiguration;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.DataConstants;
+import org.apache.activemq.artemis.utils.DeflaterReader;
+import org.jboss.logging.Logger;
+import org.junit.Assert;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
 @RunWith(Parameterized.class)
 public abstract class LargeMessageTestBase extends ActiveMQTestBase {
 
    // Constants -----------------------------------------------------
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+
+   private static final Logger log = Logger.getLogger(LargeMessageTestBase.class);
 
    protected final SimpleString ADDRESS = new SimpleString("SimpleAddress");
 
@@ -83,7 +85,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
    public void tearDown() throws Exception {
       super.tearDown();
       if (storeType == StoreConfiguration.StoreType.DATABASE) {
-         destroyTables(Arrays.asList("BINDINGS", "LARGE_MESSAGE", "MESSAGE"));
+         destroyTables(Arrays.asList("BINDINGS", "LARGE_MESSAGE", "MESSAGE", "NODE_MANAGER_STORE"));
       }
    }
 
@@ -129,8 +131,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
       Configuration configuration;
       if (storeType == StoreConfiguration.StoreType.DATABASE) {
          configuration = createDefaultJDBCConfig(true);
-      }
-      else {
+      } else {
          configuration = createDefaultConfig(false);
       }
 
@@ -162,7 +163,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
             session.start(xid, XAResource.TMNOFLAGS);
          }
 
-         session.createQueue(ADDRESS, ADDRESS, null, true);
+         session.createQueue(new QueueConfiguration(ADDRESS));
 
          ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -191,8 +192,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                producer = session.createProducer(ADDRESS);
                xid = newXID();
                session.start(xid, XAResource.TMNOFLAGS);
-            }
-            else {
+            } else {
                session.rollback();
             }
 
@@ -225,8 +225,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
             session.commit(xid, false);
             xid = newXID();
             session.start(xid, XAResource.TMNOFLAGS);
-         }
-         else {
+         } else {
             session.commit();
          }
 
@@ -293,8 +292,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                                  if (b[0] == ActiveMQTestBase.getSamplebyte(bytesRead.get())) {
                                     bytesRead.addAndGet(b.length);
                                     LargeMessageTestBase.log.debug("Read position " + bytesRead.get() + " on consumer");
-                                 }
-                                 else {
+                                 } else {
                                     LargeMessageTestBase.log.warn("Received invalid packet at position " + bytesRead.get());
                                  }
                               }
@@ -303,16 +301,14 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                               public void write(final int b) throws IOException {
                                  if (b == ActiveMQTestBase.getSamplebyte(bytesRead.get())) {
                                     bytesRead.incrementAndGet();
-                                 }
-                                 else {
+                                 } else {
                                     LargeMessageTestBase.log.warn("byte not as expected!");
                                  }
                               }
                            });
 
                            Assert.assertEquals(numberOfBytes, bytesRead.get());
-                        }
-                        else {
+                        } else {
 
                            ActiveMQBuffer buffer = message.getBodyBuffer();
                            buffer.resetReaderIndex();
@@ -327,17 +323,14 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                            try {
                               buffer.readByte();
                               Assert.fail("Supposed to throw an exception");
-                           }
-                           catch (Exception e) {
+                           } catch (Exception e) {
                            }
                         }
-                     }
-                     catch (Throwable e) {
+                     } catch (Throwable e) {
                         e.printStackTrace();
                         LargeMessageTestBase.log.warn("Got an error", e);
                         errors.incrementAndGet();
-                     }
-                     finally {
+                     } finally {
                         latchDone.countDown();
                         msgCounter++;
                      }
@@ -350,19 +343,14 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
 
                Assert.assertTrue(latchDone.await(waitOnConsumer, TimeUnit.MILLISECONDS));
                Assert.assertEquals(0, errors.get());
-            }
-            else {
+            } else {
 
                session.start();
 
                for (int i = 0; i < numberOfMessages; i++) {
-                  System.currentTimeMillis();
-
                   ClientMessage message = consumer.receive(waitOnConsumer + delayDelivery);
 
                   Assert.assertNotNull(message);
-
-                  System.currentTimeMillis();
 
                   if (delayDelivery > 0) {
                      long originalTime = (Long) message.getObjectProperty(new SimpleString("original-time"));
@@ -390,8 +378,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                            if (b.length > 0) {
                               if (b[0] == ActiveMQTestBase.getSamplebyte(bytesRead.get())) {
                                  bytesRead.addAndGet(b.length);
-                              }
-                              else {
+                              } else {
                                  LargeMessageTestBase.log.warn("Received invalid packet at position " + bytesRead.get());
                               }
                            }
@@ -404,16 +391,14 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                            }
                            if (b == (byte) 'a') {
                               bytesRead.incrementAndGet();
-                           }
-                           else {
+                           } else {
                               LargeMessageTestBase.log.warn("byte not as expected!");
                            }
                         }
                      });
 
                      Assert.assertEquals(numberOfBytes, bytesRead.get());
-                  }
-                  else {
+                  } else {
                      ActiveMQBuffer buffer = message.getBodyBuffer();
                      buffer.resetReaderIndex();
 
@@ -436,19 +421,16 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                   session.rollback(xid);
                   xid = newXID();
                   session.start(xid, XAResource.TMNOFLAGS);
-               }
-               else {
+               } else {
                   session.rollback();
                }
-            }
-            else {
+            } else {
                if (isXA) {
                   session.end(xid, XAResource.TMSUCCESS);
                   session.commit(xid, true);
                   xid = newXID();
                   session.start(xid, XAResource.TMNOFLAGS);
-               }
-               else {
+               } else {
                   session.commit();
                }
             }
@@ -461,17 +443,14 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
 
          validateNoFilesOnLargeDir();
 
-      }
-      catch (Throwable e) {
+      } catch (Throwable e) {
          e.printStackTrace();
          throw e;
-      }
-      finally {
+      } finally {
          locator.close();
          try {
             server.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
             ignored.printStackTrace();
          }
       }
@@ -501,8 +480,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
          if (numberOfBytes > 1024 * 1024 || i % 2 == 0) {
             LargeMessageTestBase.log.debug("Sending message (stream)" + i);
             message.setBodyInputStream(ActiveMQTestBase.createFakeLargeStream(numberOfBytes));
-         }
-         else {
+         } else {
             LargeMessageTestBase.log.debug("Sending message (array)" + i);
             byte[] bytes = new byte[(int) numberOfBytes];
             for (int j = 0; j < bytes.length; j++) {
@@ -517,8 +495,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
             message.putLongProperty(Message.HDR_SCHEDULED_DELIVERY_TIME, time + delayDelivery);
 
             producer.send(message);
-         }
-         else {
+         } else {
             producer.send(message);
          }
       }
@@ -635,17 +612,14 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
                // ok it can be sent as regular
                stream.resetAdjust(0);
                break;
-            }
-            else if ((!regular) && (totalCompressed > stream.getMinLarge())) {
+            } else if ((!regular) && (totalCompressed > stream.getMinLarge())) {
                // now it cannot be sent as regular
                stream.resetAdjust(0);
                break;
-            }
-            else {
+            } else {
                stream.resetAdjust(regular ? -absoluteStep : absoluteStep);
             }
-         }
-         finally {
+         } finally {
             compressor.close();
          }
       }
@@ -673,8 +647,7 @@ public abstract class LargeMessageTestBase extends ActiveMQTestBase {
          if (random) {
             Random r = new Random();
             return 'A' + r.nextInt(26);
-         }
-         else {
+         } else {
             return 'A' + index % 26;
          }
       }

@@ -44,7 +44,7 @@ public interface ConnectionFactoryConfiguration extends EncodingSupport {
 
    ConnectionFactoryConfiguration setConnectorNames(List<String> connectorNames);
 
-   ConnectionFactoryConfiguration setConnectorNames(String...connectorNames);
+   ConnectionFactoryConfiguration setConnectorNames(String... connectorNames);
 
    boolean isHA();
 
@@ -162,8 +162,10 @@ public interface ConnectionFactoryConfiguration extends EncodingSupport {
 
    ConnectionFactoryConfiguration setReconnectAttempts(int reconnectAttempts);
 
+   @Deprecated
    boolean isFailoverOnInitialConnection();
 
+   @Deprecated
    ConnectionFactoryConfiguration setFailoverOnInitialConnection(boolean failover);
 
    String getGroupID();
@@ -185,4 +187,20 @@ public interface ConnectionFactoryConfiguration extends EncodingSupport {
    String getDeserializationWhiteList();
 
    void setDeserializationWhiteList(String whiteList);
+
+   int getInitialMessagePacketSize();
+
+   ConnectionFactoryConfiguration setInitialMessagePacketSize(int size);
+
+   boolean isEnable1xPrefixes();
+
+   ConnectionFactoryConfiguration setEnable1xPrefixes(boolean enable1xPrefixes);
+
+   boolean isEnableSharedClientID();
+
+   ConnectionFactoryConfiguration setEnableSharedClientID(boolean enabled);
+
+   boolean getUseTopologyForLoadBalancing();
+
+   ConnectionFactoryConfiguration setUseTopologyForLoadBalancing(boolean useTopologyForLoadBalancing);
 }

@@ -32,9 +32,7 @@ public class StompExample {
 
    public static void main(final String[] args) throws Exception {
       StompJmsConnectionFactory factory = new StompJmsConnectionFactory();
-      factory.setQueuePrefix("jms.queue.");
       factory.setDisconnectTimeout(5000);
-      factory.setTopicPrefix("jms.topic.");
       factory.setBrokerURI("tcp://localhost:61616");
       Connection connection = factory.createConnection();
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
@@ -45,8 +43,7 @@ public class StompExample {
 
       connection.start();
 
-
-      System.out.println("Waiting 20 seconds");
+      System.out.println("Waiting 10 seconds");
       Thread.sleep(10000); // increase this and it will fail
       System.out.println("waited");
 

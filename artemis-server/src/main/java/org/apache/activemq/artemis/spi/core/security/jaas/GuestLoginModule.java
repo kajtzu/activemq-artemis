@@ -22,7 +22,6 @@ import javax.security.auth.callback.CallbackHandler;
 import javax.security.auth.callback.PasswordCallback;
 import javax.security.auth.callback.UnsupportedCallbackException;
 import javax.security.auth.login.LoginException;
-import javax.security.auth.spi.LoginModule;
 import java.io.IOException;
 import java.security.Principal;
 import java.util.HashSet;
@@ -36,9 +35,8 @@ import org.jboss.logging.Logger;
  *
  * Useful for unauthenticated communication channels being used in the
  * same broker as authenticated ones.
- *
  */
-public class GuestLoginModule implements LoginModule {
+public class GuestLoginModule implements AuditLoginModule {
 
    private static final Logger logger = Logger.getLogger(GuestLoginModule.class);
 
@@ -50,12 +48,15 @@ public class GuestLoginModule implements LoginModule {
    private Subject subject;
    private boolean debug;
    private boolean credentialsInvalidate;
-   private Set<Principal> principals = new HashSet<>();
+   private final Set<Principal> principals = new HashSet<>();
    private CallbackHandler callbackHandler;
    private boolean loginSucceeded;
 
    @Override
-   public void initialize(Subject subject, CallbackHandler callbackHandler, Map<String, ?> sharedState, Map<String, ?> options) {
+   public void initialize(Subject subject,
+                          CallbackHandler callbackHandler,
+                          Map<String, ?> sharedState,
+                          Map<String, ?> options) {
       this.subject = subject;
       this.callbackHandler = callbackHandler;
       debug = "true".equalsIgnoreCase((String) options.get("debug"));
@@ -89,8 +90,7 @@ public class GuestLoginModule implements LoginModule {
                loginSucceeded = false;
                passwordCallback.clearPassword();
             }
-         }
-         catch (IOException | UnsupportedCallbackException e) {
+         } catch (IOException | UnsupportedCallbackException e) {
          }
       }
       if (debug) {
@@ -113,7 +113,7 @@ public class GuestLoginModule implements LoginModule {
 
    @Override
    public boolean abort() throws LoginException {
-
+      registerFailureForAudit(GUEST_USER);
       if (debug) {
          logger.debug("abort");
       }

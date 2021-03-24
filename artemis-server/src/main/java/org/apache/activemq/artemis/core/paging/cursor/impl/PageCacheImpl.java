@@ -17,50 +17,35 @@
 package org.apache.activemq.artemis.core.paging.cursor.impl;
 
 import org.apache.activemq.artemis.core.paging.PagedMessage;
-import org.apache.activemq.artemis.core.paging.cursor.PageCache;
-import org.apache.activemq.artemis.core.paging.impl.Page;
+import org.apache.activemq.artemis.core.paging.cursor.BulkPageCache;
+import org.apache.activemq.artemis.core.paging.cursor.PagePosition;
 
 /**
  * The caching associated to a single page.
  */
-class PageCacheImpl implements PageCache {
+class PageCacheImpl implements BulkPageCache {
 
-   // Constants -----------------------------------------------------
+   private final PagedMessage[] messages;
 
-   // Attributes ----------------------------------------------------
+   private final long pageId;
 
-   private PagedMessage[] messages;
-
-   private final Page page;
-
-   // Static --------------------------------------------------------
-
-   // Constructors --------------------------------------------------
-
-   PageCacheImpl(final Page page) {
-      this.page = page;
+   PageCacheImpl(final long pageId, PagedMessage[] messages) {
+      this.pageId = pageId;
+      this.messages = messages;
    }
 
-   // Public --------------------------------------------------------
-
    @Override
-   public PagedMessage getMessage(final int messageNumber) {
-      if (messageNumber < messages.length) {
-         return messages[messageNumber];
-      }
-      else {
+   public PagedMessage getMessage(PagePosition pagePosition) {
+      if (pagePosition.getMessageNr() < messages.length) {
+         return messages[pagePosition.getMessageNr()];
+      } else {
          return null;
       }
    }
 
    @Override
    public long getPageId() {
-      return page.getPageId();
-   }
-
-   @Override
-   public void setMessages(final PagedMessage[] messages) {
-      this.messages = messages;
+      return pageId;
    }
 
    @Override
@@ -79,7 +64,7 @@ class PageCacheImpl implements PageCache {
 
    @Override
    public String toString() {
-      return "PageCacheImpl::page=" + page.getPageId() + " numberOfMessages = " + messages.length;
+      return "PageCacheImpl::page=" + pageId + " numberOfMessages = " + messages.length;
    }
 
    @Override

@@ -72,8 +72,8 @@ public interface ActiveMQJournalLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 141007, value = "Current File on the journal is <= the sequence file.getFileID={0} on the dataFiles" +
-         "\nCurrentfile.getFileId={1} while the file.getFileID()={2}" +
-         "\nIs same = ({3})",
+      "\nCurrentfile.getFileId={1} while the file.getFileID()={2}" +
+      "\nIs same = ({3})",
       format = Message.Format.MESSAGE_FORMAT)
    void currentFile(Long fileID, Long id, Long fileFileID, Boolean b);
 
@@ -84,6 +84,10 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    @LogMessage(level = Logger.Level.INFO)
    @Message(id = 141009, value = "A Free File is less than the maximum data", format = Message.Format.MESSAGE_FORMAT)
    void fileTooSmall();
+
+   @LogMessage(level = Logger.Level.INFO)
+   @Message(id = 141010, value = "Initialising JDBC data source {0} with properties {1}", format = Message.Format.MESSAGE_FORMAT)
+   void initializingJdbcDataSource(String dataSourceClassName, String dataSourceProperties);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 142000, value = "You have a native library with a different version than expected", format = Message.Format.MESSAGE_FORMAT)
@@ -128,7 +132,7 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    void couldNotRemoveFile(JournalFile file);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 142009, value = "Deleting {0} as it does not have the configured size",
+   @Message(id = 142009, value = "*******************************************************************************************************************************\nThe File Storage Attic is full, as the file {0}  does not have the configured size, and the file will be removed\n*******************************************************************************************************************************",
       format = Message.Format.MESSAGE_FORMAT)
    void deletingFile(JournalFile file);
 
@@ -163,17 +167,17 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    void uncomittedTxFound(Long id);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 142016, value = "Couldn''t stop compactor executor after 120 seconds",
+   @Message(id = 142016, value = "Could not stop compactor executor after 120 seconds",
       format = Message.Format.MESSAGE_FORMAT)
    void couldNotStopCompactor();
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 142017, value = "Couldn''t stop journal executor after 60 seconds",
+   @Message(id = 142017, value = "Could not stop journal executor after 60 seconds",
       format = Message.Format.MESSAGE_FORMAT)
    void couldNotStopJournalExecutor();
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 142018, value = "Temporary files were left unnatended after a crash on journal directory, deleting invalid files now",
+   @Message(id = 142018, value = "Temporary files were left unattended after a crash on journal directory, deleting invalid files now",
       format = Message.Format.MESSAGE_FORMAT)
    void tempFilesLeftOpen();
 
@@ -182,7 +186,7 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    void deletingOrphanedFile(String fileToDelete);
 
    @LogMessage(level = Logger.Level.WARN)
-   @Message(id = 142020, value = "Couldn''t get lock after 60 seconds on closing Asynchronous File: {0}", format = Message.Format.MESSAGE_FORMAT)
+   @Message(id = 142020, value = "Could not get lock after 60 seconds on closing Asynchronous File: {0}", format = Message.Format.MESSAGE_FORMAT)
    void errorClosingFile(String fileToDelete);
 
    @LogMessage(level = Logger.Level.WARN)
@@ -241,6 +245,10 @@ public interface ActiveMQJournalLogger extends BasicLogger {
    @Message(id = 142034, value = "Exception on submitting write", format = Message.Format.MESSAGE_FORMAT)
    void errorSubmittingWrite(@Cause Throwable e);
 
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 142035, value = "Could not stop journal append executor after 60 seconds", format = Message.Format.MESSAGE_FORMAT)
+   void couldNotStopJournalAppendExecutor();
+
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 144000, value = "Failed to delete file {0}", format = Message.Format.MESSAGE_FORMAT)
    void errorDeletingFile(Object e);
@@ -267,10 +275,13 @@ public interface ActiveMQJournalLogger extends BasicLogger {
 
    @LogMessage(level = Logger.Level.ERROR)
    @Message(id = 144006, value = "IOError code {0}, {1}", format = Message.Format.MESSAGE_FORMAT)
-   void ioError(final int errorCode, final String errorMessage);
+   void ioError(int errorCode, String errorMessage);
 
    @LogMessage(level = Logger.Level.WARN)
    @Message(id = 144007, value = "Ignoring journal file {0}: file is shorter then minimum header size. This file is being removed.", format = Message.Format.MESSAGE_FORMAT)
    void ignoringShortFile(String fileName);
 
+   @LogMessage(level = Logger.Level.WARN)
+   @Message(id = 144008, value = "*******************************************************************************************************************************\nFile {0}: was moved under attic, please review it and remove it.\n*******************************************************************************************************************************", format = Message.Format.MESSAGE_FORMAT)
+   void movingFileToAttic(String fileName);
 }

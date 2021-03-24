@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -28,18 +29,15 @@ import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
-import org.apache.activemq.artemis.tests.integration.cluster.util.TestableServer;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryInternal;
 import org.apache.activemq.artemis.core.client.impl.ServerLocatorImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
+import org.apache.activemq.artemis.tests.integration.cluster.util.TestableServer;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 
 public abstract class MultipleBackupsFailoverTestBase extends ActiveMQTestBase {
-
-   IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    protected abstract boolean isNetty();
 
@@ -55,14 +53,12 @@ public abstract class MultipleBackupsFailoverTestBase extends ActiveMQTestBase {
             TestableServer backupServer = servers.get(node);
             if (newLive == -1 && backupServer.isActive()) {
                newLive = node;
-            }
-            else if (newLive != -1) {
+            } else if (newLive != -1) {
                if (waitForNewBackup) {
                   if (node != newLive && servers.get(node).isStarted()) {
                      return newLive;
                   }
-               }
-               else {
+               } else {
                   return newLive;
                }
             }
@@ -70,8 +66,7 @@ public abstract class MultipleBackupsFailoverTestBase extends ActiveMQTestBase {
 
          try {
             Thread.sleep(100);
-         }
-         catch (InterruptedException e) {
+         } catch (InterruptedException e) {
             // ignore
          }
          if (System.currentTimeMillis() > (time + toWait)) {
@@ -84,7 +79,7 @@ public abstract class MultipleBackupsFailoverTestBase extends ActiveMQTestBase {
       ClientSession session = sf.createSession(false, true, true);
 
       if (createQueue) {
-         session.createQueue(FailoverTestBase.ADDRESS, FailoverTestBase.ADDRESS, null, false);
+         session.createQueue(new QueueConfiguration(FailoverTestBase.ADDRESS).setDurable(false));
       }
 
       ClientProducer producer = session.createProducer(FailoverTestBase.ADDRESS);
@@ -142,7 +137,7 @@ public abstract class MultipleBackupsFailoverTestBase extends ActiveMQTestBase {
       locator.removeClusterTopologyListener(topListener);
       if (!ok) {
          if (server != null) {
-            log.info("failed topology, Topology on server = " + server.getClusterManager().describe());
+            instanceLog.warn("failed topology, Topology on server = " + server.getClusterManager().describe());
          }
       }
       Assert.assertTrue("expected " + topologyMembers + " members", ok);

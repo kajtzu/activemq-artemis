@@ -23,15 +23,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.filter.impl.FilterImpl;
-import org.apache.activemq.artemis.core.message.impl.MessageImpl;
 import org.apache.activemq.artemis.core.postoffice.BindingType;
 import org.apache.activemq.artemis.core.server.Bindable;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RoutingContext;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.cluster.RemoteQueueBinding;
 import org.jboss.logging.Logger;
 
@@ -59,9 +58,11 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
 
    private final SimpleString idsHeaderName;
 
-   private final long id;
+   private final Long id;
 
    private final int distance;
+
+   private final MessageLoadBalancingType messageLoadBalancingType;
 
    private boolean connected = true;
 
@@ -73,7 +74,8 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
                                  final SimpleString filterString,
                                  final Queue storeAndForwardQueue,
                                  final SimpleString bridgeName,
-                                 final int distance) throws Exception {
+                                 final int distance,
+                                 final MessageLoadBalancingType messageLoadBalancingType) throws Exception {
       this.id = id;
 
       this.address = address;
@@ -88,13 +90,15 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
 
       queueFilter = FilterImpl.createFilter(filterString);
 
-      idsHeaderName = MessageImpl.HDR_ROUTE_TO_IDS.concat(bridgeName);
+      idsHeaderName = Message.HDR_ROUTE_TO_IDS.concat(bridgeName);
 
       this.distance = distance;
+
+      this.messageLoadBalancingType = messageLoadBalancingType;
    }
 
    @Override
-   public long getID() {
+   public Long getID() {
       return id;
    }
 
@@ -149,16 +153,16 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
    }
 
    @Override
-   public synchronized boolean isHighAcceptPriority(final ServerMessage message) {
-      if (consumerCount == 0) {
+   public synchronized boolean isHighAcceptPriority(final Message message) {
+      if (consumerCount == 0 || messageLoadBalancingType.equals(MessageLoadBalancingType.OFF)) {
          return false;
       }
 
       if (filters.isEmpty()) {
          return true;
-      }
-      else {
+      } else {
          for (Filter filter : filters) {
+            assert filter != null : "filters contains a null filter";
             if (filter.match(message)) {
                return true;
             }
@@ -173,7 +177,7 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
    }
 
    @Override
-   public void route(final ServerMessage message, final RoutingContext context) {
+   public void route(final Message message, final RoutingContext context) {
       addRouteContextToMessage(message);
 
       List<Queue> durableQueuesOnContext = context.getDurableQueues(storeAndForwardQueue.getAddress());
@@ -186,7 +190,7 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
    }
 
    @Override
-   public void routeWithAck(ServerMessage message, RoutingContext context) {
+   public void routeWithAck(Message message, RoutingContext context) {
       addRouteContextToMessage(message);
 
       List<Queue> durableQueuesOnContext = context.getDurableQueues(storeAndForwardQueue.getAddress());
@@ -200,7 +204,7 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
 
    @Override
    public synchronized void addConsumer(final SimpleString filterString) throws Exception {
-      if (filterString != null) {
+      if (filterString != null && !filterString.isEmpty()) {
          // There can actually be many consumers on the same queue with the same filter, so we need to maintain a ref
          // count
 
@@ -210,8 +214,7 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
             filterCounts.put(filterString, 1);
 
             filters.add(FilterImpl.createFilter(filterString));
-         }
-         else {
+         } else {
             filterCounts.put(filterString, i + 1);
          }
       }
@@ -221,7 +224,7 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
 
    @Override
    public synchronized void removeConsumer(final SimpleString filterString) throws Exception {
-      if (filterString != null) {
+      if (filterString != null && !filterString.isEmpty()) {
          Integer i = filterCounts.get(filterString);
 
          if (i != null) {
@@ -231,8 +234,7 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
                filterCounts.remove(filterString);
 
                filters.remove(FilterImpl.createFilter(filterString));
-            }
-            else {
+            } else {
                filterCounts.put(filterString, ii);
             }
          }
@@ -318,13 +320,12 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
     *
     * @param message
     */
-   private void addRouteContextToMessage(final ServerMessage message) {
-      byte[] ids = message.getBytesProperty(idsHeaderName);
+   private void addRouteContextToMessage(final Message message) {
+      byte[] ids = message.getExtraBytesProperty(idsHeaderName);
 
       if (ids == null) {
          ids = new byte[8];
-      }
-      else {
+      } else {
          byte[] newIds = new byte[ids.length + 8];
 
          System.arraycopy(ids, 0, newIds, 8, ids.length);
@@ -336,7 +337,7 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
 
       buff.putLong(remoteQueueID);
 
-      message.putBytesProperty(idsHeaderName, ids);
+      message.putExtraBytesProperty(idsHeaderName, ids);
 
       if (logger.isTraceEnabled()) {
          logger.trace("Adding remoteQueue ID = " + remoteQueueID + " into message=" + message + " store-forward-queue=" + storeAndForwardQueue);
@@ -346,5 +347,10 @@ public class RemoteQueueBindingImpl implements RemoteQueueBinding {
    @Override
    public long getRemoteQueueID() {
       return remoteQueueID;
+   }
+
+   @Override
+   public MessageLoadBalancingType getMessageLoadBalancingType() {
+      return messageLoadBalancingType;
    }
 }

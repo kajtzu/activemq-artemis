@@ -63,7 +63,7 @@ public class ServerLocatorConnectTest extends ActiveMQTestBase {
                            "transactionBatchSize=1048576&callTimeout=30000&preAcknowledge=false&" +
                            "connectionLoadBalancingPolicyClassName=org.apache.activemq.artemis.api.core.client.loadbalance." +
                            "RoundRobinConnectionLoadBalancingPolicy&dupsOKBatchSize=1048576&initialMessagePacketSize=1500&" +
-                           "consumerMaxRate=-1&retryInterval=2000&failoverOnInitialConnection=false&producerWindowSize=65536&" +
+                           "consumerMaxRate=-1&retryInterval=2000&producerWindowSize=65536&" +
                            "port=61616&host=localhost#");
 
       // try it a few times to make sure it fails if it's broken
@@ -105,7 +105,7 @@ public class ServerLocatorConnectTest extends ActiveMQTestBase {
    @Test
    public void testMultipleConnectorSingleServerConnectReconnect() throws Exception {
       ServerLocatorInternal locator = (ServerLocatorInternal) ActiveMQClient.createServerLocatorWithoutHA(createTransportConfiguration(isNetty(), false, generateParams(0, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(1, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(2, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(3, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(4, isNetty())));
-      locator.setReconnectAttempts(-1);
+      locator.setReconnectAttempts(15);
       ClientSessionFactoryInternal csf = locator.connect();
       assertNotNull(csf);
       assertEquals(csf.numConnections(), 1);
@@ -118,11 +118,9 @@ public class ServerLocatorConnectTest extends ActiveMQTestBase {
       ClientSessionFactoryInternal csf = null;
       try {
          csf = locator.connect();
-      }
-      catch (ActiveMQNotConnectedException nce) {
+      } catch (ActiveMQNotConnectedException nce) {
          //ok
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          assertTrue(e instanceof ActiveMQException);
          fail("Invalid Exception type:" + ((ActiveMQException) e).getType());
       }
@@ -133,7 +131,7 @@ public class ServerLocatorConnectTest extends ActiveMQTestBase {
    @Test
    public void testMultipleConnectorSingleServerNoConnectAttemptReconnect() throws Exception {
       ServerLocatorInternal locator = (ServerLocatorInternal) ActiveMQClient.createServerLocatorWithoutHA(createTransportConfiguration(isNetty(), false, generateParams(1, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(2, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(3, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(4, isNetty())), createTransportConfiguration(isNetty(), false, generateParams(5, isNetty())));
-      locator.setReconnectAttempts(-1);
+      locator.setReconnectAttempts(15);
       CountDownLatch countDownLatch = new CountDownLatch(1);
       Connector target = new Connector(locator, countDownLatch);
       Thread t = new Thread(target);
@@ -165,8 +163,7 @@ public class ServerLocatorConnectTest extends ActiveMQTestBase {
       public void run() {
          try {
             csf = locator.connect();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             this.e = e;
          }
          latch.countDown();

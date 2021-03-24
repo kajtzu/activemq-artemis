@@ -14,10 +14,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import httplib, urlparse
+import httplib
+import urlparse
 
 conn = httplib.HTTPConnection("localhost:8080")
-conn.request("HEAD", "/queues/jms.queue.orders")
+conn.request("HEAD", "/queues/orders")
 res = conn.getresponse()
 consumersLink = res.getheader("msg-pull-consumers")
 consumersParsed = urlparse.urlparse(consumersLink)
@@ -29,7 +30,7 @@ session = res.getheader("Location")
 print consumeLink
 conn.close()
 
-headers = {"Accept-Wait" : "3", "Accept" : "application/xml"}
+headers = {"Accept-Wait": "3", "Accept": "application/xml"}
 
 try:
     print "Waiting..."
@@ -49,7 +50,7 @@ try:
         else:
             raise Exception('failed')
 finally:
-    if session != None:
+    if session is not None:
         print "deleting activemq session..."
         createParsed = urlparse.urlparse(session)
         conn = httplib.HTTPConnection(createParsed.netloc)

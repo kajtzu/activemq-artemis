@@ -21,7 +21,7 @@ import java.io.File;
 import org.apache.activemq.artemis.ArtemisConstants;
 import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.io.aio.AIOSequentialFileFactory;
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.tests.unit.core.journal.impl.JournalImplTestUnit;
 import org.junit.Assert;
 import org.junit.Before;
@@ -59,7 +59,8 @@ public class AIOJournalImplTest extends JournalImplTestUnit {
 
       file.mkdir();
 
-      return new AIOSequentialFileFactory(getTestDirfile(), ArtemisConstants.DEFAULT_JOURNAL_BUFFER_SIZE_AIO, 1000000, 10, false);
+      // forcing the alignment to be 512, as this test was hard coded around this size.
+      return new AIOSequentialFileFactory(getTestDirfile(), ArtemisConstants.DEFAULT_JOURNAL_BUFFER_SIZE_AIO, 1000000, 10, false).setAlignment(512);
    }
 
    @Override

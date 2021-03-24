@@ -16,6 +16,8 @@
  */
 package org.apache.activemq.artemis.spi.core.remoting;
 
+import java.util.concurrent.TimeUnit;
+
 import io.netty.channel.ChannelFutureListener;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -41,12 +43,29 @@ public interface Connection {
 
    boolean isWritable(ReadyListener listener);
 
+   boolean isOpen();
+
+   /**
+    * Causes the current thread to wait until the connection is writable unless the specified waiting time elapses.
+    * The available capacity of the connection could change concurrently hence this method is suitable to perform precise flow-control
+    * only in a single writer case, while its precision decrease inversely proportional with the rate and the number of concurrent writers.
+    * If the current thread is not allowed to block the timeout will be ignored dependently on the connection type.
+    *
+    * @param timeout          the maximum time to wait
+    * @param timeUnit         the time unit of the timeout argument
+    * @return {@code true} if the connection is writable, {@code false} otherwise
+    * @throws IllegalStateException if the connection is closed
+    */
+   default boolean blockUntilWritable(final long timeout, final TimeUnit timeUnit) {
+      return true;
+   }
+
    void fireReady(boolean ready);
 
    /**
     * This will disable reading from the channel.
     * This is basically the same as blocking the reading.
-    * */
+    */
    void setAutoRead(boolean autoRead);
 
    /**
@@ -55,6 +74,22 @@ public interface Connection {
     * @return the id
     */
    Object getID();
+
+   /**
+    * writes the buffer to the connection and if flush is true request to flush the buffer
+    * (and any previous un-flushed ones) into the wire.
+    *
+    * @param buffer       the buffer to write
+    * @param requestFlush whether to request flush onto the wire
+    */
+   void write(ActiveMQBuffer buffer, boolean requestFlush);
+
+   /**
+    * Request to flush any previous written buffers into the wire.
+    */
+   default void flush() {
+
+   }
 
    /**
     * writes the buffer to the connection and if flush is true returns only when the buffer has been physically written to the connection.
@@ -122,6 +157,8 @@ public interface Connection {
     */
    TransportConfiguration getConnectorConfig();
 
+   boolean isDirectDeliver();
+
    ActiveMQPrincipal getDefaultActiveMQPrincipal();
 
    /**
@@ -131,4 +168,8 @@ public interface Connection {
     * @return
     */
    boolean isUsingProtocolHandling();
+
+   //returns true if one of the configs points to the same
+   //node as this connection does.
+   boolean isSameTarget(TransportConfiguration... configs);
 }

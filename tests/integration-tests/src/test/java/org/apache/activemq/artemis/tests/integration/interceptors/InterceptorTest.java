@@ -30,6 +30,7 @@ import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.api.core.Interceptor;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -49,9 +50,9 @@ import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionCre
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionReceiveMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionSendMessage;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.api.core.RoutingType;
+
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
@@ -64,8 +65,6 @@ public class InterceptorTest extends ActiveMQTestBase {
    private ActiveMQServer server;
 
    private final SimpleString QUEUE = new SimpleString("InterceptorTestQueue");
-
-   private final SimpleString JMS_QUEUE = SimpleString.toSimpleString(ActiveMQDestination.JMS_QUEUE_ADDRESS_PREFIX + QUEUE.toString());
 
    private ServerLocator locator;
 
@@ -90,7 +89,7 @@ public class InterceptorTest extends ActiveMQTestBase {
          if (packet.getType() == PacketImpl.SESS_SEND) {
             SessionSendMessage p = (SessionSendMessage) packet;
 
-            ServerMessage sm = (ServerMessage) p.getMessage();
+            Message sm = p.getMessage();
 
             sm.putStringProperty(InterceptorTest.key, "orange");
          }
@@ -104,19 +103,18 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       @Override
       public boolean intercept(final Packet packet, final RemotingConnection connection) throws ActiveMQException {
-         if (packet.getType() == PacketImpl.CREATE_QUEUE) {
+         if (packet.getType() == PacketImpl.CREATE_QUEUE || packet.getType() == PacketImpl.CREATE_QUEUE_V2) {
             String userName = getUsername(packet, connection);
             CreateQueueMessage createQueue = (CreateQueueMessage) packet;
             createQueue.setFilterString(new SimpleString("userName='" + userName + "'"));
 
-            System.out.println("userName = " + userName);
-         }
-         else if (packet.getType() == PacketImpl.SESS_SEND) {
+            instanceLog.debug("userName on createQueue = " + userName);
+         } else if (packet.getType() == PacketImpl.SESS_SEND) {
             String userName = getUsername(packet, connection);
             MessagePacket msgPacket = (MessagePacket) packet;
             msgPacket.getMessage().putStringProperty("userName", userName);
 
-            System.out.println("userName on send = " + userName);
+            instanceLog.debug("userName on send = " + userName);
          }
 
          return true;
@@ -140,14 +138,13 @@ public class InterceptorTest extends ActiveMQTestBase {
             SessionCreateConsumerMessage createQueue = (SessionCreateConsumerMessage) packet;
             createQueue.setFilterString(new SimpleString("userName='" + userName + "'"));
 
-            System.out.println("userName = " + userName);
-         }
-         else if (packet.getType() == PacketImpl.SESS_SEND) {
+            instanceLog.debug("userName = " + userName);
+         } else if (packet.getType() == PacketImpl.SESS_SEND) {
             String userName = getUsername(packet, connection);
             MessagePacket msgPacket = (MessagePacket) packet;
             msgPacket.getMessage().putStringProperty("userName", userName);
 
-            System.out.println("userName on send = " + userName);
+            instanceLog.debug("userName on send = " + userName);
          }
 
          return true;
@@ -169,7 +166,7 @@ public class InterceptorTest extends ActiveMQTestBase {
          if (packet.getType() == PacketImpl.SESS_RECEIVE_MSG) {
             SessionReceiveMessage p = (SessionReceiveMessage) packet;
 
-            ServerMessage sm = (ServerMessage) p.getMessage();
+            Message sm = p.getMessage();
 
             sm.putStringProperty(InterceptorTest.key, "orange");
          }
@@ -323,7 +320,7 @@ public class InterceptorTest extends ActiveMQTestBase {
          if (packet.getType() == PacketImpl.SESS_SEND) {
             SessionSendMessage p = (SessionSendMessage) packet;
 
-            ServerMessage sm = (ServerMessage) p.getMessage();
+            Message sm = p.getMessage();
 
             sm.putIntProperty(key, num);
 
@@ -401,7 +398,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -468,9 +465,9 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession sessionAnotherUser = sf.createSession("an", "other", false, false, false, false, 0);
 
-      session.createQueue(QUEUE, QUEUE, null, true);
+      session.createQueue(new QueueConfiguration(QUEUE));
 
-      sessionAnotherUser.createQueue(QUEUE, ANOTHER_QUEUE, null, true);
+      sessionAnotherUser.createQueue(new QueueConfiguration(ANOTHER_QUEUE).setAddress(QUEUE));
 
       ClientProducer prod = session.createProducer(QUEUE);
 
@@ -521,7 +518,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession sessionAnotherUser = sf.createSession("an", "other", false, false, false, false, 0);
 
-      session.createQueue(QUEUE, QUEUE, null, true);
+      session.createQueue(new QueueConfiguration(QUEUE));
 
       ClientProducer prod = session.createProducer(QUEUE);
 
@@ -568,7 +565,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -601,7 +598,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -654,7 +651,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -707,7 +704,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -741,7 +738,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -776,7 +773,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -785,8 +782,7 @@ public class InterceptorTest extends ActiveMQTestBase {
       try {
          producer.send(message);
          Assert.fail();
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          // expected exception
          Assert.assertTrue(e.getType().getCode() == ActiveMQExceptionType.INTERCEPTOR_REJECTED_PACKET.getCode());
       }
@@ -808,7 +804,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -892,7 +888,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -970,7 +966,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -1031,7 +1027,7 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(false, true, true, true);
 
-      session.createQueue(QUEUE, QUEUE, null, false);
+      session.createQueue(new QueueConfiguration(QUEUE).setDurable(false));
 
       ClientProducer producer = session.createProducer(QUEUE);
 
@@ -1054,16 +1050,15 @@ public class InterceptorTest extends ActiveMQTestBase {
       session.close();
    }
 
-
    @Test
    public void testInterceptorOnURI() throws Exception {
       locator.close();
 
-      server.createQueue(JMS_QUEUE, JMS_QUEUE, null, true, false);
+      server.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
 
       String uri = "tcp://localhost:61616?incomingInterceptorList=" + Incoming.class.getCanonicalName() + "&outgoingInterceptorList=" + Outgoing.class.getName();
 
-      System.out.println(uri);
+      instanceLog.debug(uri);
 
       ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(uri);
 
@@ -1083,7 +1078,6 @@ public class InterceptorTest extends ActiveMQTestBase {
 
       producer.send(session.createTextMessage("HelloMessage"));
 
-
       connection.start();
 
       MessageConsumer consumer = session.createConsumer(session.createQueue(QUEUE.toString()));
@@ -1100,7 +1094,6 @@ public class InterceptorTest extends ActiveMQTestBase {
       connection.close();
 
       factory.close();
-
 
    }
 }

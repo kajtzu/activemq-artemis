@@ -16,14 +16,16 @@
  */
 package org.apache.activemq.artemis.core.persistence.impl.journal;
 
-import javax.transaction.xa.Xid;
-import java.io.File;
-import java.io.FileInputStream;
-import java.security.AccessController;
-import java.security.DigestInputStream;
+import static org.apache.activemq.artemis.api.core.SimpleString.ByteBufSimpleStringPool.DEFAULT_MAX_LENGTH;
+import static org.apache.activemq.artemis.api.core.SimpleString.ByteBufSimpleStringPool.DEFAULT_POOL_CAPACITY;
+import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.ACKNOWLEDGE_CURSOR;
+import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.ADD_LARGE_MESSAGE_PENDING;
+import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.DUPLICATE_ID;
+import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.PAGE_CURSOR_COUNTER_INC;
+import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.PAGE_CURSOR_COUNTER_VALUE;
+import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME;
+
 import java.security.InvalidParameterException;
-import java.security.MessageDigest;
-import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,16 +36,21 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import javax.transaction.xa.Xid;
+
+import io.netty.buffer.Unpooled;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
+import org.apache.activemq.artemis.api.core.ActiveMQShutdownException;
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.core.buffers.impl.ChannelBufferWrapper;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.filter.Filter;
 import org.apache.activemq.artemis.core.io.IOCallback;
@@ -52,6 +59,7 @@ import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
+import org.apache.activemq.artemis.core.persistence.CoreMessageObjectPools;
 import org.apache.activemq.artemis.core.paging.PageTransactionInfo;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
@@ -59,13 +67,19 @@ import org.apache.activemq.artemis.core.paging.cursor.PagePosition;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.paging.cursor.PagedReferenceImpl;
 import org.apache.activemq.artemis.core.paging.impl.PageTransactionInfoImpl;
+import org.apache.activemq.artemis.core.persistence.AddressBindingInfo;
 import org.apache.activemq.artemis.core.persistence.GroupingInfo;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
+import org.apache.activemq.artemis.core.persistence.AddressQueueStatus;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.config.PersistedAddressSetting;
-import org.apache.activemq.artemis.core.persistence.config.PersistedRoles;
+import org.apache.activemq.artemis.core.persistence.config.PersistedDivertConfiguration;
+import org.apache.activemq.artemis.core.persistence.config.PersistedRole;
+import org.apache.activemq.artemis.core.persistence.config.PersistedSecuritySetting;
+import org.apache.activemq.artemis.core.persistence.config.PersistedUser;
 import org.apache.activemq.artemis.core.persistence.impl.PageCountPending;
+import org.apache.activemq.artemis.core.persistence.impl.journal.codec.AddressStatusEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.CursorAckRecordEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.DeleteEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.DeliveryCountUpdateEncoding;
@@ -73,13 +87,15 @@ import org.apache.activemq.artemis.core.persistence.impl.journal.codec.Duplicate
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.FinishPageMessageOperation;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.GroupingEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.HeuristicCompletionEncoding;
-import org.apache.activemq.artemis.core.persistence.impl.journal.codec.LargeMessageEncoding;
+import org.apache.activemq.artemis.core.persistence.impl.journal.codec.LargeMessagePersister;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.PageCountPendingImpl;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.PageCountRecord;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.PageCountRecordInc;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.PageUpdateTXEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.PendingLargeMessageEncoding;
+import org.apache.activemq.artemis.core.persistence.impl.journal.codec.PersistentAddressBindingEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.PersistentQueueBindingEncoding;
+import org.apache.activemq.artemis.core.persistence.impl.journal.codec.QueueStatusEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.RefEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.ScheduledDeliveryEncoding;
 import org.apache.activemq.artemis.core.persistence.impl.journal.codec.XidEncoding;
@@ -92,25 +108,21 @@ import org.apache.activemq.artemis.core.server.LargeServerMessage;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.RouteContextList;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.group.impl.GroupBinding;
+import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.impl.JournalLoader;
-import org.apache.activemq.artemis.core.server.impl.ServerMessageImpl;
 import org.apache.activemq.artemis.core.transaction.ResourceManager;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.core.transaction.TransactionPropertyIndexes;
 import org.apache.activemq.artemis.core.transaction.impl.TransactionImpl;
-import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
-import org.apache.activemq.artemis.utils.Base64;
+import org.apache.activemq.artemis.spi.core.protocol.MessagePersister;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
 import org.apache.activemq.artemis.utils.IDGenerator;
-
-import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.ACKNOWLEDGE_CURSOR;
-import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.ADD_LARGE_MESSAGE_PENDING;
-import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.DUPLICATE_ID;
-import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.PAGE_CURSOR_COUNTER_INC;
-import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.PAGE_CURSOR_COUNTER_VALUE;
-import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME;
+import org.apache.activemq.artemis.utils.collections.ConcurrentLongHashMap;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
+import org.apache.activemq.artemis.utils.critical.CriticalAnalyzer;
+import org.apache.activemq.artemis.utils.critical.CriticalComponentImpl;
+import org.jboss.logging.Logger;
 
 /**
  * Controls access to the journals and other storage files such as the ones used to store pages and
@@ -119,7 +131,15 @@ import static org.apache.activemq.artemis.core.persistence.impl.journal.JournalR
  * <p>
  * Using this class also ensures that locks are acquired in the right order, avoiding dead-locks.
  */
-public abstract class AbstractJournalStorageManager implements StorageManager {
+public abstract class AbstractJournalStorageManager extends CriticalComponentImpl implements StorageManager {
+
+   protected static final int CRITICAL_PATHS = 3;
+   protected static final int CRITICAL_STORE = 0;
+   protected static final int CRITICAL_STOP = 1;
+   protected static final int CRITICAL_STOP_2 = 2;
+
+
+   private static final Logger logger = Logger.getLogger(AbstractJournalStorageManager.class);
 
    public enum JournalContent {
       BINDINGS((byte) 0), MESSAGES((byte) 1);
@@ -145,6 +165,10 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
    protected BatchingIDGenerator idGenerator;
 
+   protected final ExecutorFactory ioExecutorFactory;
+
+   protected final ScheduledExecutorService scheduledExecutorService;
+
    protected final ReentrantReadWriteLock storageManagerLock = new ReentrantReadWriteLock(true);
 
    protected Journal messageJournal;
@@ -156,41 +180,62 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    /**
     * Used to create Operation Contexts
     */
-   private final ExecutorFactory executorFactory;
+   protected final ExecutorFactory executorFactory;
 
    final Executor executor;
 
-   ExecutorService singleThreadExecutor;
+   Executor singleThreadExecutor;
 
    private final boolean syncTransactional;
 
    private final boolean syncNonTransactional;
 
-   protected int perfBlastPages = -1;
-
    protected boolean journalLoaded = false;
 
-   private final IOCriticalErrorListener ioCriticalErrorListener;
+   protected final IOCriticalErrorListener ioCriticalErrorListener;
 
    protected final Configuration config;
 
+   public Configuration getConfig() {
+      return config;
+   }
+
    // Persisted core configuration
-   protected final Map<SimpleString, PersistedRoles> mapPersistedRoles = new ConcurrentHashMap<>();
+   protected final Map<SimpleString, PersistedSecuritySetting> mapPersistedSecuritySettings = new ConcurrentHashMap<>();
 
    protected final Map<SimpleString, PersistedAddressSetting> mapPersistedAddressSettings = new ConcurrentHashMap<>();
 
-   protected final Set<Long> largeMessagesToDelete = new HashSet<>();
+   protected final Map<String, PersistedDivertConfiguration> mapPersistedDivertConfigurations = new ConcurrentHashMap<>();
 
-   public AbstractJournalStorageManager(final Configuration config, final ExecutorFactory executorFactory) {
-      this(config, executorFactory, null);
+   protected final Map<String, PersistedUser> mapPersistedUsers = new ConcurrentHashMap<>();
+
+   protected final Map<String, PersistedRole> mapPersistedRoles = new ConcurrentHashMap<>();
+
+   protected final ConcurrentLongHashMap<LargeServerMessage> largeMessagesToDelete = new ConcurrentLongHashMap<>();
+
+   public AbstractJournalStorageManager(final Configuration config,
+                                        final CriticalAnalyzer analyzer,
+                                        final ExecutorFactory executorFactory,
+                                        final ScheduledExecutorService scheduledExecutorService,
+                                        final ExecutorFactory ioExecutorFactory) {
+      this(config, analyzer, executorFactory, scheduledExecutorService, ioExecutorFactory, null);
    }
 
    public AbstractJournalStorageManager(Configuration config,
+                                        CriticalAnalyzer analyzer,
                                         ExecutorFactory executorFactory,
+                                        ScheduledExecutorService scheduledExecutorService,
+                                        ExecutorFactory ioExecutorFactory,
                                         IOCriticalErrorListener criticalErrorListener) {
+      super(analyzer, CRITICAL_PATHS);
+
       this.executorFactory = executorFactory;
 
       this.ioCriticalErrorListener = criticalErrorListener;
+
+      this.ioExecutorFactory = ioExecutorFactory;
+
+      this.scheduledExecutorService = scheduledExecutorService;
 
       this.config = config;
 
@@ -204,8 +249,16 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       idGenerator = new BatchingIDGenerator(0, CHECKPOINT_BATCH_SIZE, this);
    }
 
+
+   @Override
+   public long getMaxRecordSize() {
+      return messageJournal.getMaxRecordSize();
+   }
+
+
    /**
     * Called during initialization.  Used by implementations to setup Journals, Stores etc...
+    *
     * @param config
     * @param criticalErrorListener
     */
@@ -219,26 +272,6 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    @Override
    public void clearContext() {
       OperationContextImpl.clearContext();
-   }
-
-   public static String md5(File file) {
-      try {
-         byte[] buffer = new byte[1 << 4];
-         MessageDigest md = MessageDigest.getInstance("MD5");
-
-         byte[] digest;
-         try (FileInputStream is = new FileInputStream(file);
-              DigestInputStream is2 = new DigestInputStream(is, md)) {
-            while (is2.read(buffer) > 0) {
-               continue;
-            }
-            digest = md.digest();
-         }
-         return Base64.encodeBytes(digest);
-      }
-      catch (Exception e) {
-         throw new RuntimeException(e);
-      }
    }
 
    public IDGenerator getIDGenerator() {
@@ -273,10 +306,6 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       OperationContextImpl.setContext(context);
    }
 
-   public Executor getSingleThreadExecutor() {
-      return singleThreadExecutor;
-   }
-
    @Override
    public OperationContext newSingleThreadContext() {
       return newContext(singleThreadExecutor);
@@ -309,15 +338,13 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
    // Non transactional operations
 
-
    @Override
    public void confirmPendingLargeMessageTX(final Transaction tx, long messageID, long recordID) throws Exception {
       readLock();
       try {
          installLargeMessageConfirmationOnTX(tx, recordID);
          messageJournal.appendDeleteRecordTransactional(tx.getID(), recordID, new DeleteEncoding(JournalRecordIds.ADD_LARGE_MESSAGE_PENDING, messageID));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -330,14 +357,13 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecord(recordID, true, getContext());
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
 
    @Override
-   public void storeMessage(final ServerMessage message) throws Exception {
+   public void storeMessage(final Message message) throws Exception {
       if (message.getMessageID() <= 0) {
          // Sanity check only... this shouldn't happen unless there is a bug
          throw ActiveMQMessageBundle.BUNDLE.messageIdNotAssigned();
@@ -348,14 +374,12 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          // Note that we don't sync, the add reference that comes immediately after will sync if
          // appropriate
 
-         if (message.isLargeMessage()) {
-            messageJournal.appendAddRecord(message.getMessageID(), JournalRecordIds.ADD_LARGE_MESSAGE, new LargeMessageEncoding((LargeServerMessage) message), false, getContext(false));
+         if (message.isLargeMessage() && message instanceof LargeServerMessageImpl) {
+            messageJournal.appendAddRecord(message.getMessageID(), JournalRecordIds.ADD_LARGE_MESSAGE, LargeMessagePersister.getInstance(), message, false, getContext(false));
+         } else {
+            messageJournal.appendAddRecord(message.getMessageID(), JournalRecordIds.ADD_MESSAGE_PROTOCOL, message.getPersister(), message, false, getContext(false));
          }
-         else {
-            messageJournal.appendAddRecord(message.getMessageID(), JournalRecordIds.ADD_MESSAGE, message, false, getContext(false));
-         }
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -365,20 +389,31 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendUpdateRecord(messageID, JournalRecordIds.ADD_REF, new RefEncoding(queueID), last && syncNonTransactional, getContext(last && syncNonTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
 
    @Override
    public void readLock() {
+      enterCritical(CRITICAL_STORE);
       storageManagerLock.readLock().lock();
    }
 
    @Override
    public void readUnLock() {
       storageManagerLock.readLock().unlock();
+      leaveCritical(CRITICAL_STORE);
+   }
+
+   /** for internal use and testsuite, don't use it outside of tests */
+   public void writeLock() {
+      storageManagerLock.writeLock().lock();
+   }
+
+   /** for internal use and testsuite, don't use it outside of tests */
+   public void writeUnlock() {
+      storageManagerLock.writeLock().unlock();
    }
 
    @Override
@@ -386,8 +421,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendUpdateRecord(messageID, JournalRecordIds.ACKNOWLEDGE_REF, new RefEncoding(queueID), syncNonTransactional, getContext(syncNonTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -399,35 +433,32 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          long ackID = idGenerator.generateID();
          position.setRecordID(ackID);
          messageJournal.appendAddRecord(ackID, JournalRecordIds.ACKNOWLEDGE_CURSOR, new CursorAckRecordEncoding(queueID, position), syncNonTransactional, getContext(syncNonTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
 
    @Override
-   public void deleteMessage(final long messageID) throws Exception {
+   public boolean deleteMessage(final long messageID) throws Exception {
       readLock();
       try {
          // Messages are deleted on postACK, one after another.
          // If these deletes are synchronized, we would build up messages on the Executor
          // increasing chances of losing deletes.
          // The StorageManager should verify messages without references
-         messageJournal.appendDeleteRecord(messageID, false, getContext(false));
-      }
-      finally {
+         return messageJournal.tryAppendDeleteRecord(messageID, false, getContext(false));
+      } finally {
          readUnLock();
       }
    }
 
    @Override
-   public void updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
+   public boolean updateScheduledDeliveryTime(final MessageReference ref) throws Exception {
       ScheduledDeliveryEncoding encoding = new ScheduledDeliveryEncoding(ref.getScheduledDeliveryTime(), ref.getQueue().getID());
       readLock();
       try {
-         messageJournal.appendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME, encoding, syncNonTransactional, getContext(syncNonTransactional));
-      }
-      finally {
+         return messageJournal.tryAppendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME, encoding, syncNonTransactional, getContext(syncNonTransactional));
+      } finally {
          readUnLock();
       }
    }
@@ -439,8 +470,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          DuplicateIDEncoding encoding = new DuplicateIDEncoding(address, duplID);
 
          messageJournal.appendAddRecord(recordID, JournalRecordIds.DUPLICATE_ID, encoding, syncNonTransactional, getContext(syncNonTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -450,8 +480,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecord(recordID, syncNonTransactional, getContext(syncNonTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -459,22 +488,21 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    // Transactional operations
 
    @Override
-   public void storeMessageTransactional(final long txID, final ServerMessage message) throws Exception {
+   public void storeMessageTransactional(final long txID, final Message message) throws Exception {
       if (message.getMessageID() <= 0) {
          throw ActiveMQMessageBundle.BUNDLE.messageIdNotAssigned();
       }
 
       readLock();
       try {
-         if (message.isLargeMessage()) {
-            messageJournal.appendAddRecordTransactional(txID, message.getMessageID(), JournalRecordIds.ADD_LARGE_MESSAGE, new LargeMessageEncoding(((LargeServerMessage) message)));
-         }
-         else {
-            messageJournal.appendAddRecordTransactional(txID, message.getMessageID(), JournalRecordIds.ADD_MESSAGE, message);
+         if (message.isLargeMessage() && message instanceof LargeServerMessageImpl) {
+            // this is a core large message
+            messageJournal.appendAddRecordTransactional(txID, message.getMessageID(), JournalRecordIds.ADD_LARGE_MESSAGE, LargeMessagePersister.getInstance(), message);
+         } else {
+            messageJournal.appendAddRecordTransactional(txID, message.getMessageID(), JournalRecordIds.ADD_MESSAGE_PROTOCOL, message.getPersister(), message);
          }
 
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -485,8 +513,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       try {
          pageTransaction.setRecordID(generateID());
          messageJournal.appendAddRecordTransactional(txID, pageTransaction.getRecordID(), JournalRecordIds.PAGE_TRANSACTION, pageTransaction);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -498,19 +525,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendUpdateRecordTransactional(txID, pageTransaction.getRecordID(), JournalRecordIds.PAGE_TRANSACTION, new PageUpdateTXEncoding(pageTransaction.getTransactionID(), depages));
-      }
-      finally {
-         readUnLock();
-      }
-   }
-
-   @Override
-   public void updatePageTransaction(final PageTransactionInfo pageTransaction, final int depages) throws Exception {
-      readLock();
-      try {
-         messageJournal.appendUpdateRecord(pageTransaction.getRecordID(), JournalRecordIds.PAGE_TRANSACTION, new PageUpdateTXEncoding(pageTransaction.getTransactionID(), depages), syncNonTransactional, getContext(syncNonTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -520,8 +535,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendUpdateRecordTransactional(txID, messageID, JournalRecordIds.ADD_REF, new RefEncoding(queueID));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -533,8 +547,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendUpdateRecordTransactional(txID, messageID, JournalRecordIds.ACKNOWLEDGE_REF, new RefEncoding(queueID));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -546,8 +559,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          long ackID = idGenerator.generateID();
          position.setRecordID(ackID);
          messageJournal.appendAddRecordTransactional(txID, ackID, JournalRecordIds.ACKNOWLEDGE_CURSOR, new CursorAckRecordEncoding(queueID, position));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -569,8 +581,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecordTransactional(txID, ackID);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -588,8 +599,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
          messageJournal.appendAddRecord(id, JournalRecordIds.HEURISTIC_COMPLETION, new HeuristicCompletionEncoding(xid, isCommit), true, getContext(true));
          return id;
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -600,8 +610,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       try {
 
          messageJournal.appendDeleteRecord(id, true, getContext(true));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -611,8 +620,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecord(recordID, false);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -624,8 +632,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       try {
 
          messageJournal.appendUpdateRecordTransactional(txID, ref.getMessage().getMessageID(), JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME, encoding);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -635,8 +642,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendPrepareRecord(txID, new XidEncoding(xid), syncTransactional, getContext(syncTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -648,7 +654,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
    @Override
    public void commitBindings(final long txID) throws Exception {
-      bindingsJournal.appendCommitRecord(txID, true);
+      bindingsJournal.appendCommitRecord(txID, true, getContext(true), true);
    }
 
    @Override
@@ -663,6 +669,9 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       try {
          messageJournal.appendCommitRecord(txID, syncTransactional, getContext(syncTransactional), lineUpContext);
          if (!lineUpContext && !syncTransactional) {
+            if (logger.isTraceEnabled()) {
+               logger.trace("calling getContext(true).done() for txID=" + txID + ",lineupContext=" + lineUpContext + " syncTransactional=" + syncTransactional + "... forcing call on getContext(true).done");
+            }
             /**
              * If {@code lineUpContext == false}, it means that we have previously lined up a
              * context somewhere else (specifically see @{link TransactionImpl#asyncAppendCommit}),
@@ -672,8 +681,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
              */
             getContext(true).done();
          }
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -683,8 +691,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendRollbackRecord(txID, syncTransactional, getContext(syncTransactional));
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -699,8 +706,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.DUPLICATE_ID, encoding);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -715,8 +721,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendUpdateRecordTransactional(txID, recordID, JournalRecordIds.DUPLICATE_ID, encoding);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -726,8 +731,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -735,11 +739,11 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    // Other operations
 
    @Override
-   public void updateDeliveryCount(final MessageReference ref) throws Exception {
+   public boolean updateDeliveryCount(final MessageReference ref) throws Exception {
       // no need to store if it's the same value
       // otherwise the journal will get OME in case of lots of redeliveries
       if (ref.getDeliveryCount() == ref.getPersistedCount()) {
-         return;
+         return true;
       }
 
       ref.setPersistedCount(ref.getDeliveryCount());
@@ -747,9 +751,8 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
       readLock();
       try {
-         messageJournal.appendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.UPDATE_DELIVERY_COUNT, updateInfo, syncNonTransactional, getContext(syncNonTransactional));
-      }
-      finally {
+         return messageJournal.tryAppendUpdateRecord(ref.getMessage().getMessageID(), JournalRecordIds.UPDATE_DELIVERY_COUNT, updateInfo, syncNonTransactional, getContext(syncNonTransactional));
+      } finally {
          readUnLock();
       }
    }
@@ -763,8 +766,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          addressSetting.setStoreId(id);
          bindingsJournal.appendAddRecord(id, JournalRecordIds.ADDRESS_SETTING_RECORD, addressSetting, true);
          mapPersistedAddressSettings.put(addressSetting.getAddressMatch(), addressSetting);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -775,33 +777,127 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    }
 
    @Override
-   public List<PersistedRoles> recoverPersistedRoles() throws Exception {
-      return new ArrayList<>(mapPersistedRoles.values());
+   public List<PersistedSecuritySetting> recoverSecuritySettings() throws Exception {
+      return new ArrayList<>(mapPersistedSecuritySettings.values());
    }
 
    @Override
-   public void storeSecurityRoles(PersistedRoles persistedRoles) throws Exception {
+   public void storeSecuritySetting(PersistedSecuritySetting persistedRoles) throws Exception {
 
-      deleteSecurityRoles(persistedRoles.getAddressMatch());
+      deleteSecuritySetting(persistedRoles.getAddressMatch());
       readLock();
       try {
          final long id = idGenerator.generateID();
          persistedRoles.setStoreId(id);
-         bindingsJournal.appendAddRecord(id, JournalRecordIds.SECURITY_RECORD, persistedRoles, true);
-         mapPersistedRoles.put(persistedRoles.getAddressMatch(), persistedRoles);
-      }
-      finally {
+         bindingsJournal.appendAddRecord(id, JournalRecordIds.SECURITY_SETTING_RECORD, persistedRoles, true);
+         mapPersistedSecuritySettings.put(persistedRoles.getAddressMatch(), persistedRoles);
+      } finally {
          readUnLock();
       }
+   }
+
+   @Override
+   public void storeDivertConfiguration(PersistedDivertConfiguration persistedDivertConfiguration) throws Exception {
+      deleteDivertConfiguration(persistedDivertConfiguration.getName());
+      readLock();
+      try {
+         final long id = idGenerator.generateID();
+         persistedDivertConfiguration.setStoreId(id);
+         bindingsJournal.appendAddRecord(id, JournalRecordIds.DIVERT_RECORD, persistedDivertConfiguration, true);
+         mapPersistedDivertConfigurations.put(persistedDivertConfiguration.getName(), persistedDivertConfiguration);
+      } finally {
+         readUnLock();
+      }
+   }
+
+   @Override
+   public void deleteDivertConfiguration(String divertName) throws Exception {
+      PersistedDivertConfiguration oldDivert = mapPersistedDivertConfigurations.remove(divertName);
+      if (oldDivert != null) {
+         readLock();
+         try {
+            bindingsJournal.appendDeleteRecord(oldDivert.getStoreId(), false);
+         } finally {
+            readUnLock();
+         }
+      }
+   }
+
+   @Override
+   public List<PersistedDivertConfiguration> recoverDivertConfigurations() {
+      return new ArrayList<>(mapPersistedDivertConfigurations.values());
+   }
+
+   @Override
+   public void storeUser(PersistedUser persistedUser) throws Exception {
+      deleteUser(persistedUser.getUsername());
+      readLock();
+      try {
+         final long id = idGenerator.generateID();
+         persistedUser.setStoreId(id);
+         bindingsJournal.appendAddRecord(id, JournalRecordIds.USER_RECORD, persistedUser, true);
+         mapPersistedUsers.put(persistedUser.getUsername(), persistedUser);
+      } finally {
+         readUnLock();
+      }
+   }
+
+   @Override
+   public void deleteUser(String username) throws Exception {
+      PersistedUser oldUser = mapPersistedUsers.remove(username);
+      if (oldUser != null) {
+         readLock();
+         try {
+            bindingsJournal.appendDeleteRecord(oldUser.getStoreId(), false);
+         } finally {
+            readUnLock();
+         }
+      }
+   }
+
+   @Override
+   public Map<String, PersistedUser> getPersistedUsers() {
+      return new HashMap<>(mapPersistedUsers);
+   }
+
+   @Override
+   public void storeRole(PersistedRole persistedRole) throws Exception {
+      deleteRole(persistedRole.getUsername());
+      readLock();
+      try {
+         final long id = idGenerator.generateID();
+         persistedRole.setStoreId(id);
+         bindingsJournal.appendAddRecord(id, JournalRecordIds.ROLE_RECORD, persistedRole, true);
+         mapPersistedRoles.put(persistedRole.getUsername(), persistedRole);
+      } finally {
+         readUnLock();
+      }
+   }
+
+   @Override
+   public void deleteRole(String username) throws Exception {
+      PersistedRole oldRole = mapPersistedRoles.remove(username);
+      if (oldRole != null) {
+         readLock();
+         try {
+            bindingsJournal.appendDeleteRecord(oldRole.getStoreId(), false);
+         } finally {
+            readUnLock();
+         }
+      }
+   }
+
+   @Override
+   public Map<String, PersistedRole> getPersistedRoles() {
+      return new HashMap<>(mapPersistedRoles);
    }
 
    @Override
    public void storeID(final long journalID, final long id) throws Exception {
       readLock();
       try {
-         bindingsJournal.appendAddRecord(journalID, JournalRecordIds.ID_COUNTER_RECORD, BatchingIDGenerator.createIDEncodingSupport(id), true);
-      }
-      finally {
+         bindingsJournal.appendAddRecord(journalID, JournalRecordIds.ID_COUNTER_RECORD, BatchingIDGenerator.createIDEncodingSupport(id), true, getContext(true));
+      } finally {
          readUnLock();
       }
    }
@@ -811,8 +907,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          bindingsJournal.appendDeleteRecord(journalD, false);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -824,22 +919,20 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          readLock();
          try {
             bindingsJournal.appendDeleteRecord(oldSetting.getStoreId(), false);
-         }
-         finally {
+         } finally {
             readUnLock();
          }
       }
    }
 
    @Override
-   public void deleteSecurityRoles(SimpleString addressMatch) throws Exception {
-      PersistedRoles oldRoles = mapPersistedRoles.remove(addressMatch);
+   public void deleteSecuritySetting(SimpleString addressMatch) throws Exception {
+      PersistedSecuritySetting oldRoles = mapPersistedSecuritySettings.remove(addressMatch);
       if (oldRoles != null) {
          readLock();
          try {
             bindingsJournal.appendDeleteRecord(oldRoles.getStoreId(), false);
-         }
-         finally {
+         } finally {
             readUnLock();
          }
       }
@@ -854,15 +947,17 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
                                                     final Set<Pair<Long, Long>> pendingLargeMessages,
                                                     List<PageCountPending> pendingNonTXPageCounter,
                                                     final JournalLoader journalLoader) throws Exception {
-      List<RecordInfo> records = new ArrayList<>();
+      SparseArrayLinkedList<RecordInfo> records = new SparseArrayLinkedList<>();
 
       List<PreparedTransactionInfo> preparedTransactions = new ArrayList<>();
 
-      Map<Long, ServerMessage> messages = new HashMap<>();
+      Set<PageTransactionInfo> invalidPageTransactions = new HashSet<>();
+
+      Map<Long, Message> messages = new HashMap<>();
       readLock();
       try {
 
-         JournalLoadInformation info = messageJournal.load(records, preparedTransactions, new LargeMessageTXFailureCallback(this, messages));
+         JournalLoadInformation info = messageJournal.load(records, preparedTransactions, new LargeMessageTXFailureCallback(this));
 
          ArrayList<LargeServerMessage> largeMessages = new ArrayList<>();
 
@@ -870,297 +965,336 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
          Map<Long, PageSubscription> pageSubscriptions = new HashMap<>();
 
-         final int totalSize = records.size();
+         final long totalSize = records.size();
 
-         for (int reccount = 0; reccount < totalSize; reccount++) {
-            // It will show log.info only with large journals (more than 1 million records)
-            if (reccount > 0 && reccount % 1000000 == 0) {
-               long percent = (long) ((((double) reccount) / ((double) totalSize)) * 100f);
+         final class MutableLong {
 
-               ActiveMQServerLogger.LOGGER.percentLoaded(percent);
-            }
-
-            RecordInfo record = records.get(reccount);
-            byte[] data = record.data;
-
-            ActiveMQBuffer buff = ActiveMQBuffers.wrappedBuffer(data);
-
-            byte recordType = record.getUserRecordType();
-
-            switch (recordType) {
-               case JournalRecordIds.ADD_LARGE_MESSAGE_PENDING: {
-                  PendingLargeMessageEncoding pending = new PendingLargeMessageEncoding();
-
-                  pending.decode(buff);
-
-                  if (pendingLargeMessages != null) {
-                     // it could be null on tests, and we don't need anything on that case
-                     pendingLargeMessages.add(new Pair<>(record.id, pending.largeMessageID));
-                  }
-                  break;
-               }
-               case JournalRecordIds.ADD_LARGE_MESSAGE: {
-                  LargeServerMessage largeMessage = parseLargeMessage(messages, buff);
-
-                  messages.put(record.id, largeMessage);
-
-                  largeMessages.add(largeMessage);
-
-                  break;
-               }
-               case JournalRecordIds.ADD_MESSAGE: {
-                  ServerMessage message = new ServerMessageImpl(record.id, 50);
-
-                  message.decode(buff);
-
-                  messages.put(record.id, message);
-
-                  break;
-               }
-               case JournalRecordIds.ADD_REF: {
-                  long messageID = record.id;
-
-                  RefEncoding encoding = new RefEncoding();
-
-                  encoding.decode(buff);
-
-                  Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
-
-                  if (queueMessages == null) {
-                     queueMessages = new LinkedHashMap<>();
-
-                     queueMap.put(encoding.queueID, queueMessages);
-                  }
-
-                  ServerMessage message = messages.get(messageID);
-
-                  if (message == null) {
-                     ActiveMQServerLogger.LOGGER.cannotFindMessage(record.id);
-                  }
-                  else {
-                     queueMessages.put(messageID, new AddMessageRecord(message));
-                  }
-
-                  break;
-               }
-               case JournalRecordIds.ACKNOWLEDGE_REF: {
-                  long messageID = record.id;
-
-                  RefEncoding encoding = new RefEncoding();
-
-                  encoding.decode(buff);
-
-                  Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
-
-                  if (queueMessages == null) {
-                     ActiveMQServerLogger.LOGGER.journalCannotFindQueue(encoding.queueID, messageID);
-                  }
-                  else {
-                     AddMessageRecord rec = queueMessages.remove(messageID);
-
-                     if (rec == null) {
-                        ActiveMQServerLogger.LOGGER.cannotFindMessage(messageID);
-                     }
-                  }
-
-                  break;
-               }
-               case JournalRecordIds.UPDATE_DELIVERY_COUNT: {
-                  long messageID = record.id;
-
-                  DeliveryCountUpdateEncoding encoding = new DeliveryCountUpdateEncoding();
-
-                  encoding.decode(buff);
-
-                  Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
-
-                  if (queueMessages == null) {
-                     ActiveMQServerLogger.LOGGER.journalCannotFindQueueDelCount(encoding.queueID);
-                  }
-                  else {
-                     AddMessageRecord rec = queueMessages.get(messageID);
-
-                     if (rec == null) {
-                        ActiveMQServerLogger.LOGGER.journalCannotFindMessageDelCount(messageID);
-                     }
-                     else {
-                        rec.setDeliveryCount(encoding.count);
-                     }
-                  }
-
-                  break;
-               }
-               case JournalRecordIds.PAGE_TRANSACTION: {
-                  if (record.isUpdate) {
-                     PageUpdateTXEncoding pageUpdate = new PageUpdateTXEncoding();
-
-                     pageUpdate.decode(buff);
-
-                     PageTransactionInfo pageTX = pagingManager.getTransaction(pageUpdate.pageTX);
-
-                     pageTX.onUpdate(pageUpdate.recods, null, null);
-                  }
-                  else {
-                     PageTransactionInfoImpl pageTransactionInfo = new PageTransactionInfoImpl();
-
-                     pageTransactionInfo.decode(buff);
-
-                     pageTransactionInfo.setRecordID(record.id);
-
-                     pagingManager.addTransaction(pageTransactionInfo);
-                  }
-
-                  break;
-               }
-               case JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME: {
-                  long messageID = record.id;
-
-                  ScheduledDeliveryEncoding encoding = new ScheduledDeliveryEncoding();
-
-                  encoding.decode(buff);
-
-                  Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
-
-                  if (queueMessages == null) {
-                     ActiveMQServerLogger.LOGGER.journalCannotFindQueueScheduled(encoding.queueID, messageID);
-                  }
-                  else {
-
-                     AddMessageRecord rec = queueMessages.get(messageID);
-
-                     if (rec == null) {
-                        ActiveMQServerLogger.LOGGER.cannotFindMessage(messageID);
-                     }
-                     else {
-                        rec.setScheduledDeliveryTime(encoding.scheduledDeliveryTime);
-                     }
-                  }
-
-                  break;
-               }
-               case JournalRecordIds.DUPLICATE_ID: {
-                  DuplicateIDEncoding encoding = new DuplicateIDEncoding();
-
-                  encoding.decode(buff);
-
-                  List<Pair<byte[], Long>> ids = duplicateIDMap.get(encoding.address);
-
-                  if (ids == null) {
-                     ids = new ArrayList<>();
-
-                     duplicateIDMap.put(encoding.address, ids);
-                  }
-
-                  ids.add(new Pair<>(encoding.duplID, record.id));
-
-                  break;
-               }
-               case JournalRecordIds.HEURISTIC_COMPLETION: {
-                  HeuristicCompletionEncoding encoding = new HeuristicCompletionEncoding();
-                  encoding.decode(buff);
-                  resourceManager.putHeuristicCompletion(record.id, encoding.xid, encoding.isCommit);
-                  break;
-               }
-               case JournalRecordIds.ACKNOWLEDGE_CURSOR: {
-                  CursorAckRecordEncoding encoding = new CursorAckRecordEncoding();
-                  encoding.decode(buff);
-
-                  encoding.position.setRecordID(record.id);
-
-                  PageSubscription sub = locateSubscription(encoding.queueID, pageSubscriptions, queueInfos, pagingManager);
-
-                  if (sub != null) {
-                     sub.reloadACK(encoding.position);
-                  }
-                  else {
-                     ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloading(encoding.queueID);
-                     messageJournal.appendDeleteRecord(record.id, false);
-
-                  }
-
-                  break;
-               }
-               case JournalRecordIds.PAGE_CURSOR_COUNTER_VALUE: {
-                  PageCountRecord encoding = new PageCountRecord();
-
-                  encoding.decode(buff);
-
-                  PageSubscription sub = locateSubscription(encoding.getQueueID(), pageSubscriptions, queueInfos, pagingManager);
-
-                  if (sub != null) {
-                     sub.getCounter().loadValue(record.id, encoding.getValue());
-                  }
-                  else {
-                     ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingPage(encoding.getQueueID());
-                     messageJournal.appendDeleteRecord(record.id, false);
-                  }
-
-                  break;
-               }
-
-               case JournalRecordIds.PAGE_CURSOR_COUNTER_INC: {
-                  PageCountRecordInc encoding = new PageCountRecordInc();
-
-                  encoding.decode(buff);
-
-                  PageSubscription sub = locateSubscription(encoding.getQueueID(), pageSubscriptions, queueInfos, pagingManager);
-
-                  if (sub != null) {
-                     sub.getCounter().loadInc(record.id, encoding.getValue());
-                  }
-                  else {
-                     ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingPageCursor(encoding.getQueueID());
-                     messageJournal.appendDeleteRecord(record.id, false);
-                  }
-
-                  break;
-               }
-
-               case JournalRecordIds.PAGE_CURSOR_COMPLETE: {
-                  CursorAckRecordEncoding encoding = new CursorAckRecordEncoding();
-                  encoding.decode(buff);
-
-                  encoding.position.setRecordID(record.id);
-
-                  PageSubscription sub = locateSubscription(encoding.queueID, pageSubscriptions, queueInfos, pagingManager);
-
-                  if (sub != null) {
-                     sub.reloadPageCompletion(encoding.position);
-                  }
-                  else {
-                     ActiveMQServerLogger.LOGGER.cantFindQueueOnPageComplete(encoding.queueID);
-                     messageJournal.appendDeleteRecord(record.id, false);
-                  }
-
-                  break;
-               }
-
-               case JournalRecordIds.PAGE_CURSOR_PENDING_COUNTER: {
-
-                  PageCountPendingImpl pendingCountEncoding = new PageCountPendingImpl();
-                  pendingCountEncoding.decode(buff);
-                  pendingCountEncoding.setID(record.id);
-
-                  // This can be null on testcases not interested on this outcome
-                  if (pendingNonTXPageCounter != null) {
-                     pendingNonTXPageCounter.add(pendingCountEncoding);
-                  }
-                  break;
-               }
-
-               default: {
-                  throw new IllegalStateException("Invalid record type " + recordType);
-               }
-            }
-
-            // This will free up memory sooner. The record is not needed any more
-            // and its byte array would consume memory during the load process even though it's not necessary any longer
-            // what would delay processing time during load
-            records.set(reccount, null);
+            long value;
          }
 
+         final MutableLong recordNumber = new MutableLong();
+         final CoreMessageObjectPools pools;
+         if (totalSize > 0) {
+            final int addresses = (int)Math.max(
+               DEFAULT_POOL_CAPACITY,
+               queueInfos == null ? 0 :
+                  queueInfos.values().stream()
+                     .map(QueueBindingInfo::getAddress)
+                     .filter(addr -> addr.length() <= DEFAULT_MAX_LENGTH)
+                     .count() * 2);
+            pools = new CoreMessageObjectPools(addresses, DEFAULT_POOL_CAPACITY, 128, 128);
+         } else {
+            pools = null;
+         }
+         // This will free up memory sooner while reading the records
+         records.clear(record -> {
+            try {
+               // It will show log.info only with large journals (more than 1 million records)
+               if (recordNumber.value > 0 && recordNumber.value % 1000000 == 0) {
+                  long percent = (long) ((((double) recordNumber.value) / ((double) totalSize)) * 100f);
+
+                  ActiveMQServerLogger.LOGGER.percentLoaded(percent);
+               }
+               recordNumber.value++;
+
+               byte[] data = record.data;
+
+               // We can make this byte[] buffer releasable, because subsequent methods using it are not supposed
+               // to release it. It saves creating useless UnreleasableByteBuf wrappers
+               ChannelBufferWrapper buff = new ChannelBufferWrapper(Unpooled.wrappedBuffer(data), true);
+
+               byte recordType = record.getUserRecordType();
+
+               switch (recordType) {
+                  case JournalRecordIds.ADD_LARGE_MESSAGE_PENDING: {
+                     PendingLargeMessageEncoding pending = new PendingLargeMessageEncoding();
+
+                     pending.decode(buff);
+
+                     if (pendingLargeMessages != null) {
+                        // it could be null on tests, and we don't need anything on that case
+                        pendingLargeMessages.add(new Pair<>(record.id, pending.largeMessageID));
+                     }
+                     break;
+                  }
+                  case JournalRecordIds.ADD_LARGE_MESSAGE: {
+                     LargeServerMessage largeMessage = parseLargeMessage(buff);
+
+                     messages.put(record.id, largeMessage.toMessage());
+
+                     largeMessages.add(largeMessage);
+
+                     break;
+                  }
+                  case JournalRecordIds.ADD_MESSAGE: {
+                     throw new IllegalStateException("This is using old journal data, export your data and import at the correct version");
+                  }
+
+                  case JournalRecordIds.ADD_MESSAGE_PROTOCOL: {
+
+                     Message message = decodeMessage(pools, buff);
+
+                     messages.put(record.id, message);
+
+                     break;
+                  }
+                  case JournalRecordIds.ADD_REF: {
+                     long messageID = record.id;
+
+                     RefEncoding encoding = new RefEncoding();
+
+                     encoding.decode(buff);
+
+                     Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
+
+                     if (queueMessages == null) {
+                        queueMessages = new LinkedHashMap<>();
+
+                        queueMap.put(encoding.queueID, queueMessages);
+                     }
+
+                     Message message = messages.get(messageID);
+
+                     if (message == null) {
+                        ActiveMQServerLogger.LOGGER.cannotFindMessage(record.id);
+                     } else {
+                        queueMessages.put(messageID, new AddMessageRecord(message));
+                     }
+
+                     break;
+                  }
+                  case JournalRecordIds.ACKNOWLEDGE_REF: {
+                     long messageID = record.id;
+
+                     RefEncoding encoding = new RefEncoding();
+
+                     encoding.decode(buff);
+
+                     Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
+
+                     if (queueMessages == null) {
+                        ActiveMQServerLogger.LOGGER.journalCannotFindQueue(encoding.queueID, messageID);
+                     } else {
+                        AddMessageRecord rec = queueMessages.remove(messageID);
+
+                        if (rec == null) {
+                           ActiveMQServerLogger.LOGGER.cannotFindMessage(messageID);
+                        }
+                     }
+
+                     break;
+                  }
+                  case JournalRecordIds.UPDATE_DELIVERY_COUNT: {
+                     long messageID = record.id;
+
+                     DeliveryCountUpdateEncoding encoding = new DeliveryCountUpdateEncoding();
+
+                     encoding.decode(buff);
+
+                     Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
+
+                     if (queueMessages == null) {
+                        ActiveMQServerLogger.LOGGER.journalCannotFindQueueDelCount(encoding.queueID);
+                     } else {
+                        AddMessageRecord rec = queueMessages.get(messageID);
+
+                        if (rec == null) {
+                           ActiveMQServerLogger.LOGGER.journalCannotFindMessageDelCount(messageID);
+                        } else {
+                           rec.setDeliveryCount(encoding.count);
+                        }
+                     }
+
+                     break;
+                  }
+                  case JournalRecordIds.PAGE_TRANSACTION: {
+                     PageTransactionInfo invalidPGTx = null;
+                     if (record.isUpdate) {
+                        PageUpdateTXEncoding pageUpdate = new PageUpdateTXEncoding();
+
+                        pageUpdate.decode(buff);
+
+                        PageTransactionInfo pageTX = pagingManager.getTransaction(pageUpdate.pageTX);
+
+                        if (pageTX == null) {
+                           ActiveMQServerLogger.LOGGER.journalCannotFindPageTX(pageUpdate.pageTX);
+                        } else {
+                           if (!pageTX.onUpdate(pageUpdate.records, null, null)) {
+                              invalidPGTx = pageTX;
+                           }
+                        }
+                     } else {
+                        PageTransactionInfoImpl pageTransactionInfo = new PageTransactionInfoImpl();
+
+                        pageTransactionInfo.decode(buff);
+
+                        pageTransactionInfo.setRecordID(record.id);
+
+                        pagingManager.addTransaction(pageTransactionInfo);
+
+                        if (!pageTransactionInfo.checkSize(null, null)) {
+                           invalidPGTx = pageTransactionInfo;
+                        }
+                     }
+
+                     if (invalidPGTx != null) {
+                        invalidPageTransactions.add(invalidPGTx);
+                     }
+
+                     break;
+                  }
+                  case JournalRecordIds.SET_SCHEDULED_DELIVERY_TIME: {
+                     long messageID = record.id;
+
+                     ScheduledDeliveryEncoding encoding = new ScheduledDeliveryEncoding();
+
+                     encoding.decode(buff);
+
+                     Map<Long, AddMessageRecord> queueMessages = queueMap.get(encoding.queueID);
+
+                     if (queueMessages == null) {
+                        ActiveMQServerLogger.LOGGER.journalCannotFindQueueScheduled(encoding.queueID, messageID);
+                     } else {
+
+                        AddMessageRecord rec = queueMessages.get(messageID);
+
+                        if (rec == null) {
+                           ActiveMQServerLogger.LOGGER.cannotFindMessage(messageID);
+                        } else {
+                           rec.setScheduledDeliveryTime(encoding.scheduledDeliveryTime);
+                        }
+                     }
+
+                     break;
+                  }
+                  case JournalRecordIds.DUPLICATE_ID: {
+                     DuplicateIDEncoding encoding = new DuplicateIDEncoding();
+
+                     encoding.decode(buff);
+
+                     List<Pair<byte[], Long>> ids = duplicateIDMap.get(encoding.address);
+
+                     if (ids == null) {
+                        ids = new ArrayList<>();
+
+                        duplicateIDMap.put(encoding.address, ids);
+                     }
+
+                     ids.add(new Pair<>(encoding.duplID, record.id));
+
+                     break;
+                  }
+                  case JournalRecordIds.HEURISTIC_COMPLETION: {
+                     HeuristicCompletionEncoding encoding = new HeuristicCompletionEncoding();
+                     encoding.decode(buff);
+                     resourceManager.putHeuristicCompletion(record.id, encoding.xid, encoding.isCommit);
+                     break;
+                  }
+                  case JournalRecordIds.ACKNOWLEDGE_CURSOR: {
+                     CursorAckRecordEncoding encoding = new CursorAckRecordEncoding();
+                     encoding.decode(buff);
+
+                     encoding.position.setRecordID(record.id);
+
+                     PageSubscription sub = locateSubscription(encoding.queueID, pageSubscriptions, queueInfos, pagingManager);
+
+                     if (sub != null) {
+                        sub.reloadACK(encoding.position);
+                     } else {
+                        ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloading(encoding.queueID);
+                        messageJournal.appendDeleteRecord(record.id, false);
+
+                     }
+
+                     break;
+                  }
+                  case JournalRecordIds.PAGE_CURSOR_COUNTER_VALUE: {
+                     PageCountRecord encoding = new PageCountRecord();
+
+                     encoding.decode(buff);
+
+                     PageSubscription sub = locateSubscription(encoding.getQueueID(), pageSubscriptions, queueInfos, pagingManager);
+
+                     if (sub != null) {
+                        sub.getCounter().loadValue(record.id, encoding.getValue(), encoding.getPersistentSize());
+                     } else {
+                        ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingPage(encoding.getQueueID());
+                        messageJournal.appendDeleteRecord(record.id, false);
+                     }
+
+                     break;
+                  }
+
+                  case JournalRecordIds.PAGE_CURSOR_COUNTER_INC: {
+                     PageCountRecordInc encoding = new PageCountRecordInc();
+
+                     encoding.decode(buff);
+
+                     PageSubscription sub = locateSubscription(encoding.getQueueID(), pageSubscriptions, queueInfos, pagingManager);
+
+                     if (sub != null) {
+                        sub.getCounter().loadInc(record.id, encoding.getValue(), encoding.getPersistentSize());
+                     } else {
+                        ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingPageCursor(encoding.getQueueID());
+                        messageJournal.appendDeleteRecord(record.id, false);
+                     }
+
+                     break;
+                  }
+
+                  case JournalRecordIds.PAGE_CURSOR_COMPLETE: {
+                     CursorAckRecordEncoding encoding = new CursorAckRecordEncoding();
+                     encoding.decode(buff);
+
+                     encoding.position.setRecordID(record.id);
+
+                     PageSubscription sub = locateSubscription(encoding.queueID, pageSubscriptions, queueInfos, pagingManager);
+
+                     if (sub != null) {
+                        if (!sub.reloadPageCompletion(encoding.position)) {
+                           if (logger.isDebugEnabled()) {
+                              logger.debug("Complete page " + encoding.position.getPageNr() + " doesn't exist on page manager " + sub.getPagingStore().getAddress());
+                           }
+                           messageJournal.appendDeleteRecord(record.id, false);
+                        }
+                     } else {
+                        ActiveMQServerLogger.LOGGER.cantFindQueueOnPageComplete(encoding.queueID);
+                        messageJournal.appendDeleteRecord(record.id, false);
+                     }
+
+                     break;
+                  }
+
+                  case JournalRecordIds.PAGE_CURSOR_PENDING_COUNTER: {
+
+                     PageCountPendingImpl pendingCountEncoding = new PageCountPendingImpl();
+
+                     pendingCountEncoding.decode(buff);
+                     pendingCountEncoding.setID(record.id);
+                     PageSubscription sub = locateSubscription(pendingCountEncoding.getQueueID(), pageSubscriptions, queueInfos, pagingManager);
+                     if (sub != null) {
+                        sub.notEmpty();
+                     }
+                     // This can be null on testcases not interested on this outcome
+                     if (pendingNonTXPageCounter != null) {
+                        pendingNonTXPageCounter.add(pendingCountEncoding);
+                     }
+
+                     break;
+                  }
+
+                  default: {
+                     throw new IllegalStateException("Invalid record type " + recordType);
+                  }
+               }
+            } catch (RuntimeException e) {
+               throw e;
+            } catch (Exception e) {
+               throw new RuntimeException(e);
+            }
+         });
+
          // Release the memory as soon as not needed any longer
-         records.clear();
          records = null;
 
          journalLoader.handleAddMessage(queueMap);
@@ -1172,9 +1306,9 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          }
 
          for (LargeServerMessage msg : largeMessages) {
-            if (msg.getRefCount() == 0) {
+            if (msg.toMessage().getRefCount() == 0 && msg.toMessage().getDurableCount() == 0) {
                ActiveMQServerLogger.LOGGER.largeMessageWithNoRef(msg.getMessageID());
-               msg.decrementDelayDeletionCount();
+               msg.toMessage().usageDown();
             }
          }
 
@@ -1187,16 +1321,28 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
             pagingManager.processReload();
          }
 
-         if (perfBlastPages != -1) {
-            messageJournal.perfBlast(perfBlastPages);
-         }
-
          journalLoader.postLoad(messageJournal, resourceManager, duplicateIDMap);
+
+         checkInvalidPageTransactions(pagingManager, invalidPageTransactions);
+
          journalLoaded = true;
          return info;
-      }
-      finally {
+      } finally {
          readUnLock();
+      }
+   }
+
+   private Message decodeMessage(CoreMessageObjectPools pools, ActiveMQBuffer buff) {
+      Message message = MessagePersister.getInstance().decode(buff, null, pools, this);
+      return message;
+   }
+
+   public void checkInvalidPageTransactions(PagingManager pagingManager,
+                                            Set<PageTransactionInfo> invalidPageTransactions) {
+      if (invalidPageTransactions != null && !invalidPageTransactions.isEmpty()) {
+         for (PageTransactionInfo pginfo : invalidPageTransactions) {
+            pginfo.checkSize(this, pagingManager);
+         }
       }
    }
 
@@ -1218,6 +1364,9 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          if (queueInfo != null) {
             SimpleString address = queueInfo.getAddress();
             PagingStore store = pagingManager.getPageStore(address);
+            if (store == null) {
+               return null;
+            }
             subs = store.getCursorProvider().getSubscription(queueID);
             pageSubscriptions.put(queueID, subs);
          }
@@ -1233,8 +1382,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          bindingsJournal.appendAddRecord(groupBinding.getId(), JournalRecordIds.GROUP_RECORD, groupingEncoding, true);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -1244,8 +1392,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          bindingsJournal.appendDeleteRecordTransactional(tx, groupBinding.getId());
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -1253,20 +1400,32 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    // BindingsImpl operations
 
    @Override
+   public void updateQueueBinding(long tx, Binding binding) throws Exception {
+      internalQueueBinding(true, tx, binding);
+   }
+
+   @Override
    public void addQueueBinding(final long tx, final Binding binding) throws Exception {
+      internalQueueBinding(false, tx, binding);
+   }
+
+   private void internalQueueBinding(boolean update, final long tx, final Binding binding) throws Exception {
       Queue queue = (Queue) binding.getBindable();
 
       Filter filter = queue.getFilter();
 
       SimpleString filterString = filter == null ? null : filter.getFilterString();
 
-      PersistentQueueBindingEncoding bindingEncoding = new PersistentQueueBindingEncoding(queue.getName(), binding.getAddress(), filterString, queue.getUser(), queue.isAutoCreated());
+      PersistentQueueBindingEncoding bindingEncoding = new PersistentQueueBindingEncoding(queue.getName(), binding.getAddress(), filterString, queue.getUser(), queue.isAutoCreated(), queue.getMaxConsumers(), queue.isPurgeOnNoConsumers(), queue.isEnabled(), queue.isExclusive(), queue.isGroupRebalance(), queue.isGroupRebalancePauseDispatch(), queue.getGroupBuckets(), queue.getGroupFirstKey(), queue.isLastValue(), queue.getLastValueKey(), queue.isNonDestructive(), queue.getConsumersBeforeDispatch(), queue.getDelayBeforeDispatch(), queue.isAutoDelete(), queue.getAutoDeleteDelay(), queue.getAutoDeleteMessageCount(), queue.getRoutingType().getType(), queue.isConfigurationManaged(), queue.getRingSize());
 
       readLock();
       try {
-         bindingsJournal.appendAddRecordTransactional(tx, binding.getID(), JournalRecordIds.QUEUE_BINDING_RECORD, bindingEncoding);
-      }
-      finally {
+         if (update) {
+            bindingsJournal.appendUpdateRecordTransactional(tx, binding.getID(), JournalRecordIds.QUEUE_BINDING_RECORD, bindingEncoding);
+         } else {
+            bindingsJournal.appendAddRecordTransactional(tx, binding.getID(), JournalRecordIds.QUEUE_BINDING_RECORD, bindingEncoding);
+         }
+      } finally {
          readUnLock();
       }
    }
@@ -1276,63 +1435,135 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          bindingsJournal.appendDeleteRecordTransactional(tx, queueBindingID);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
 
    @Override
-   public long storePageCounterInc(long txID, long queueID, int value) throws Exception {
+   public long storeQueueStatus(long queueID, AddressQueueStatus status) throws Exception {
+      long recordID = idGenerator.generateID();
+
+      readLock();
+      try {
+         bindingsJournal.appendAddRecord(recordID, JournalRecordIds.QUEUE_STATUS_RECORD, new QueueStatusEncoding(queueID, status), true);
+      } finally {
+         readUnLock();
+      }
+
+
+      return recordID;
+   }
+
+   @Override
+   public void deleteQueueStatus(long recordID) throws Exception {
+      readLock();
+      try {
+         bindingsJournal.appendDeleteRecord(recordID, true);
+      } finally {
+         readUnLock();
+      }
+   }
+
+   @Override
+   public long storeAddressStatus(long addressID, AddressQueueStatus status) throws Exception {
+      long recordID = idGenerator.generateID();
+
+      readLock();
+      try {
+         bindingsJournal.appendAddRecord(recordID, JournalRecordIds.ADDRESS_STATUS_RECORD, new AddressStatusEncoding(addressID, status), true);
+      } finally {
+         readUnLock();
+      }
+
+
+      return recordID;
+   }
+
+   @Override
+   public void deleteAddressStatus(long recordID) throws Exception {
+      readLock();
+      try {
+         bindingsJournal.appendDeleteRecord(recordID, true);
+      } finally {
+         readUnLock();
+      }
+   }
+
+   @Override
+   public void addAddressBinding(final long tx, final AddressInfo addressInfo) throws Exception {
+      PersistentAddressBindingEncoding bindingEncoding = new PersistentAddressBindingEncoding(addressInfo.getName(),
+                                                                                              addressInfo.getRoutingTypes(),
+                                                                                              addressInfo.isAutoCreated());
+
       readLock();
       try {
          long recordID = idGenerator.generateID();
-         messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_INC, new PageCountRecordInc(queueID, value));
-         return recordID;
-      }
-      finally {
+         bindingEncoding.setId(recordID);
+         addressInfo.setId(recordID);
+         bindingsJournal.appendAddRecordTransactional(tx, recordID, JournalRecordIds.ADDRESS_BINDING_RECORD, bindingEncoding);
+      } finally {
          readUnLock();
       }
    }
 
    @Override
-   public long storePageCounterInc(long queueID, int value) throws Exception {
+   public void deleteAddressBinding(long tx, final long addressBindingID) throws Exception {
       readLock();
       try {
-         final long recordID = idGenerator.generateID();
-         messageJournal.appendAddRecord(recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_INC, new PageCountRecordInc(queueID, value), true, getContext());
-         return recordID;
-      }
-      finally {
+         bindingsJournal.appendDeleteRecordTransactional(tx, addressBindingID);
+      } finally {
          readUnLock();
       }
    }
 
    @Override
-   public long storePageCounter(long txID, long queueID, long value) throws Exception {
+   public long storePageCounterInc(long txID, long queueID, int value, long persistentSize) throws Exception {
       readLock();
       try {
-         final long recordID = idGenerator.generateID();
-         messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_VALUE, new PageCountRecord(queueID, value));
+         long recordID = idGenerator.generateID();
+         messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_INC, new PageCountRecordInc(queueID, value, persistentSize));
          return recordID;
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
 
    @Override
-   public long storePendingCounter(final long queueID, final long pageID, final int inc) throws Exception {
+   public long storePageCounterInc(long queueID, int value, long persistentSize) throws Exception {
       readLock();
       try {
          final long recordID = idGenerator.generateID();
-         PageCountPendingImpl pendingInc = new PageCountPendingImpl(queueID, pageID, inc);
+         messageJournal.appendAddRecord(recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_INC, new PageCountRecordInc(queueID, value, persistentSize), true, getContext());
+         return recordID;
+      } finally {
+         readUnLock();
+      }
+   }
+
+   @Override
+   public long storePageCounter(long txID, long queueID, long value, long persistentSize) throws Exception {
+      readLock();
+      try {
+         final long recordID = idGenerator.generateID();
+         messageJournal.appendAddRecordTransactional(txID, recordID, JournalRecordIds.PAGE_CURSOR_COUNTER_VALUE, new PageCountRecord(queueID, value, persistentSize));
+         return recordID;
+      } finally {
+         readUnLock();
+      }
+   }
+
+   @Override
+   public long storePendingCounter(final long queueID, final long pageID) throws Exception {
+      readLock();
+      try {
+         final long recordID = idGenerator.generateID();
+         PageCountPendingImpl pendingInc = new PageCountPendingImpl(queueID, pageID);
          // We must guarantee the record sync before we actually write on the page otherwise we may get out of sync
          // on the counter
          messageJournal.appendAddRecord(recordID, JournalRecordIds.PAGE_CURSOR_PENDING_COUNTER, pendingInc, true);
          return recordID;
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -1342,8 +1573,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -1353,8 +1583,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -1364,52 +1593,95 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.appendDeleteRecordTransactional(txID, recordID);
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
 
    @Override
    public JournalLoadInformation loadBindingJournal(final List<QueueBindingInfo> queueBindingInfos,
-                                                    final List<GroupingInfo> groupingInfos) throws Exception {
-      List<RecordInfo> records = new ArrayList<>();
+                                                    final List<GroupingInfo> groupingInfos,
+                                                    final List<AddressBindingInfo> addressBindingInfos) throws Exception {
+      SparseArrayLinkedList<RecordInfo> records = new SparseArrayLinkedList<>();
 
       List<PreparedTransactionInfo> preparedTransactions = new ArrayList<>();
 
       JournalLoadInformation bindingsInfo = bindingsJournal.load(records, preparedTransactions, null);
 
-      for (RecordInfo record : records) {
-         long id = record.id;
+      HashMap<Long, PersistentQueueBindingEncoding> mapBindings = new HashMap<>();
+      HashMap<Long, PersistentAddressBindingEncoding> mapAddressBindings = new HashMap<>();
 
-         ActiveMQBuffer buffer = ActiveMQBuffers.wrappedBuffer(record.data);
+      records.clear(record -> {
+         try {
+            long id = record.id;
 
-         byte rec = record.getUserRecordType();
+            ActiveMQBuffer buffer = ActiveMQBuffers.wrappedBuffer(record.data);
 
-         if (rec == JournalRecordIds.QUEUE_BINDING_RECORD) {
-            PersistentQueueBindingEncoding bindingEncoding = newBindingEncoding(id, buffer);
+            byte rec = record.getUserRecordType();
 
-            queueBindingInfos.add(bindingEncoding);
+            if (rec == JournalRecordIds.QUEUE_BINDING_RECORD) {
+               PersistentQueueBindingEncoding bindingEncoding = newQueueBindingEncoding(id, buffer);
+               mapBindings.put(bindingEncoding.getId(), bindingEncoding);
+            } else if (rec == JournalRecordIds.ID_COUNTER_RECORD) {
+               idGenerator.loadState(record.id, buffer);
+            } else if (rec == JournalRecordIds.ADDRESS_BINDING_RECORD) {
+               PersistentAddressBindingEncoding bindingEncoding = newAddressBindingEncoding(id, buffer);
+               addressBindingInfos.add(bindingEncoding);
+               mapAddressBindings.put(id, bindingEncoding);
+            } else if (rec == JournalRecordIds.GROUP_RECORD) {
+               GroupingEncoding encoding = newGroupEncoding(id, buffer);
+               groupingInfos.add(encoding);
+            } else if (rec == JournalRecordIds.ADDRESS_SETTING_RECORD) {
+               PersistedAddressSetting setting = newAddressEncoding(id, buffer);
+               mapPersistedAddressSettings.put(setting.getAddressMatch(), setting);
+            } else if (rec == JournalRecordIds.SECURITY_SETTING_RECORD) {
+               PersistedSecuritySetting roles = newSecurityRecord(id, buffer);
+               mapPersistedSecuritySettings.put(roles.getAddressMatch(), roles);
+            } else if (rec == JournalRecordIds.QUEUE_STATUS_RECORD) {
+               QueueStatusEncoding statusEncoding = newQueueStatusEncoding(id, buffer);
+               PersistentQueueBindingEncoding queueBindingEncoding = mapBindings.get(statusEncoding.queueID);
+               if (queueBindingEncoding != null) {
+                  queueBindingEncoding.addQueueStatusEncoding(statusEncoding);
+               } else {
+                  // unlikely to happen, so I didn't bother about the Logger method
+                  ActiveMQServerLogger.LOGGER.infoNoQueueWithID(statusEncoding.queueID, statusEncoding.getId());
+                  this.deleteQueueStatus(statusEncoding.getId());
+               }
+            } else if (rec == JournalRecordIds.ADDRESS_STATUS_RECORD) {
+               AddressStatusEncoding statusEncoding = newAddressStatusEncoding(id, buffer);
+               PersistentAddressBindingEncoding addressBindingEncoding = mapAddressBindings.get(statusEncoding.getAddressId());
+               if (addressBindingEncoding != null) {
+                  addressBindingEncoding.setAddressStatusEncoding(statusEncoding);
+               } else {
+                  // unlikely to happen, so I didn't bother about the Logger method
+                  ActiveMQServerLogger.LOGGER.infoNoAddressWithID(statusEncoding.getAddressId(), statusEncoding.getId());
+                  this.deleteAddressStatus(statusEncoding.getId());
+               }
+            } else if (rec == JournalRecordIds.DIVERT_RECORD) {
+               PersistedDivertConfiguration divertConfiguration = newDivertEncoding(id, buffer);
+               mapPersistedDivertConfigurations.put(divertConfiguration.getName(), divertConfiguration);
+            } else if (rec == JournalRecordIds.USER_RECORD) {
+               PersistedUser user = newUserEncoding(id, buffer);
+               mapPersistedUsers.put(user.getUsername(), user);
+            } else if (rec == JournalRecordIds.ROLE_RECORD) {
+               PersistedRole role = newRoleEncoding(id, buffer);
+               mapPersistedRoles.put(role.getUsername(), role);
+            } else {
+               // unlikely to happen
+               ActiveMQServerLogger.LOGGER.invalidRecordType(rec, new Exception("invalid record type " + rec));
+            }
+         } catch (RuntimeException e) {
+            throw e;
+         } catch (Exception e) {
+            throw new RuntimeException(e);
          }
-         else if (rec == JournalRecordIds.ID_COUNTER_RECORD) {
-            idGenerator.loadState(record.id, buffer);
-         }
-         else if (rec == JournalRecordIds.GROUP_RECORD) {
-            GroupingEncoding encoding = newGroupEncoding(id, buffer);
-            groupingInfos.add(encoding);
-         }
-         else if (rec == JournalRecordIds.ADDRESS_SETTING_RECORD) {
-            PersistedAddressSetting setting = newAddressEncoding(id, buffer);
-            mapPersistedAddressSettings.put(setting.getAddressMatch(), setting);
-         }
-         else if (rec == JournalRecordIds.SECURITY_RECORD) {
-            PersistedRoles roles = newSecurityRecord(id, buffer);
-            mapPersistedRoles.put(roles.getAddressMatch(), roles);
-         }
-         else {
-            throw new IllegalStateException("Invalid record type " + rec);
-         }
+      });
+
+      for (PersistentQueueBindingEncoding queue : mapBindings.values()) {
+         queueBindingInfos.add(queue);
       }
+
+      mapBindings.clear(); // just to give a hand to GC
 
       // This will instruct the IDGenerator to beforeStop old records
       idGenerator.cleanup();
@@ -1422,8 +1694,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       readLock();
       try {
          messageJournal.lineUpContext(getContext());
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -1441,12 +1712,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
       beforeStart();
 
-      singleThreadExecutor = Executors.newSingleThreadExecutor(AccessController.doPrivileged(new PrivilegedAction<ActiveMQThreadFactory>() {
-         @Override
-         public ActiveMQThreadFactory run() {
-            return new ActiveMQThreadFactory("ActiveMQ-IO-SingleThread", true, JournalStorageManager.class.getClassLoader());
-         }
-      }));
+      singleThreadExecutor = ioExecutorFactory.getExecutor();
 
       bindingsJournal.start();
 
@@ -1457,7 +1723,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
    @Override
    public void stop() throws Exception {
-      stop(false);
+      stop(false, true);
    }
 
    @Override
@@ -1474,7 +1740,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    protected abstract void performCachedLargeMessageDeletes();
 
    @Override
-   public synchronized void stop(boolean ioCriticalError) throws Exception {
+   public synchronized void stop(boolean ioCriticalError, boolean sendFailover) throws Exception {
       if (!started) {
          return;
       }
@@ -1502,8 +1768,6 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
       messageJournal.stop();
 
-      singleThreadExecutor.shutdown();
-
       journalLoaded = false;
 
       started = false;
@@ -1527,8 +1791,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
          info[1] = messageJournal.loadInternalOnly();
 
          return info;
-      }
-      finally {
+      } finally {
          readUnLock();
       }
    }
@@ -1538,6 +1801,15 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       if (pageMaxConcurrentIO != null) {
          pageMaxConcurrentIO.acquire();
       }
+   }
+
+   @Override
+   public boolean beforePageRead(long timeout, TimeUnit unit) throws InterruptedException {
+      final Semaphore pageMaxConcurrentIO = this.pageMaxConcurrentIO;
+      if (pageMaxConcurrentIO == null) {
+         return true;
+      }
+      return pageMaxConcurrentIO.tryAcquire(timeout, unit);
    }
 
    @Override
@@ -1562,19 +1834,23 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    // Package protected ---------------------------------------------
 
    protected void confirmLargeMessage(final LargeServerMessage largeServerMessage) {
-      if (largeServerMessage.getPendingRecordID() >= 0) {
-         try {
-            confirmPendingLargeMessage(largeServerMessage.getPendingRecordID());
-            largeServerMessage.setPendingRecordID(-1);
-         }
-         catch (Exception e) {
-            ActiveMQServerLogger.LOGGER.warn(e.getMessage(), e);
+      synchronized (largeServerMessage) {
+         if (largeServerMessage.getPendingRecordID() >= 0) {
+            try {
+               confirmPendingLargeMessage(largeServerMessage.getPendingRecordID());
+               largeServerMessage.clearPendingRecordID();
+            } catch (ActiveMQShutdownException e) {
+               // this may happen, this is asynchronous as all that would happen is we missed the update
+               // since the update was missed, next restart this operation will be retried
+               ActiveMQServerLogger.LOGGER.debug(e.getMessage(), e);
+            } catch (Throwable e) {
+               ActiveMQServerLogger.LOGGER.warn(e.getMessage(), e);
+            }
          }
       }
    }
 
-   protected abstract LargeServerMessage parseLargeMessage(Map<Long, ServerMessage> messages,
-                                                           ActiveMQBuffer buff) throws Exception;
+   protected abstract LargeServerMessage parseLargeMessage(ActiveMQBuffer buff) throws Exception;
 
    private void loadPreparedTransactions(final PostOffice postOffice,
                                          final PagingManager pagingManager,
@@ -1586,6 +1862,8 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
                                          final Set<Pair<Long, Long>> pendingLargeMessages,
                                          JournalLoader journalLoader) throws Exception {
       // recover prepared transactions
+      CoreMessageObjectPools pools = null;
+
       for (PreparedTransactionInfo preparedTransaction : preparedTransactions) {
          XidEncoding encodingXid = new XidEncoding(preparedTransaction.getExtraData());
 
@@ -1595,7 +1873,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
          List<MessageReference> referencesToAck = new ArrayList<>();
 
-         Map<Long, ServerMessage> messages = new HashMap<>();
+         Map<Long, Message> messages = new HashMap<>();
 
          // Use same method as load message journal to prune out acks, so they don't get added.
          // Then have reacknowledge(tx) methods on queue, which needs to add the page size
@@ -1610,14 +1888,19 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
             switch (recordType) {
                case JournalRecordIds.ADD_LARGE_MESSAGE: {
-                  messages.put(record.id, parseLargeMessage(messages, buff));
+                  messages.put(record.id, parseLargeMessage(buff).toMessage());
 
                   break;
                }
                case JournalRecordIds.ADD_MESSAGE: {
-                  ServerMessage message = new ServerMessageImpl(record.id, 50);
 
-                  message.decode(buff);
+                  break;
+               }
+               case JournalRecordIds.ADD_MESSAGE_PROTOCOL: {
+                  if (pools == null) {
+                     pools = new CoreMessageObjectPools();
+                  }
+                  Message message = decodeMessage(pools, buff);
 
                   messages.put(record.id, message);
 
@@ -1630,7 +1913,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
                   encoding.decode(buff);
 
-                  ServerMessage message = messages.get(messageID);
+                  Message message = messages.get(messageID);
 
                   if (message == null) {
                      throw new IllegalStateException("Cannot find message with id " + messageID);
@@ -1659,9 +1942,10 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
                   if (record.isUpdate) {
                      PageTransactionInfo pgTX = pagingManager.getTransaction(pageTransactionInfo.getTransactionID());
-                     pgTX.reloadUpdate(this, pagingManager, tx, pageTransactionInfo.getNumberOfMessages());
-                  }
-                  else {
+                     if (pgTX != null) {
+                        pgTX.reloadUpdate(this, pagingManager, tx, pageTransactionInfo.getNumberOfMessages());
+                     }
+                  } else {
                      pageTransactionInfo.setCommitted(false);
 
                      tx.putProperty(TransactionPropertyIndexes.PAGE_TRANSACTION, pageTransactionInfo);
@@ -1703,8 +1987,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
                   if (sub != null) {
                      sub.reloadPreparedACK(tx, encoding.position);
                      referencesToAck.add(new PagedReferenceImpl(encoding.position, null, sub));
-                  }
-                  else {
+                  } else {
                      ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingACK(encoding.queueID);
                   }
                   break;
@@ -1723,10 +2006,9 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
                   PageSubscription sub = locateSubscription(encoding.getQueueID(), pageSubscriptions, queueInfos, pagingManager);
 
                   if (sub != null) {
-                     sub.getCounter().applyIncrementOnTX(tx, record.id, encoding.getValue());
+                     sub.getCounter().applyIncrementOnTX(tx, record.id, encoding.getValue(), encoding.getPersistentSize());
                      sub.notEmpty();
-                  }
-                  else {
+                  } else {
                      ActiveMQServerLogger.LOGGER.journalCannotFindQueueReloadingACK(encoding.getQueueID());
                   }
 
@@ -1769,8 +2051,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
    OperationContext getContext(final boolean sync) {
       if (sync) {
          return getContext();
-      }
-      else {
+      } else {
          return DummyOperationContext.getInstance();
       }
    }
@@ -1841,8 +2122,8 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
     * @param buffer
     * @return
     */
-   protected static PersistedRoles newSecurityRecord(long id, ActiveMQBuffer buffer) {
-      PersistedRoles roles = new PersistedRoles();
+   protected static PersistedSecuritySetting newSecurityRecord(long id, ActiveMQBuffer buffer) {
+      PersistedSecuritySetting roles = new PersistedSecuritySetting();
       roles.decode(buffer);
       roles.setStoreId(id);
       return roles;
@@ -1860,6 +2141,33 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       return setting;
    }
 
+   static AddressStatusEncoding newAddressStatusEncoding(long id, ActiveMQBuffer buffer) {
+      AddressStatusEncoding addressStatus = new AddressStatusEncoding();
+      addressStatus.decode(buffer);
+      addressStatus.setId(id);
+      return addressStatus;
+   }
+
+   static PersistedDivertConfiguration newDivertEncoding(long id, ActiveMQBuffer buffer) {
+      PersistedDivertConfiguration persistedDivertConfiguration = new PersistedDivertConfiguration();
+      persistedDivertConfiguration.decode(buffer);
+      persistedDivertConfiguration.setStoreId(id);
+      return persistedDivertConfiguration;
+   }
+
+   static PersistedUser newUserEncoding(long id, ActiveMQBuffer buffer) {
+      PersistedUser persistedUser = new PersistedUser();
+      persistedUser.decode(buffer);
+      persistedUser.setStoreId(id);
+      return persistedUser;
+   }
+
+   static PersistedRole newRoleEncoding(long id, ActiveMQBuffer buffer) {
+      PersistedRole persistedRole = new PersistedRole();
+      persistedRole.decode(buffer);
+      persistedRole.setStoreId(id);
+      return persistedRole;
+   }
    /**
     * @param id
     * @param buffer
@@ -1877,8 +2185,31 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
     * @param buffer
     * @return
     */
-   protected static PersistentQueueBindingEncoding newBindingEncoding(long id, ActiveMQBuffer buffer) {
+   protected static PersistentQueueBindingEncoding newQueueBindingEncoding(long id, ActiveMQBuffer buffer) {
       PersistentQueueBindingEncoding bindingEncoding = new PersistentQueueBindingEncoding();
+
+      bindingEncoding.decode(buffer);
+
+      bindingEncoding.setId(id);
+      return bindingEncoding;
+   }
+
+   /**
+    * @param id
+    * @param buffer
+    * @return
+    */
+   protected static QueueStatusEncoding newQueueStatusEncoding(long id, ActiveMQBuffer buffer) {
+      QueueStatusEncoding statusEncoding = new QueueStatusEncoding();
+
+      statusEncoding.decode(buffer);
+      statusEncoding.setId(id);
+
+      return statusEncoding;
+   }
+
+   protected static PersistentAddressBindingEncoding newAddressBindingEncoding(long id, ActiveMQBuffer buffer) {
+      PersistentAddressBindingEncoding bindingEncoding = new PersistentAddressBindingEncoding();
 
       bindingEncoding.decode(buffer);
 
@@ -1888,7 +2219,7 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
 
    @Override
    public boolean addToPage(PagingStore store,
-                            ServerMessage msg,
+                            Message msg,
                             Transaction tx,
                             RouteContextList listCtx) throws Exception {
       /**
@@ -1912,4 +2243,5 @@ public abstract class AbstractJournalStorageManager implements StorageManager {
       }
       txoper.confirmedMessages.add(recordID);
    }
+
 }

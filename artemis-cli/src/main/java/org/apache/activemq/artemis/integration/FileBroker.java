@@ -16,22 +16,25 @@
  */
 package org.apache.activemq.artemis.integration;
 
-import org.apache.activemq.artemis.core.config.FileDeploymentManager;
-import org.apache.activemq.artemis.core.config.impl.FileConfiguration;
-import org.apache.activemq.artemis.core.server.ActiveMQComponent;
-import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.dto.ServerDTO;
-import org.apache.activemq.artemis.integration.bootstrap.ActiveMQBootstrapLogger;
-import org.apache.activemq.artemis.jms.server.config.impl.FileJMSConfiguration;
-import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
-
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.Map;
 
+import org.apache.activemq.artemis.core.config.FileDeploymentManager;
+import org.apache.activemq.artemis.core.config.impl.FileConfiguration;
+import org.apache.activemq.artemis.core.config.impl.LegacyJMSConfiguration;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
+import org.apache.activemq.artemis.core.server.ActiveMQComponent;
+import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.ServiceComponent;
+import org.apache.activemq.artemis.dto.ServerDTO;
+import org.apache.activemq.artemis.integration.bootstrap.ActiveMQBootstrapLogger;
+import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
+
 public class FileBroker implements Broker {
 
    private final String configurationUrl;
+   private final ActivateCallback activateCallback;
 
    private boolean started;
 
@@ -39,9 +42,10 @@ public class FileBroker implements Broker {
 
    private Map<String, ActiveMQComponent> components;
 
-   public FileBroker(ServerDTO broker, ActiveMQSecurityManager security) {
+   public FileBroker(ServerDTO broker, ActiveMQSecurityManager security, ActivateCallback activateCallback) {
       this.securityManager = security;
       this.configurationUrl = broker.configuration;
+      this.activateCallback = activateCallback;
    }
 
    @Override
@@ -50,15 +54,9 @@ public class FileBroker implements Broker {
          return;
       }
 
-      //todo if we start to pullout more configs from the main config then we should pull out the configuration objects from factories if available
-      FileConfiguration configuration = new FileConfiguration();
-      FileJMSConfiguration jmsConfiguration = new FileJMSConfiguration();
-
-      FileDeploymentManager fileDeploymentManager = new FileDeploymentManager(configurationUrl);
-      fileDeploymentManager.addDeployable(configuration).addDeployable(jmsConfiguration);
-      fileDeploymentManager.readConfiguration();
-
-      components = fileDeploymentManager.buildService(securityManager, ManagementFactory.getPlatformMBeanServer());
+      if (components == null) {
+         createComponents();
+      }
 
       ArrayList<ActiveMQComponent> componentsByStartOrder = getComponentsByStartOrder(components);
       ActiveMQBootstrapLogger.LOGGER.serverStarting();
@@ -69,15 +67,32 @@ public class FileBroker implements Broker {
 
    }
 
+
+   private void createDirectories(FileConfiguration fileConfiguration) {
+      fileConfiguration.getPagingLocation().mkdirs();
+      fileConfiguration.getJournalLocation().mkdirs();
+      fileConfiguration.getBindingsLocation().mkdirs();
+      fileConfiguration.getLargeMessagesLocation().mkdirs();
+   }
+
    @Override
    public void stop() throws Exception {
+      stop(true);
+   }
+
+   @Override
+   public void stop(boolean isShutdown) throws Exception {
       if (!started) {
          return;
       }
       ActiveMQComponent[] mqComponents = new ActiveMQComponent[components.size()];
       components.values().toArray(mqComponents);
       for (int i = mqComponents.length - 1; i >= 0; i--) {
-         mqComponents[i].stop();
+         if (mqComponents[i] instanceof ServiceComponent) {
+            ((ServiceComponent) mqComponents[i]).stop(isShutdown);
+         } else {
+            mqComponents[i].stop();
+         }
       }
       started = false;
    }
@@ -91,11 +106,27 @@ public class FileBroker implements Broker {
       return components;
    }
 
+   @Override
+   public void createComponents() throws Exception {
+      //todo if we start to pullout more configs from the main config then we should pull out the configuration objects from factories if available
+      FileConfiguration configuration = new FileConfiguration();
+
+      LegacyJMSConfiguration legacyJMSConfiguration = new LegacyJMSConfiguration(configuration);
+
+      FileDeploymentManager fileDeploymentManager = new FileDeploymentManager(configurationUrl);
+      fileDeploymentManager.addDeployable(configuration).addDeployable(legacyJMSConfiguration);
+      fileDeploymentManager.readConfiguration();
+
+      createDirectories(configuration);
+
+      components = fileDeploymentManager.buildService(securityManager, ManagementFactory.getPlatformMBeanServer(), activateCallback);
+   }
+
    /*
    * this makes sure the components are started in the correct order. Its simple at the mo as e only have core and jms but
    * will need impproving if we get more.
    * */
-   public ArrayList<ActiveMQComponent> getComponentsByStartOrder(Map<String, ActiveMQComponent> components) {
+   private ArrayList<ActiveMQComponent> getComponentsByStartOrder(Map<String, ActiveMQComponent> components) {
       ArrayList<ActiveMQComponent> activeMQComponents = new ArrayList<>();
       ActiveMQComponent jmsComponent = components.get("jms");
       if (jmsComponent != null) {
@@ -109,4 +140,5 @@ public class FileBroker implements Broker {
    public ActiveMQServer getServer() {
       return (ActiveMQServer) components.get("core");
    }
+
 }

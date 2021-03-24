@@ -16,6 +16,8 @@
  */
 package org.apache.activemq.artemis.core.server.cluster;
 
+import java.util.Optional;
+
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -32,14 +34,10 @@ import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.BackupResp
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ClusterConnectMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ClusterConnectReplyMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.NodeAnnounceMessage;
-import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.QuorumVoteMessage;
-import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.QuorumVoteReplyMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ScaleDownAnnounceMessage;
 import org.apache.activemq.artemis.core.server.ActiveMQMessageBundle;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
-import org.apache.activemq.artemis.core.server.cluster.qourum.QuorumVoteHandler;
-import org.apache.activemq.artemis.core.server.cluster.qourum.Vote;
 
 /**
  * handles the communication between a cluster node and the cluster, either the whole cluster or a specific node in the
@@ -62,6 +60,10 @@ public class ClusterControl implements AutoCloseable {
       this.server = server;
       this.clusterUser = server.getConfiguration().getClusterUser();
       this.clusterPassword = server.getConfiguration().getClusterPassword();
+   }
+
+   public Optional<Channel> getClusterChannel() {
+      return Optional.ofNullable(clusterChannel);
    }
 
    /**
@@ -157,18 +159,6 @@ public class ClusterControl implements AutoCloseable {
       sessionFactory.close();
    }
 
-   public Vote sendQuorumVote(SimpleString handler, Vote vote) {
-      try {
-         QuorumVoteReplyMessage replyMessage = (QuorumVoteReplyMessage) clusterChannel.sendBlocking(new QuorumVoteMessage(handler, vote), PacketImpl.QUORUM_VOTE_REPLY);
-         QuorumVoteHandler voteHandler = server.getClusterManager().getQuorumManager().getVoteHandler(replyMessage.getHandler());
-         replyMessage.decodeRest(voteHandler);
-         return replyMessage.getVote();
-      }
-      catch (ActiveMQException e) {
-         return null;
-      }
-   }
-
    public boolean requestReplicatedBackup(int backupSize, SimpleString nodeID) {
       BackupRequestMessage backupRequestMessage = new BackupRequestMessage(backupSize, nodeID);
       return requestBackup(backupRequestMessage);
@@ -178,8 +168,7 @@ public class ClusterControl implements AutoCloseable {
       BackupResponseMessage packet;
       try {
          packet = (BackupResponseMessage) clusterChannel.sendBlocking(backupRequestMessage, PacketImpl.BACKUP_REQUEST_RESPONSE);
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          return false;
       }
       return packet.isBackupStarted();

@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,6 +17,7 @@
 
 package org.apache.activemq.artemis.tests.integration.mqtt.imported;
 
+import javax.jms.ConnectionFactory;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -27,51 +28,82 @@ import java.security.ProtectionDomain;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import io.netty.handler.codec.mqtt.MqttMessage;
+import io.netty.handler.codec.mqtt.MqttPublishMessage;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.protocol.mqtt.MQTTInterceptor;
+import org.apache.activemq.artemis.core.protocol.mqtt.MQTTProtocolManager;
+import org.apache.activemq.artemis.core.protocol.mqtt.MQTTSessionState;
+import org.apache.activemq.artemis.core.remoting.impl.AbstractAcceptor;
 import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
+import org.apache.activemq.artemis.core.security.Role;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
+import org.apache.activemq.artemis.spi.core.protocol.ProtocolManager;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
+import org.apache.activemq.artemis.spi.core.remoting.Acceptor;
+import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.fusesource.hawtdispatch.DispatchPriority;
+import org.fusesource.hawtdispatch.internal.DispatcherConfig;
 import org.fusesource.mqtt.client.MQTT;
 import org.fusesource.mqtt.client.Tracer;
 import org.fusesource.mqtt.codec.MQTTFrame;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.rules.TestName;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import static java.util.Collections.singletonList;
 
 public class MQTTTestSupport extends ActiveMQTestBase {
 
-   private ActiveMQServer server;
+   private static final Logger log = Logger.getLogger(MQTTTestSupport.class);
+   protected ActiveMQServer server;
 
-   private static final Logger LOG = LoggerFactory.getLogger(MQTTTestSupport.class);
+   static {
+      DispatcherConfig.getDefaultDispatcher().getThreadQueues(DispatchPriority.DEFAULT);
+   }
 
    protected int port = 1883;
-   protected ActiveMQConnectionFactory cf;
+   protected ConnectionFactory cf;
    protected LinkedList<Throwable> exceptions = new LinkedList<>();
    protected boolean persistent;
    protected String protocolConfig;
    protected String protocolScheme;
    protected boolean useSSL;
 
+   protected static final int NUM_MESSAGES = 250;
+
    public static final int AT_MOST_ONCE = 0;
    public static final int AT_LEAST_ONCE = 1;
    public static final int EXACTLY_ONCE = 2;
+
+   protected String noprivUser = "noprivs";
+   protected String noprivPass = "noprivs";
+
+   protected String browseUser = "browser";
+   protected String browsePass = "browser";
+
+   protected String guestUser = "guest";
+   protected String guestPass = "guest";
+
+   protected String fullUser = "user";
+   protected String fullPass = "pass";
 
    @Rule
    public TestName name = new TestName();
@@ -79,7 +111,6 @@ public class MQTTTestSupport extends ActiveMQTestBase {
    public MQTTTestSupport() {
       this.protocolScheme = "mqtt";
       this.useSSL = false;
-      cf = new ActiveMQConnectionFactory(false, new TransportConfiguration(ActiveMQTestBase.NETTY_CONNECTOR_FACTORY));
    }
 
    public File basedir() throws IOException {
@@ -90,6 +121,10 @@ public class MQTTTestSupport extends ActiveMQTestBase {
    @Override
    public String getName() {
       return name.getMethodName();
+   }
+
+   public ActiveMQServer getServer() {
+      return server;
    }
 
    @Override
@@ -105,6 +140,7 @@ public class MQTTTestSupport extends ActiveMQTestBase {
 
       exceptions.clear();
       startBroker();
+      createJMSConnection();
    }
 
    @Override
@@ -120,7 +156,7 @@ public class MQTTTestSupport extends ActiveMQTestBase {
       super.tearDown();
    }
 
-   public void startBroker() throws Exception {
+   public void configureBroker() throws Exception {
       // TODO Add SSL
       super.setUp();
       server = createServerForMQTT();
@@ -128,17 +164,61 @@ public class MQTTTestSupport extends ActiveMQTestBase {
       addMQTTConnector();
       AddressSettings addressSettings = new AddressSettings();
       addressSettings.setMaxSizeBytes(999999999);
-      addressSettings.setAutoCreateJmsQueues(true);
+      addressSettings.setAutoCreateQueues(true);
+      addressSettings.setAutoCreateAddresses(true);
+      configureBrokerSecurity(server);
 
       server.getAddressSettingsRepository().addMatch("#", addressSettings);
+   }
+
+   /**
+    * Copied from org.apache.activemq.artemis.tests.integration.amqp.AmqpClientTestSupport#configureBrokerSecurity()
+    */
+   protected void configureBrokerSecurity(ActiveMQServer server) {
+      if (isSecurityEnabled()) {
+         ActiveMQJAASSecurityManager securityManager = (ActiveMQJAASSecurityManager) server.getSecurityManager();
+
+         // User additions
+         securityManager.getConfiguration().addUser(noprivUser, noprivPass);
+         securityManager.getConfiguration().addRole(noprivUser, "nothing");
+         securityManager.getConfiguration().addUser(browseUser, browsePass);
+         securityManager.getConfiguration().addRole(browseUser, "browser");
+         securityManager.getConfiguration().addUser(guestUser, guestPass);
+         securityManager.getConfiguration().addRole(guestUser, "guest");
+         securityManager.getConfiguration().addUser(fullUser, fullPass);
+         securityManager.getConfiguration().addRole(fullUser, "full");
+
+         // Configure roles
+         HierarchicalRepository<Set<Role>> securityRepository = server.getSecurityRepository();
+         HashSet<Role> value = new HashSet<>();
+         value.add(new Role("nothing", false, false, false, false, false, false, false, false, false, false));
+         value.add(new Role("browser", false, false, false, false, false, false, false, true, false, false));
+         value.add(new Role("guest", false, true, false, false, false, false, false, true, false, false));
+         value.add(new Role("full", true, true, true, true, true, true, true, true, true, true));
+         securityRepository.addMatch(getQueueName(), value);
+
+         server.getConfiguration().setSecurityEnabled(true);
+      } else {
+         server.getConfiguration().setSecurityEnabled(false);
+      }
+   }
+
+   public void startBroker() throws Exception {
+      configureBroker();
       server.start();
       server.waitForActivation(10, TimeUnit.SECONDS);
    }
 
+   public void createJMSConnection() throws Exception {
+      cf = new ActiveMQConnectionFactory(false, new TransportConfiguration(ActiveMQTestBase.NETTY_CONNECTOR_FACTORY));
+   }
+
    private ActiveMQServer createServerForMQTT() throws Exception {
-      Configuration defaultConfig = createDefaultConfig(true)
-              .setIncomingInterceptorClassNames(singletonList(MQTTIncomingInterceptor.class.getName()))
-              .setOutgoingInterceptorClassNames(singletonList(MQTTOutoingInterceptor.class.getName()));
+      Configuration defaultConfig = createDefaultConfig(true).setIncomingInterceptorClassNames(singletonList(MQTTIncomingInterceptor.class.getName())).setOutgoingInterceptorClassNames(singletonList(MQTTOutoingInterceptor.class.getName()));
+      AddressSettings addressSettings = new AddressSettings();
+      addressSettings.setDeadLetterAddress(SimpleString.toSimpleString("DLA"));
+      addressSettings.setExpiryAddress(SimpleString.toSimpleString("EXPIRY"));
+      defaultConfig.getAddressesSettings().put("#", addressSettings);
       return createServer(true, defaultConfig);
    }
 
@@ -153,7 +233,7 @@ public class MQTTTestSupport extends ActiveMQTestBase {
       TransportConfiguration transportConfiguration = new TransportConfiguration(NETTY_ACCEPTOR_FACTORY, params);
       server.getConfiguration().getAcceptorConfigurations().add(transportConfiguration);
 
-      LOG.info("Added connector {} to broker", getProtocolScheme());
+      log.debug("Added CORE connector to broker");
    }
 
    protected void addMQTTConnector() throws Exception {
@@ -161,13 +241,9 @@ public class MQTTTestSupport extends ActiveMQTestBase {
       // MQTT transport connectors as needed, the port variable is always supposed to be
       // assigned the primary MQTT connector's port.
 
-      Map<String, Object> params = new HashMap<>();
-      params.put(TransportConstants.PORT_PROP_NAME, "" + port);
-      params.put(TransportConstants.PROTOCOLS_PROP_NAME, "MQTT");
-      TransportConfiguration transportConfiguration = new TransportConfiguration(NETTY_ACCEPTOR_FACTORY, params);
-      server.getConfiguration().getAcceptorConfigurations().add(transportConfiguration);
+      server.getConfiguration().addAcceptorConfiguration("MQTT", "tcp://localhost:" + port + "?protocols=MQTT;anycastPrefix=anycast:;multicastPrefix=multicast:");
 
-      LOG.info("Added connector {} to broker", getProtocolScheme());
+      log.debug("Added MQTT connector to broker");
    }
 
    public void stopBroker() throws Exception {
@@ -196,8 +272,7 @@ public class MQTTTestSupport extends ActiveMQTestBase {
    protected void initializeConnection(MQTTClientProvider provider) throws Exception {
       if (!isUseSSL()) {
          provider.connect("tcp://localhost:" + port);
-      }
-      else {
+      } else {
          SSLContext ctx = SSLContext.getInstance("TLS");
          ctx.init(new KeyManager[0], new TrustManager[]{new DefaultTrustManager()}, new SecureRandom());
          provider.setSslContext(ctx);
@@ -233,6 +308,10 @@ public class MQTTTestSupport extends ActiveMQTestBase {
       return false;
    }
 
+   public boolean isSecurityEnabled() {
+      return false;
+   }
+
    protected interface Task {
 
       void run() throws Exception;
@@ -245,8 +324,7 @@ public class MQTTTestSupport extends ActiveMQTestBase {
          try {
             task.run();
             return;
-         }
-         catch (Throwable e) {
+         } catch (Throwable e) {
             long remaining = deadline - System.currentTimeMillis();
             if (remaining <= 0) {
                if (e instanceof RuntimeException) {
@@ -275,8 +353,7 @@ public class MQTTTestSupport extends ActiveMQTestBase {
    protected MQTT createMQTTConnection(String clientId, boolean clean) throws Exception {
       if (isUseSSL()) {
          return createMQTTSslConnection(clientId, clean);
-      }
-      else {
+      } else {
          return createMQTTTcpConnection(clientId, clean);
       }
    }
@@ -293,6 +370,18 @@ public class MQTTTestSupport extends ActiveMQTestBase {
       mqtt.setCleanSession(clean);
       mqtt.setHost("localhost", port);
       return mqtt;
+   }
+
+   public Map<String, MQTTSessionState> getSessions() {
+      Acceptor acceptor = server.getRemotingService().getAcceptor("MQTT");
+      if (acceptor instanceof AbstractAcceptor) {
+         ProtocolManager protocolManager = ((AbstractAcceptor) acceptor).getProtocolMap().get("MQTT");
+         if (protocolManager instanceof MQTTProtocolManager) {
+            return ((MQTTProtocolManager) protocolManager).getSessionStates();
+         }
+
+      }
+      return Collections.emptyMap();
    }
 
    private MQTT createMQTTSslConnection(String clientId, boolean clean) throws Exception {
@@ -316,17 +405,17 @@ public class MQTTTestSupport extends ActiveMQTestBase {
       return new Tracer() {
          @Override
          public void onReceive(MQTTFrame frame) {
-            LOG.info("Client Received:\n" + frame);
+            log.debug("Client Received:\n" + frame);
          }
 
          @Override
          public void onSend(MQTTFrame frame) {
-            LOG.info("Client Sent:\n" + frame);
+            log.debug("Client Sent:\n" + frame);
          }
 
          @Override
          public void debug(String message, Object... args) {
-            LOG.info(String.format(message, args));
+            log.debug(String.format(message, args));
          }
       };
    }
@@ -353,7 +442,9 @@ public class MQTTTestSupport extends ActiveMQTestBase {
 
       @Override
       public boolean intercept(MqttMessage packet, RemotingConnection connection) throws ActiveMQException {
-         messageCount++;
+         if (packet.getClass() == MqttPublishMessage.class) {
+            messageCount++;
+         }
          return true;
       }
 
@@ -372,7 +463,9 @@ public class MQTTTestSupport extends ActiveMQTestBase {
 
       @Override
       public boolean intercept(MqttMessage packet, RemotingConnection connection) throws ActiveMQException {
-         messageCount++;
+         if (packet.getClass() == MqttPublishMessage.class) {
+            messageCount++;
+         }
          return true;
       }
 

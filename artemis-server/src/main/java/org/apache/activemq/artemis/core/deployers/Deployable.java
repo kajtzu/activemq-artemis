@@ -16,13 +16,14 @@
  */
 package org.apache.activemq.artemis.core.deployers;
 
-import org.apache.activemq.artemis.core.server.ActiveMQComponent;
-import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
-import org.w3c.dom.Element;
-
 import javax.management.MBeanServer;
 import java.net.URL;
 import java.util.Map;
+
+import org.apache.activemq.artemis.core.server.ActivateCallback;
+import org.apache.activemq.artemis.core.server.ActiveMQComponent;
+import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
+import org.w3c.dom.Element;
 
 /**
  * A Deployable is an object that can be configured via an xml configuration element in the main configuration file "broker.xml"
@@ -56,6 +57,6 @@ public interface Deployable {
    void buildService(ActiveMQSecurityManager securityManager,
                      MBeanServer mBeanServer,
                      Map<String, Deployable> deployables,
-                     Map<String, ActiveMQComponent> components) throws Exception;
+                     Map<String, ActiveMQComponent> components, ActivateCallback activateCallback) throws Exception;
 
 }

@@ -20,7 +20,7 @@ import org.apache.activemq.artemis.api.core.BroadcastEndpoint;
 import org.apache.activemq.artemis.api.core.BroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.ChannelBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.jgroups.JChannelManager;
-import org.apache.activemq.artemis.tests.util.ThreadLeakCheckRule;
+import org.apache.activemq.artemis.utils.ThreadLeakCheckRule;
 import org.jgroups.JChannel;
 import org.jgroups.conf.PlainConfigurator;
 import org.junit.After;
@@ -40,7 +40,6 @@ public class JGroupsBroadcastTest {
    public void prepareJChannel() {
       JChannelManager.getInstance().setLoopbackMessages(true);
    }
-
 
    @Rule
    public ThreadLeakCheckRule threadLeakCheckRule = new ThreadLeakCheckRule();
@@ -86,8 +85,7 @@ public class JGroupsBroadcastTest {
          try {
             channelEndpoint2.openClient();
             Assert.fail("this should be closed");
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
          }
 
          newChannel = new JChannel(configurator);
@@ -98,22 +96,18 @@ public class JGroupsBroadcastTest {
 
          channelEndpoint1.openClient();
 
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          e.printStackTrace();
          throw e;
-      }
-      finally {
+      } finally {
          try {
             channel.close();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
 
          }
          try {
             newChannel.close();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
 
          }
       }

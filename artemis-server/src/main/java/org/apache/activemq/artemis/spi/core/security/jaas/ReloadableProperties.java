@@ -24,6 +24,10 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.jboss.logging.Logger;
@@ -32,9 +36,13 @@ public class ReloadableProperties {
 
    private static final Logger logger = Logger.getLogger(ReloadableProperties.class);
 
+   // use this whenever writing to the underlying properties files from another component
+   public static final ReadWriteLock LOCK = new ReentrantReadWriteLock();
+
    private Properties props = new Properties();
    private Map<String, String> invertedProps;
    private Map<String, Set<String>> invertedValueProps;
+   private Map<String, Pattern> regexpProps;
    private long reloadTime = -1;
    private final PropertiesLoader.FileNameKey key;
 
@@ -53,12 +61,12 @@ public class ReloadableProperties {
             load(key.file(), props);
             invertedProps = null;
             invertedValueProps = null;
+            regexpProps = null;
             if (key.isDebug()) {
                logger.debug("Load of: " + key);
             }
-         }
-         catch (IOException e) {
-            ActiveMQServerLogger.LOGGER.error("Failed to load: " + key + ", reason:" + e.getLocalizedMessage());
+         } catch (IOException e) {
+            ActiveMQServerLogger.LOGGER.failedToLoadProperty(e, key.toString(), e.getLocalizedMessage());
             if (key.isDebug()) {
                logger.debug("Load of: " + key + ", failure exception" + e);
             }
@@ -72,7 +80,10 @@ public class ReloadableProperties {
       if (invertedProps == null) {
          invertedProps = new HashMap<>(props.size());
          for (Map.Entry<Object, Object> val : props.entrySet()) {
-            invertedProps.put((String) val.getValue(), (String) val.getKey());
+            String str = (String) val.getValue();
+            if (!looksLikeRegexp(str)) {
+               invertedProps.put(str, (String) val.getKey());
+            }
          }
       }
       return invertedProps;
@@ -82,22 +93,40 @@ public class ReloadableProperties {
       if (invertedValueProps == null) {
          invertedValueProps = new HashMap<>(props.size());
          for (Map.Entry<Object, Object> val : props.entrySet()) {
-            String[] userList = ((String)val.getValue()).split(",");
+            String[] userList = ((String) val.getValue()).split(",");
             for (String user : userList) {
                Set<String> set = invertedValueProps.get(user);
                if (set == null) {
                   set = new HashSet<>();
                   invertedValueProps.put(user, set);
                }
-               set.add((String)val.getKey());
+               set.add((String) val.getKey());
             }
          }
       }
       return invertedValueProps;
    }
 
-   private void load(final File source,
-                     Properties props) throws IOException {
+   public synchronized Map<String, Pattern> regexpPropertiesMap() {
+      if (regexpProps == null) {
+         regexpProps = new HashMap<>(props.size());
+         for (Map.Entry<Object, Object> val : props.entrySet()) {
+            String str = (String) val.getValue();
+            if (looksLikeRegexp(str)) {
+               try {
+                  Pattern p = Pattern.compile(str.substring(1, str.length() - 1));
+                  regexpProps.put((String) val.getKey(), p);
+               } catch (PatternSyntaxException e) {
+                  ActiveMQServerLogger.LOGGER.warn("Ignoring invalid regexp: " + str);
+               }
+            }
+         }
+      }
+      return regexpProps;
+   }
+
+   private void load(final File source, Properties props) throws IOException {
+      LOCK.readLock().lock();
       try (FileInputStream in = new FileInputStream(source)) {
          props.load(in);
          //            if (key.isDecrypt()) {
@@ -109,12 +138,25 @@ public class ReloadableProperties {
          //                    ActiveMQServerLogger.LOGGER.info("jasypt is not on the classpath: password decryption disabled.");
          //                }
          //            }
-
+      } finally {
+         LOCK.readLock().unlock();
       }
    }
 
    private boolean hasModificationAfter(long reloadTime) {
-      return key.file.lastModified() > reloadTime;
+      /**
+       * A bug in JDK 8/9 (i.e. https://bugs.openjdk.java.net/browse/JDK-8177809) causes java.io.File.lastModified() to
+       * lose resolution past 1 second. Because of this, the value returned by java.io.File.lastModified() can appear to
+       * be smaller than it actually is which can cause the broker to miss reloading the properties if the modification
+       * happens close to another "reload" event (e.g. initial loading). In order to *not* miss file modifications that
+       * need to be reloaded we artificially inflate the value returned by java.io.File.lastModified() by 1 second.
+       */
+      return key.file.lastModified() + 1000 > reloadTime;
+   }
+
+   private boolean looksLikeRegexp(String str) {
+      int len = str.length();
+      return len > 2 && str.charAt(0) == '/' && str.charAt(len - 1) == '/';
    }
 
 }

@@ -19,41 +19,33 @@ package org.apache.activemq.artemis.tests.unit.util;
 import java.util.Collection;
 import java.util.Map;
 
+import org.apache.activemq.artemis.api.core.Message;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.paging.PageTransactionInfo;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
-import org.apache.activemq.artemis.core.postoffice.PostOffice;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+
+import org.apache.activemq.artemis.core.server.files.FileStoreMonitor;
 
 public final class FakePagingManager implements PagingManager {
 
-   public void activate() {
+   @Override
+   public void addBlockedStore(PagingStore store) {
+
    }
 
-   public long addSize(final long size) {
-      return 0;
+   @Override
+   public void checkMemory(Runnable runWhenAvailable) {
+
    }
 
    @Override
    public void addTransaction(final PageTransactionInfo pageTransaction) {
    }
 
-   public PagingStore createPageStore(final SimpleString destination) throws Exception {
-      return null;
-   }
-
-   public long getTotalMemory() {
-      return 0;
-   }
-
    @Override
    public SimpleString[] getStoreNames() {
       return null;
-   }
-
-   public long getMaxMemory() {
-      return 0;
    }
 
    @Override
@@ -74,22 +66,23 @@ public final class FakePagingManager implements PagingManager {
       return false;
    }
 
-   public boolean isGlobalPageMode() {
-      return false;
-   }
-
    public boolean isPaging(final SimpleString destination) throws Exception {
       return false;
    }
 
-   public boolean page(final ServerMessage message, final boolean duplicateDetection) throws Exception {
+   public boolean page(final Message message, final boolean duplicateDetection) throws Exception {
       return false;
    }
 
-   public boolean page(final ServerMessage message,
+   public boolean page(final Message message,
                        final long transactionId,
                        final boolean duplicateDetection) throws Exception {
       return false;
+   }
+
+   @Override
+   public FakePagingManager addSize(int size) {
+      return this;
    }
 
    @Override
@@ -101,13 +94,9 @@ public final class FakePagingManager implements PagingManager {
 
    }
 
-   public void setGlobalPageMode(final boolean globalMode) {
-   }
-
-   public void setPostOffice(final PostOffice postOffice) {
-   }
-
-   public void resumeDepages() {
+   @Override
+   public boolean isUsingGlobalSize() {
+      return false;
    }
 
    public void sync(final Collection<SimpleString> destinationsToSync) throws Exception {
@@ -126,10 +115,26 @@ public final class FakePagingManager implements PagingManager {
    public void stop() throws Exception {
    }
 
+   @Override
+   public boolean isDiskFull() {
+      return false;
+   }
+
+   @Override
+   public long getDiskUsableSpace() {
+      return 0;
+   }
+
+   @Override
+   public long getDiskTotalSpace() {
+      return 0;
+   }
+
    /*
     * (non-Javadoc)
     * @see org.apache.activemq.artemis.core.paging.PagingManager#isGlobalFull()
     */
+   @Override
    public boolean isGlobalFull() {
       return false;
    }
@@ -177,4 +182,8 @@ public final class FakePagingManager implements PagingManager {
       // no-op
    }
 
+   @Override
+   public void injectMonitor(FileStoreMonitor monitor) throws Exception {
+
+   }
 }

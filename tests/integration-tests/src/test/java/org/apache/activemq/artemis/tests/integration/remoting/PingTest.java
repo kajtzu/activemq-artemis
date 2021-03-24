@@ -16,6 +16,10 @@
  */
 package org.apache.activemq.artemis.tests.integration.remoting;
 
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Interceptor;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
@@ -33,20 +37,16 @@ import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.Ping;
 import org.apache.activemq.artemis.core.remoting.CloseListener;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-
 public class PingTest extends ActiveMQTestBase {
    // Constants -----------------------------------------------------
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(PingTest.class);
 
    private static final long CLIENT_FAILURE_CHECK_PERIOD = 500;
 
@@ -105,8 +105,6 @@ public class PingTest extends ActiveMQTestBase {
 
       ClientSession session = csf.createSession(false, true, true);
 
-      PingTest.log.info("Created session");
-
       Assert.assertEquals(1, ((ClientSessionFactoryInternal) csf).numConnections());
 
       Listener clientListener = new Listener();
@@ -119,8 +117,7 @@ public class PingTest extends ActiveMQTestBase {
 
          if (!conns.isEmpty()) {
             serverConn = server.getRemotingService().getConnections().iterator().next();
-         }
-         else {
+         } else {
             // It's async so need to wait a while
             Thread.sleep(10);
          }
@@ -137,8 +134,6 @@ public class PingTest extends ActiveMQTestBase {
       Assert.assertNull(serverListener.getException());
 
       RemotingConnection serverConn2 = server.getRemotingService().getConnections().iterator().next();
-
-      PingTest.log.info("Server conn2 is " + serverConn2);
 
       Assert.assertTrue(serverConn == serverConn2);
 
@@ -174,8 +169,7 @@ public class PingTest extends ActiveMQTestBase {
 
          if (!conns.isEmpty()) {
             serverConn = server.getRemotingService().getConnections().iterator().next();
-         }
-         else {
+         } else {
             // It's async so need to wait a while
             Thread.sleep(10);
          }
@@ -192,8 +186,6 @@ public class PingTest extends ActiveMQTestBase {
       Assert.assertNull(serverListener.getException());
 
       RemotingConnection serverConn2 = server.getRemotingService().getConnections().iterator().next();
-
-      PingTest.log.info("Serverconn2 is " + serverConn2);
 
       Assert.assertTrue(serverConn == serverConn2);
 
@@ -274,8 +266,7 @@ public class PingTest extends ActiveMQTestBase {
 
          if (!conns.isEmpty()) {
             serverConn = server.getRemotingService().getConnections().iterator().next();
-         }
-         else {
+         } else {
             // It's async so need to wait a while
             Thread.sleep(10);
          }
@@ -296,8 +287,6 @@ public class PingTest extends ActiveMQTestBase {
 
       if (!server.getRemotingService().getConnections().isEmpty()) {
          RemotingConnection serverConn2 = server.getRemotingService().getConnections().iterator().next();
-
-         PingTest.log.info("Serverconn2 is " + serverConn2);
       }
 
       Assert.assertTrue(server.getRemotingService().getConnections().isEmpty());
@@ -378,8 +367,7 @@ public class PingTest extends ActiveMQTestBase {
 
          if (!conns.isEmpty()) {
             serverConn = (CoreRemotingConnection) server.getRemotingService().getConnections().iterator().next();
-         }
-         else {
+         } else {
             // It's async so need to wait a while
             Thread.sleep(10);
          }
@@ -402,8 +390,7 @@ public class PingTest extends ActiveMQTestBase {
       while (true) {
          if (!server.getRemotingService().getConnections().isEmpty() && System.currentTimeMillis() - start < 10000) {
             Thread.sleep(500);
-         }
-         else {
+         } else {
             break;
          }
       }

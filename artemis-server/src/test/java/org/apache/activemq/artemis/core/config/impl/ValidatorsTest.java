@@ -16,12 +16,10 @@
  */
 package org.apache.activemq.artemis.core.config.impl;
 
-import org.junit.Test;
-
-import org.junit.Assert;
-
 import org.apache.activemq.artemis.core.server.JournalType;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class ValidatorsTest extends Assert {
 
@@ -33,8 +31,7 @@ public class ValidatorsTest extends Assert {
       try {
          validator.validate(RandomUtil.randomString(), value);
          Assert.fail(validator + " must not validate " + value);
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
 
       }
    }
@@ -111,6 +108,39 @@ public class ValidatorsTest extends Assert {
       ValidatorsTest.failure(Validators.PERCENTAGE, -1);
       ValidatorsTest.failure(Validators.PERCENTAGE, 101);
       ValidatorsTest.failure(Validators.PERCENTAGE, null);
+   }
+
+   @Test
+   public void testPERCENTAGE_OR_MINUS_ONE() {
+      ValidatorsTest.success(Validators.PERCENTAGE_OR_MINUS_ONE, 99);
+      ValidatorsTest.success(Validators.PERCENTAGE_OR_MINUS_ONE, 100);
+      ValidatorsTest.success(Validators.PERCENTAGE_OR_MINUS_ONE, 0);
+      ValidatorsTest.success(Validators.PERCENTAGE_OR_MINUS_ONE, -1);
+      ValidatorsTest.failure(Validators.PERCENTAGE_OR_MINUS_ONE, 101);
+      ValidatorsTest.failure(Validators.PERCENTAGE_OR_MINUS_ONE, null);
+   }
+
+   @Test
+   public void testPOSITIVE_INT() {
+      ValidatorsTest.failure(Validators.POSITIVE_INT, -1);
+      ValidatorsTest.failure(Validators.POSITIVE_INT, 0);
+      ValidatorsTest.failure(Validators.POSITIVE_INT, 0.1);
+      ValidatorsTest.success(Validators.POSITIVE_INT, 1);
+
+      ValidatorsTest.success(Validators.POSITIVE_INT, Integer.MAX_VALUE);
+      ValidatorsTest.failure(Validators.POSITIVE_INT, Integer.MAX_VALUE + 1);
+   }
+
+   @Test
+   public void testMINUS_ONE_OR_POSITIVE_INT() {
+      ValidatorsTest.failure(Validators.MINUS_ONE_OR_POSITIVE_INT, -2);
+      ValidatorsTest.success(Validators.MINUS_ONE_OR_POSITIVE_INT, -1);
+      ValidatorsTest.failure(Validators.MINUS_ONE_OR_POSITIVE_INT, 0);
+      ValidatorsTest.failure(Validators.MINUS_ONE_OR_POSITIVE_INT, 0.1);
+      ValidatorsTest.success(Validators.MINUS_ONE_OR_POSITIVE_INT, 1);
+
+      ValidatorsTest.success(Validators.MINUS_ONE_OR_POSITIVE_INT, Integer.MAX_VALUE);
+      ValidatorsTest.failure(Validators.MINUS_ONE_OR_POSITIVE_INT, Integer.MAX_VALUE + 1);
    }
 
    // Package protected ---------------------------------------------

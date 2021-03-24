@@ -16,20 +16,29 @@
  */
 package org.apache.activemq.artemis.core.server;
 
+import java.util.List;
+
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.core.filter.Filter;
-
-import java.util.List;
+import org.apache.activemq.artemis.core.transaction.Transaction;
 
 public interface ScheduledDeliveryHandler {
 
-   boolean checkAndSchedule(MessageReference ref, final boolean tail);
+   boolean checkAndSchedule(MessageReference ref, boolean tail);
 
    int getScheduledCount();
+
+   long getScheduledSize();
+
+   int getDurableScheduledCount();
+
+   long getDurableScheduledSize();
 
    List<MessageReference> getScheduledReferences();
 
    List<MessageReference> cancel(Filter filter) throws ActiveMQException;
 
-   MessageReference removeReferenceWithID(long id) throws ActiveMQException;
+   MessageReference removeReferenceWithID(long id) throws Exception;
+
+   MessageReference removeReferenceWithID(long id, Transaction tx) throws Exception;
 }

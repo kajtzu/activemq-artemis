@@ -63,6 +63,10 @@ public class InVMConnection implements Connection {
 
    private RemotingConnection protocolConnection;
 
+   private boolean bufferPoolingEnabled = TransportConstants.DEFAULT_BUFFER_POOLING;
+
+   private boolean directDeliver = TransportConstants.DEFAULT_DIRECT_DELIVER;
+
    public InVMConnection(final int serverID,
                          final BufferHandler handler,
                          final BaseConnectionLifeCycleListener listener,
@@ -84,6 +88,7 @@ public class InVMConnection implements Connection {
                          final BaseConnectionLifeCycleListener listener,
                          final Executor executor,
                          final ActiveMQPrincipal defaultActiveMQPrincipal) {
+
       this.serverID = serverID;
 
       this.handler = handler;
@@ -97,6 +102,10 @@ public class InVMConnection implements Connection {
       this.defaultActiveMQPrincipal = defaultActiveMQPrincipal;
    }
 
+   public void setEnableBufferPooling(boolean enableBufferPooling) {
+      this.bufferPoolingEnabled = enableBufferPooling;
+   }
+
    @Override
    public void forceClose() {
       // no op
@@ -104,6 +113,11 @@ public class InVMConnection implements Connection {
 
    @Override
    public boolean isWritable(ReadyListener listener) {
+      return true;
+   }
+
+   @Override
+   public boolean isOpen() {
       return true;
    }
 
@@ -146,7 +160,10 @@ public class InVMConnection implements Connection {
 
    @Override
    public ActiveMQBuffer createTransportBuffer(final int size) {
-      return ActiveMQBuffers.dynamicBuffer(size);
+      if (bufferPoolingEnabled) {
+         return ActiveMQBuffers.pooledBuffer( size );
+      }
+      return ActiveMQBuffers.dynamicBuffer( size );
    }
 
    @Override
@@ -156,6 +173,11 @@ public class InVMConnection implements Connection {
 
    @Override
    public void checkFlushBatchBuffer() {
+   }
+
+   @Override
+   public void write(ActiveMQBuffer buffer, boolean requestFlush) {
+      write(buffer, false, false, null);
    }
 
    @Override
@@ -173,9 +195,6 @@ public class InVMConnection implements Connection {
                      final boolean flush,
                      final boolean batch,
                      final ChannelFutureListener futureListener) {
-      final ActiveMQBuffer copied = buffer.copy(0, buffer.capacity());
-
-      copied.setIndex(buffer.readerIndex(), buffer.writerIndex());
 
       try {
          executor.execute(new Runnable() {
@@ -183,23 +202,21 @@ public class InVMConnection implements Connection {
             public void run() {
                try {
                   if (!closed) {
-                     copied.readInt(); // read and discard
+                     buffer.readInt(); // read and discard
                      if (logger.isTraceEnabled()) {
                         logger.trace(InVMConnection.this + "::Sending inVM packet");
                      }
-                     handler.bufferReceived(id, copied);
+                     handler.bufferReceived(id, buffer);
                      if (futureListener != null) {
-                        // TODO BEFORE MERGE: (is null a good option here?)
                         futureListener.operationComplete(null);
                      }
                   }
-               }
-               catch (Exception e) {
+               } catch (Exception e) {
                   final String msg = "Failed to write to handler on connector " + this;
                   ActiveMQServerLogger.LOGGER.errorWritingToInvmConnector(e, this);
                   throw new IllegalStateException(msg, e);
-               }
-               finally {
+               } finally {
+                  buffer.release();
                   if (logger.isTraceEnabled()) {
                      logger.trace(InVMConnection.this + "::packet sent done");
                   }
@@ -220,13 +237,11 @@ public class InVMConnection implements Connection {
                if (!latch.await(10, TimeUnit.SECONDS)) {
                   ActiveMQServerLogger.LOGGER.timedOutFlushingInvmChannel();
                }
-            }
-            catch (InterruptedException e) {
+            } catch (InterruptedException e) {
                throw new ActiveMQInterruptedException(e);
             }
          }
-      }
-      catch (RejectedExecutionException e) {
+      } catch (RejectedExecutionException e) {
          // Ignore - this can happen if server/client is shutdown and another request comes in
       }
 
@@ -274,8 +289,34 @@ public class InVMConnection implements Connection {
    }
 
    @Override
+   public boolean isDirectDeliver() {
+      return directDeliver;
+   }
+
+   public void setDirectDeliver(boolean directDeliver) {
+      this.directDeliver = directDeliver;
+   }
+
+   @Override
    public String toString() {
       return "InVMConnection [serverID=" + serverID + ", id=" + id + "]";
    }
 
+   @Override
+   public boolean isSameTarget(TransportConfiguration... configs) {
+      boolean result = false;
+      for (TransportConfiguration cfg : configs) {
+         if (cfg == null) {
+            continue;
+         }
+         if (InVMConnectorFactory.class.getName().equals(cfg.getFactoryClassName())) {
+            //factory same, get id
+            if (serverID == (int) cfg.getParams().get(TransportConstants.SERVER_ID_PROP_NAME)) {
+               result = true;
+               break;
+            }
+         }
+      }
+      return result;
+   }
 }

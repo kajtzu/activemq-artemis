@@ -29,7 +29,9 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.regex.Pattern;
 
+import org.apache.activemq.artemis.core.config.WildcardConfiguration;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepositoryChangeListener;
@@ -43,6 +45,7 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
 
    private static final Logger logger = Logger.getLogger(HierarchicalObjectRepository.class);
 
+   private static final WildcardConfiguration DEFAULT_WILDCARD_CONFIGURATION = new WildcardConfiguration();
    private boolean listenersEnabled = true;
    /**
     * The default Match to fall back to
@@ -50,9 +53,11 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    private T defaultmatch;
 
    /**
-    * all the matches
+    * the matches; separate wildcard matches from exact matches to reduce the searching necessary with a
+    * large number of exact matches
     */
-   private final Map<String, Match<T>> matches = new HashMap<>();
+   private final Map<String, Match<T>> wildcardMatches = new HashMap<>();
+   private final Map<String, Match<T>> exactMatches = new HashMap<>();
 
    /**
     * Certain values cannot be removed after installed.
@@ -66,7 +71,11 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    /**
     * a regex comparator
     */
-   private final MatchComparator matchComparator = new MatchComparator();
+   private final MatchComparator matchComparator;
+
+   private final MatchModifier matchModifier;
+
+   private final WildcardConfiguration wildcardConfiguration;
 
    /**
     * a cache
@@ -76,7 +85,8 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    /**
     * Need a lock instead of using multiple {@link ConcurrentHashMap}s.
     * <p>
-    * We could have a race between the state of {@link #matches} and {@link #cache}:
+    * We could have a race between the state of {@link #wildcardMatches}, {@link #exactMatches},
+    * and {@link #cache}:
     * <p>
     * Thread1: calls {@link #addMatch(String, T)}: i. cleans cache; ii. adds match to Map.<br>
     * Thread2: could add an (out-dated) entry to the cache between 'i. clean cache' and 'ii. add
@@ -94,13 +104,26 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
     */
    private final ArrayList<HierarchicalRepositoryChangeListener> listeners = new ArrayList<>();
 
+   public HierarchicalObjectRepository() {
+      this(null);
+   }
+
+   public HierarchicalObjectRepository(final WildcardConfiguration wildcardConfiguration) {
+      this(wildcardConfiguration, new MatchModifier() { });
+   }
+
+   public HierarchicalObjectRepository(final WildcardConfiguration wildcardConfiguration, final MatchModifier matchModifier) {
+      this.wildcardConfiguration = wildcardConfiguration == null ? DEFAULT_WILDCARD_CONFIGURATION : wildcardConfiguration;
+      this.matchComparator = new MatchComparator(this.wildcardConfiguration);
+      this.matchModifier = matchModifier;
+   }
+
    @Override
    public void disableListeners() {
       lock.writeLock().lock();
       try {
          this.listenersEnabled = false;
-      }
-      finally {
+      } finally {
          lock.writeLock().unlock();
       }
    }
@@ -110,8 +133,7 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
       lock.writeLock().lock();
       try {
          this.listenersEnabled = true;
-      }
-      finally {
+      } finally {
          lock.writeLock().unlock();
       }
       onChange();
@@ -126,15 +148,18 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    public List<T> values() {
       lock.readLock().lock();
       try {
-         ArrayList<T> values = new ArrayList<>(matches.size());
+         ArrayList<T> values = new ArrayList<>(wildcardMatches.size() + exactMatches.size());
 
-         for (Match<T> matchValue : matches.values()) {
+         for (Match<T> matchValue : wildcardMatches.values()) {
+            values.add(matchValue.getValue());
+         }
+
+         for (Match<T> matchValue : exactMatches.values()) {
             values.add(matchValue.getValue());
          }
 
          return values;
-      }
-      finally {
+      } finally {
          lock.readLock().unlock();
       }
    }
@@ -153,17 +178,25 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    private void addMatch(final String match, final T value, final boolean immutableMatch, boolean notifyListeners) {
       lock.writeLock().lock();
       try {
-         clearCache();
+         String modifiedMatch = matchModifier.modify(match);
+         // an exact match (i.e. one without wildcards) won't impact any other matches so no need to clear the cache
+         if (usesWildcards(modifiedMatch)) {
+            clearCache();
+         } else if (modifiedMatch != null && cache.containsKey(modifiedMatch)) {
+            cache.remove(modifiedMatch);
+         }
 
          if (immutableMatch) {
-            immutables.add(match);
+            immutables.add(modifiedMatch);
          }
-         Match.verify(match);
-         Match<T> match1 = new Match<>(match);
-         match1.setValue(value);
-         matches.put(match, match1);
-      }
-      finally {
+         Match.verify(modifiedMatch, wildcardConfiguration);
+         Match<T> match1 = new Match<>(modifiedMatch, value, wildcardConfiguration);
+         if (usesWildcards(modifiedMatch)) {
+            wildcardMatches.put(modifiedMatch, match1);
+         } else {
+            exactMatches.put(modifiedMatch, match1);
+         }
+      } finally {
          lock.writeLock().unlock();
       }
 
@@ -171,6 +204,10 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
       if (notifyListeners) {
          onChange();
       }
+   }
+
+   private boolean usesWildcards(String modifiedMatch) {
+      return modifiedMatch == null ? false : (modifiedMatch.contains(wildcardConfiguration.getAnyWordsString()) || modifiedMatch.contains(wildcardConfiguration.getSingleWordString()));
    }
 
    @Override
@@ -186,25 +223,30 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
     */
    @Override
    public T getMatch(final String match) {
-      T cacheResult = cache.get(match);
+      String modifiedMatch = matchModifier.modify(match);
+      T cacheResult = cache.get(modifiedMatch);
       if (cacheResult != null) {
          return cacheResult;
       }
       lock.readLock().lock();
       try {
          T actualMatch;
-         Map<String, Match<T>> possibleMatches = getPossibleMatches(match);
+         Map<String, Match<T>> possibleMatches = getPossibleMatches(modifiedMatch);
          Collection<Match<T>> orderedMatches = sort(possibleMatches);
          actualMatch = merge(orderedMatches);
          T value = actualMatch != null ? actualMatch : defaultmatch;
          if (value != null) {
-            cache.put(match, value);
+            cache.put(modifiedMatch, value);
          }
          return value;
-      }
-      finally {
+      } finally {
          lock.readLock().unlock();
       }
+   }
+
+   @Override
+   public boolean containsExactMatch(String match) {
+      return exactMatches.containsKey(match);
    }
 
    /**
@@ -221,8 +263,7 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
             if (!Mergeable.class.isAssignableFrom(actualMatch.getClass())) {
                break;
             }
-         }
-         else {
+         } else {
             ((Mergeable) actualMatch).merge(match.getValue());
          }
       }
@@ -255,21 +296,25 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    public void removeMatch(final String match) {
       lock.writeLock().lock();
       try {
-         boolean isImmutable = immutables.contains(match);
+         String modMatch = matchModifier.modify(match);
+         boolean isImmutable = immutables.contains(modMatch);
          if (isImmutable) {
-            logger.debug("Cannot remove match " + match + " since it came from a main config");
-         }
-         else {
+            logger.debug("Cannot remove match " + modMatch + " since it came from a main config");
+         } else {
             /**
-             * clear the cache before removing the match. This will force any thread at
-             * {@link #getMatch(String)} to get the lock to recompute.
+             * Clear the cache before removing the match, but only if the match used wildcards. This
+             * will force any thread at {@link #getMatch(String)} to get the lock to recompute.
              */
-            clearCache();
-            matches.remove(match);
+            if (usesWildcards(modMatch)) {
+               clearCache();
+               wildcardMatches.remove(modMatch);
+            } else {
+               clearCache();
+               exactMatches.remove(modMatch);
+            }
             onChange();
          }
-      }
-      finally {
+      } finally {
          lock.writeLock().unlock();
       }
    }
@@ -282,8 +327,7 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
          if (listenersEnabled) {
             listener.onChange();
          }
-      }
-      finally {
+      } finally {
          lock.writeLock().unlock();
       }
    }
@@ -293,8 +337,7 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
       lock.writeLock().lock();
       try {
          listeners.remove(listener);
-      }
-      finally {
+      } finally {
          lock.writeLock().unlock();
       }
    }
@@ -310,15 +353,23 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
       defaultmatch = defaultValue;
    }
 
+   /**
+    *
+    * @return the default match for this repo
+    */
+   @Override
+   public T getDefault() {
+      return defaultmatch;
+   }
+
    @Override
    public void clear() {
       lock.writeLock().lock();
       try {
          clearCache();
          listeners.clear();
-         matches.clear();
-      }
-      finally {
+         clearMatches();
+      } finally {
          lock.writeLock().unlock();
       }
    }
@@ -329,12 +380,11 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
       try {
          clearCache();
          immutables.clear();
-         matches.clear();
+         clearMatches();
          for (Map.Entry<String, T> entry : entries) {
             addMatch(entry.getKey(), entry.getValue(), true, false);
          }
-      }
-      finally {
+      } finally {
          lock.writeLock().unlock();
       }
 
@@ -351,6 +401,11 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
       cache.clear();
    }
 
+   private void clearMatches() {
+      wildcardMatches.clear();
+      exactMatches.clear();
+   }
+
    private void onChange() {
       lock.readLock().lock();
       try {
@@ -358,14 +413,12 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
             for (HierarchicalRepositoryChangeListener listener : listeners) {
                try {
                   listener.onChange();
-               }
-               catch (Throwable e) {
+               } catch (Throwable e) {
                   ActiveMQServerLogger.LOGGER.errorCallingRepoListener(e);
                }
             }
          }
-      }
-      finally {
+      } finally {
          lock.readLock().unlock();
       }
    }
@@ -379,7 +432,11 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    private Map<String, Match<T>> getPossibleMatches(final String match) {
       HashMap<String, Match<T>> possibleMatches = new HashMap<>();
 
-      for (Entry<String, Match<T>> entry : matches.entrySet()) {
+      if (exactMatches.containsKey(match)) {
+         possibleMatches.put(match, exactMatches.get(match));
+      }
+
+      for (Entry<String, Match<T>> entry : wildcardMatches.entrySet()) {
          Match<T> entryMatch = entry.getValue();
          if (entryMatch.getPattern().matcher(match).matches()) {
             possibleMatches.put(entry.getKey(), entryMatch);
@@ -389,41 +446,56 @@ public class HierarchicalObjectRepository<T> implements HierarchicalRepository<T
    }
 
    /**
+    * Modifies the match String for any add or get from the repository
+    */
+   public interface MatchModifier {
+      default String modify(String input) {
+         return input;
+      }
+   }
+
+   /**
     * Compares to matches to see which one is more specific.
     */
    private static final class MatchComparator implements Comparator<String>, Serializable {
 
       private static final long serialVersionUID = -6182535107518999740L;
 
+      private final String quotedDelimiter;
+      private final String anyWords;
+      private final String singleWord;
+
+      MatchComparator(final WildcardConfiguration wildcardConfiguration) {
+         this.quotedDelimiter = Pattern.quote(wildcardConfiguration.getDelimiterString());
+         this.singleWord = wildcardConfiguration.getSingleWordString();
+         this.anyWords = wildcardConfiguration.getAnyWordsString();
+      }
+
       @Override
       public int compare(final String o1, final String o2) {
-         if (o1.contains(Match.WILDCARD) && !o2.contains(Match.WILDCARD)) {
+         if (o1.contains(anyWords) && !o2.contains(anyWords)) {
             return +1;
-         }
-         else if (!o1.contains(Match.WILDCARD) && o2.contains(Match.WILDCARD)) {
+         } else if (!o1.contains(anyWords) && o2.contains(anyWords)) {
             return -1;
-         }
-         else if (o1.contains(Match.WILDCARD) && o2.contains(Match.WILDCARD)) {
+         } else if (o1.contains(anyWords) && o2.contains(anyWords)) {
             return o2.length() - o1.length();
-         }
-         else if (o1.contains(Match.WORD_WILDCARD) && !o2.contains(Match.WORD_WILDCARD)) {
+         } else if (o1.contains(singleWord) && !o2.contains(singleWord)) {
             return +1;
-         }
-         else if (!o1.contains(Match.WORD_WILDCARD) && o2.contains(Match.WORD_WILDCARD)) {
+         } else if (!o1.contains(singleWord) && o2.contains(singleWord)) {
             return -1;
-         }
-         else if (o1.contains(Match.WORD_WILDCARD) && o2.contains(Match.WORD_WILDCARD)) {
-            String[] leftSplits = o1.split("\\.");
-            String[] rightSplits = o2.split("\\.");
+         } else if (o1.contains(singleWord) && o2.contains(singleWord)) {
+            String[] leftSplits = o1.split(quotedDelimiter);
+            String[] rightSplits = o2.split(quotedDelimiter);
             for (int i = 0; i < leftSplits.length; i++) {
+               if (i >= rightSplits.length) {
+                  return -1;
+               }
                String left = leftSplits[i];
-               if (left.equals(Match.WORD_WILDCARD)) {
-                  if (rightSplits.length < i || !rightSplits[i].equals(Match.WORD_WILDCARD)) {
-                     return -1;
-                  }
-                  else {
-                     return +1;
-                  }
+               String right = rightSplits[i];
+               if (left.equals(singleWord) && !right.equals(singleWord)) {
+                  return +1;
+               } else if (!left.equals(singleWord) && right.equals(singleWord)) {
+                  return -1;
                }
             }
          }

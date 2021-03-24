@@ -16,13 +16,6 @@
  */
 package org.apache.activemq.artemis.api.core;
 
-import org.apache.activemq.artemis.core.client.ActiveMQClientMessageBundle;
-import org.apache.activemq.artemis.utils.Base64;
-import org.apache.activemq.artemis.utils.JsonLoader;
-import org.apache.activemq.artemis.utils.ObjectInputStreamWithClassLoader;
-import org.apache.activemq.artemis.utils.StringEscapeUtils;
-
-import javax.json.Json;
 import javax.json.JsonArray;
 import javax.json.JsonArrayBuilder;
 import javax.json.JsonNumber;
@@ -34,67 +27,26 @@ import javax.management.openmbean.CompositeData;
 import javax.management.openmbean.CompositeDataSupport;
 import java.io.ByteArrayInputStream;
 import java.io.StringReader;
+import java.lang.reflect.Array;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.activemq.artemis.core.client.ActiveMQClientMessageBundle;
+import org.apache.activemq.artemis.utils.Base64;
+import org.apache.activemq.artemis.utils.JsonLoader;
+import org.apache.activemq.artemis.utils.ObjectInputStreamWithClassLoader;
+import org.apache.activemq.artemis.utils.StringEscapeUtils;
+
 public final class JsonUtil {
+
    public static JsonArray toJSONArray(final Object[] array) throws Exception {
       JsonArrayBuilder jsonArray = JsonLoader.createArrayBuilder();
 
       for (Object parameter : array) {
-         if (parameter instanceof Map) {
-            Map<String, Object> map = (Map<String, Object>) parameter;
-
-            JsonObjectBuilder jsonObject = JsonLoader.createObjectBuilder();
-
-            for (Map.Entry<String, Object> entry : map.entrySet()) {
-               String key = entry.getKey();
-
-               Object val = entry.getValue();
-
-               if (val != null) {
-                  if (val.getClass().isArray()) {
-                     JsonArray objectArray = toJSONArray((Object[]) val);
-                     jsonObject.add(key, objectArray);
-                  }
-                  else {
-                     addToObject(key, val, jsonObject);
-                  }
-               }
-            }
-            jsonArray.add(jsonObject);
-         }
-         else {
-            if (parameter != null) {
-               Class<?> clz = parameter.getClass();
-
-               if (clz.isArray()) {
-                  Object[] innerArray = (Object[]) parameter;
-
-                  if (innerArray instanceof CompositeData[]) {
-                     JsonArrayBuilder innerJsonArray = JsonLoader.createArrayBuilder();
-                     for (Object data : innerArray) {
-                        String s = Base64.encodeObject((CompositeDataSupport) data);
-                        innerJsonArray.add(s);
-                     }
-                     JsonObjectBuilder jsonObject = JsonLoader.createObjectBuilder();
-                     jsonObject.add(CompositeData.class.getName(), innerJsonArray);
-                     jsonArray.add(jsonObject);
-                  }
-                  else {
-                     jsonArray.add(toJSONArray(innerArray));
-                  }
-               }
-               else {
-                  addToArray(parameter, jsonArray);
-               }
-            }
-            else {
-               jsonArray.addNull();
-            }
-         }
+         addToArray(parameter, jsonArray);
       }
       return jsonArray.build();
    }
@@ -109,8 +61,7 @@ public final class JsonUtil {
             Object[] inner = fromJsonArray((JsonArray) val);
 
             array[i] = inner;
-         }
-         else if (val instanceof JsonObject) {
+         } else if (val instanceof JsonObject) {
             JsonObject jsonObject = (JsonObject) val;
 
             Map<String, Object> map = new HashMap<>();
@@ -122,26 +73,20 @@ public final class JsonUtil {
 
                if (innerVal instanceof JsonArray) {
                   innerVal = fromJsonArray(((JsonArray) innerVal));
-               }
-               else if (innerVal instanceof JsonString) {
-                  innerVal = ((JsonString)innerVal).getString();
-               }
-               else if (innerVal == JsonValue.FALSE) {
+               } else if (innerVal instanceof JsonString) {
+                  innerVal = ((JsonString) innerVal).getString();
+               } else if (innerVal == JsonValue.FALSE) {
                   innerVal = Boolean.FALSE;
-               }
-               else if (innerVal == JsonValue.TRUE) {
+               } else if (innerVal == JsonValue.TRUE) {
                   innerVal = Boolean.TRUE;
-               }
-               else if (innerVal instanceof JsonNumber) {
-                  JsonNumber jsonNumber = (JsonNumber)innerVal;
+               } else if (innerVal instanceof JsonNumber) {
+                  JsonNumber jsonNumber = (JsonNumber) innerVal;
                   if (jsonNumber.isIntegral()) {
                      innerVal = jsonNumber.longValue();
-                  }
-                  else {
+                  } else {
                      innerVal = jsonNumber.doubleValue();
                   }
-               }
-               else if (innerVal instanceof JsonObject) {
+               } else if (innerVal instanceof JsonObject) {
                   Map<String, Object> innerMap = new HashMap<>();
                   JsonObject o = (JsonObject) innerVal;
                   Set<String> innerKeys = o.keySet();
@@ -154,10 +99,11 @@ public final class JsonUtil {
                   Object[] data = (Object[]) innerVal;
                   CompositeData[] cds = new CompositeData[data.length];
                   for (int i1 = 0; i1 < data.length; i1++) {
-                     String dataConverted  = convertJsonValue(data[i1], String.class).toString();
-                     ObjectInputStreamWithClassLoader ois = new ObjectInputStreamWithClassLoader(new ByteArrayInputStream(Base64.decode(dataConverted)));
-                     ois.setWhiteList("java.util,java.lang,javax.management");
-                     cds[i1] = (CompositeDataSupport) ois.readObject();
+                     String dataConverted = convertJsonValue(data[i1], String.class).toString();
+                     try (ObjectInputStreamWithClassLoader ois = new ObjectInputStreamWithClassLoader(new ByteArrayInputStream(Base64.decode(dataConverted)))) {
+                        ois.setWhiteList("java.util,java.lang,javax.management");
+                        cds[i1] = (CompositeDataSupport) ois.readObject();
+                     }
                   }
                   innerVal = cds;
                }
@@ -166,30 +112,23 @@ public final class JsonUtil {
             }
 
             array[i] = map;
-         }
-         else if (val instanceof JsonString) {
-            array[i] = ((JsonString)val).getString();
-         }
-         else if (val == JsonValue.FALSE) {
+         } else if (val instanceof JsonString) {
+            array[i] = ((JsonString) val).getString();
+         } else if (val == JsonValue.FALSE) {
             array[i] = Boolean.FALSE;
-         }
-         else if (val == JsonValue.TRUE) {
+         } else if (val == JsonValue.TRUE) {
             array[i] = Boolean.TRUE;
-         }
-         else if (val instanceof JsonNumber) {
-            JsonNumber jsonNumber = (JsonNumber)val;
+         } else if (val instanceof JsonNumber) {
+            JsonNumber jsonNumber = (JsonNumber) val;
             if (jsonNumber.isIntegral()) {
                array[i] = jsonNumber.longValue();
-            }
-            else {
+            } else {
                array[i] = jsonNumber.doubleValue();
             }
-         }
-         else {
+         } else {
             if (val == JsonValue.NULL) {
                array[i] = null;
-            }
-            else {
+            } else {
                array[i] = val;
             }
          }
@@ -205,33 +144,35 @@ public final class JsonUtil {
    public static void addToObject(final String key, final Object param, final JsonObjectBuilder jsonObjectBuilder) {
       if (param instanceof Integer) {
          jsonObjectBuilder.add(key, (Integer) param);
-      }
-      else if (param instanceof Long) {
+      } else if (param instanceof Long) {
          jsonObjectBuilder.add(key, (Long) param);
-      }
-      else if (param instanceof Double) {
+      } else if (param instanceof Double) {
          jsonObjectBuilder.add(key, (Double) param);
-      }
-      else if (param instanceof String) {
+      } else if (param instanceof String) {
          jsonObjectBuilder.add(key, (String) param);
-      }
-      else if (param instanceof Boolean) {
+      } else if (param instanceof Boolean) {
          jsonObjectBuilder.add(key, (Boolean) param);
-      }
-      else if (param instanceof Map) {
-         JsonObject mapObject = toJsonObject((Map<String,Object>) param);
+      } else if (param instanceof Map) {
+         JsonObject mapObject = toJsonObject((Map<String, Object>) param);
          jsonObjectBuilder.add(key, mapObject);
-      }
-      else if (param instanceof Short) {
+      } else if (param instanceof Short) {
          jsonObjectBuilder.add(key, (Short) param);
-      }
-      else if (param instanceof Byte) {
+      } else if (param instanceof Byte) {
          jsonObjectBuilder.add(key, ((Byte) param).shortValue());
-      }
-      else if (param instanceof SimpleString) {
+      } else if (param instanceof SimpleString) {
          jsonObjectBuilder.add(key, param.toString());
-      }
-      else {
+      } else if (param == null) {
+         jsonObjectBuilder.addNull(key);
+      } else if (param instanceof byte[]) {
+         JsonArrayBuilder byteArrayObject = toJsonArrayBuilder((byte[]) param);
+         jsonObjectBuilder.add(key, byteArrayObject);
+      } else if (param instanceof Object[]) {
+         final JsonArrayBuilder objectArrayBuilder = JsonLoader.createArrayBuilder();
+         for (Object parameter : (Object[])param) {
+            addToArray(parameter, objectArrayBuilder);
+         }
+         jsonObjectBuilder.add(key, objectArrayBuilder);
+      } else {
          throw ActiveMQClientMessageBundle.BUNDLE.invalidManagementParam(param.getClass().getName());
       }
    }
@@ -239,30 +180,42 @@ public final class JsonUtil {
    public static void addToArray(final Object param, final JsonArrayBuilder jsonArrayBuilder) {
       if (param instanceof Integer) {
          jsonArrayBuilder.add((Integer) param);
-      }
-      else if (param instanceof Long) {
+      } else if (param instanceof Long) {
          jsonArrayBuilder.add((Long) param);
-      }
-      else if (param instanceof Double) {
+      } else if (param instanceof Double) {
          jsonArrayBuilder.add((Double) param);
-      }
-      else if (param instanceof String) {
+      } else if (param instanceof String) {
          jsonArrayBuilder.add((String) param);
-      }
-      else if (param instanceof Boolean) {
+      } else if (param instanceof Boolean) {
          jsonArrayBuilder.add((Boolean) param);
-      }
-      else if (param instanceof Map) {
-         JsonObject mapObject = toJsonObject((Map<String,Object>) param);
+      } else if (param instanceof Map) {
+         JsonObject mapObject = toJsonObject((Map<String, Object>) param);
          jsonArrayBuilder.add(mapObject);
-      }
-      else if (param instanceof Short) {
+      } else if (param instanceof Short) {
          jsonArrayBuilder.add((Short) param);
-      }
-      else if (param instanceof Byte) {
+      } else if (param instanceof Byte) {
          jsonArrayBuilder.add(((Byte) param).shortValue());
-      }
-      else {
+      } else if (param == null) {
+         jsonArrayBuilder.addNull();
+      } else if (param instanceof byte[]) {
+         JsonArrayBuilder byteArrayObject = toJsonArrayBuilder((byte[]) param);
+         jsonArrayBuilder.add(byteArrayObject);
+      } else if (param instanceof CompositeData[]) {
+         JsonArrayBuilder innerJsonArray = JsonLoader.createArrayBuilder();
+         for (Object data : (CompositeData[])param) {
+            String s = Base64.encodeObject((CompositeDataSupport) data);
+            innerJsonArray.add(s);
+         }
+         JsonObjectBuilder jsonObject = JsonLoader.createObjectBuilder();
+         jsonObject.add(CompositeData.class.getName(), innerJsonArray);
+         jsonArrayBuilder.add(jsonObject);
+      } else if (param instanceof Object[]) {
+         JsonArrayBuilder objectArrayBuilder = JsonLoader.createArrayBuilder();
+         for (Object parameter : (Object[])param) {
+            addToArray(parameter, objectArrayBuilder);
+         }
+         jsonArrayBuilder.add(objectArrayBuilder);
+      } else {
          throw ActiveMQClientMessageBundle.BUNDLE.invalidManagementParam(param.getClass().getName());
       }
    }
@@ -277,22 +230,40 @@ public final class JsonUtil {
       return array.build();
    }
 
-   public static JsonObject toJsonObject(Map<String, Object> map) {
+   public static JsonObject toJsonObject(Map<String, ?> map) {
       JsonObjectBuilder jsonObjectBuilder = JsonLoader.createObjectBuilder();
       if (map != null) {
-         for (Map.Entry<String, Object> entry : map.entrySet()) {
-            addToObject(entry.getKey(), entry.getValue(), jsonObjectBuilder);
+         for (Map.Entry<String, ?> entry : map.entrySet()) {
+            addToObject(String.valueOf(entry.getKey()), entry.getValue(), jsonObjectBuilder);
          }
       }
       return jsonObjectBuilder.build();
    }
 
+   public static JsonArrayBuilder toJsonArrayBuilder(byte[] byteArray) {
+      JsonArrayBuilder jsonArrayBuilder = JsonLoader.createArrayBuilder();
+      if (byteArray != null) {
+         for (int i = 0; i < byteArray.length; i++) {
+            jsonArrayBuilder.add(((Byte) byteArray[i]).shortValue());
+         }
+      }
+      return jsonArrayBuilder;
+   }
+
    public static JsonArray readJsonArray(String jsonString) {
-      return Json.createReader(new StringReader(jsonString)).readArray();
+      return JsonLoader.readArray(new StringReader(jsonString));
    }
 
    public static JsonObject readJsonObject(String jsonString) {
-      return Json.createReader(new StringReader(jsonString)).readObject();
+      return JsonLoader.readObject(new StringReader(jsonString));
+   }
+
+   public static Map<String, String> readJsonProperties(String jsonString) {
+      Map<String, String> properties = new HashMap<>();
+      if (jsonString != null) {
+         JsonUtil.readJsonObject(jsonString).forEach((k, v) -> properties.put(k, v.toString()));
+      }
+      return properties;
    }
 
    public static Object convertJsonValue(Object jsonValue, Class desiredType) {
@@ -301,75 +272,88 @@ public final class JsonUtil {
 
          if (desiredType == null || desiredType == Long.class || desiredType == Long.TYPE) {
             return number.longValue();
-         }
-         else if (desiredType == Integer.class || desiredType == Integer.TYPE) {
+         } else if (desiredType == Integer.class || desiredType == Integer.TYPE) {
             return number.intValue();
-         }
-         else if (desiredType == Double.class || desiredType == Double.TYPE) {
+         } else if (desiredType == Double.class || desiredType == Double.TYPE) {
             return number.doubleValue();
-         }
-         else {
+         } else {
             return number.longValue();
          }
-      }
-      else if (jsonValue instanceof JsonString) {
+      } else if (jsonValue instanceof JsonString) {
          return ((JsonString) jsonValue).getString();
-      }
-      else if (jsonValue instanceof JsonValue) {
+      } else if (jsonValue instanceof JsonValue) {
          if (jsonValue == JsonValue.TRUE) {
             return true;
-         }
-         else if (jsonValue == JsonValue.FALSE) {
+         } else if (jsonValue == JsonValue.FALSE) {
             return false;
-         }
-         else {
+         } else {
             return jsonValue.toString();
          }
-      }
-      else if (jsonValue instanceof  Number) {
-         Number jsonNumber = (Number)jsonValue;
+      } else if (jsonValue instanceof Number) {
+         Number jsonNumber = (Number) jsonValue;
          if (desiredType == Integer.TYPE || desiredType == Integer.class) {
-            return  jsonNumber.intValue();
-         }
-         else if (desiredType == Long.TYPE || desiredType == Long.class) {
+            return jsonNumber.intValue();
+         } else if (desiredType == Long.TYPE || desiredType == Long.class) {
             return jsonNumber.longValue();
-         }
-         else if (desiredType == Double.TYPE || desiredType == Double.class) {
+         } else if (desiredType == Double.TYPE || desiredType == Double.class) {
             return jsonNumber.doubleValue();
-         }
-         else if (desiredType == Short.TYPE || desiredType == Short.class) {
+         } else if (desiredType == Short.TYPE || desiredType == Short.class) {
             return jsonNumber.shortValue();
-         }
-         else {
+         } else {
             return jsonValue;
          }
-      }
-      else if (jsonValue instanceof Object[]) {
+      } else if (jsonValue instanceof Object[]) {
          Object[] array = (Object[]) jsonValue;
-         for (int i = 0; i < array.length; i++) {
-            array[i] = convertJsonValue(array[i], desiredType);
+         Object[] result;
+         if (desiredType != null) {
+            result = (Object[]) Array.newInstance(desiredType, array.length);
+         } else {
+            result = array;
          }
-         return array;
-      }
-      else {
+         for (int i = 0; i < array.length; i++) {
+            result[i] = convertJsonValue(array[i], desiredType);
+         }
+         return result;
+      } else {
          return jsonValue;
       }
    }
 
-
-
    private JsonUtil() {
    }
 
+   public static Object truncate(final Object value, final int valueSizeLimit) {
+      Object result = value;
+      if (valueSizeLimit >= 0) {
+         if (String.class.equals(value.getClass())) {
+            String str = (String) value;
+            if (str.length() > valueSizeLimit) {
+               result = new StringBuilder(valueSizeLimit + 32).append(str.substring(0, valueSizeLimit)).append(", + ").append(str.length() - valueSizeLimit).append(" more").toString();
+            }
+         } else if (value.getClass().isArray()) {
+            if (byte[].class.equals(value.getClass())) {
+               if (((byte[]) value).length > valueSizeLimit) {
+                  result = Arrays.copyOfRange((byte[]) value, 0, valueSizeLimit);
+               }
+            } else if (char[].class.equals(value.getClass())) {
+               if (((char[]) value).length > valueSizeLimit) {
+                  result = Arrays.copyOfRange((char[]) value, 0, valueSizeLimit);
+               }
+            }
+         }
+      }
+      return result;
+   }
+
    private static class NullableJsonString implements JsonValue, JsonString {
+
       private final String value;
       private String escape;
 
       NullableJsonString(String value) {
          if (value == null || value.length() == 0) {
             this.value = null;
-         }
-         else {
+         } else {
             this.value = value;
          }
       }

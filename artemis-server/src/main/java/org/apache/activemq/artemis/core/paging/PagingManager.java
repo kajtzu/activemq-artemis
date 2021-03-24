@@ -20,13 +20,14 @@ import java.util.Map;
 
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
+import org.apache.activemq.artemis.core.server.files.FileStoreMonitor;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepositoryChangeListener;
 
 /**
  * <PRE>
  *
  * +--------------+      1  +----------------+       N +--------------+       N +--------+       1 +-------------------+
- * | {@link org.apache.activemq.artemis.core.postoffice.PostOffice} |-------&gt; |{@link PagingManager}|-------&gt; |{@link PagingStore} | ------&gt; | {@link org.apache.activemq.artemis.core.paging.impl.Page}  | ------&gt; | {@link SequentialFile} |
+ * | {@link org.apache.activemq.artemis.core.postoffice.PostOffice} |-------&gt; |{@link PagingManager}|-------&gt; |{@link PagingStore} | ------&gt; | {@link org.apache.activemq.artemis.core.paging.impl.Page}  | ------&gt; | {@link org.apache.activemq.artemis.core.io.SequentialFile} |
  * +--------------+         +----------------+         +--------------+         +--------+         +-------------------+
  * |                  1 ^
  * |                    |
@@ -78,6 +79,10 @@ public interface PagingManager extends ActiveMQComponent, HierarchicalRepository
 
    void resumeCleanup();
 
+   void addBlockedStore(PagingStore store);
+
+   void injectMonitor(FileStoreMonitor monitor) throws Exception;
+
    /**
     * Lock the manager. This method should not be called during normal PagingManager usage.
     */
@@ -89,4 +94,40 @@ public interface PagingManager extends ActiveMQComponent, HierarchicalRepository
     * @see #lock()
     */
    void unlock();
+
+   /**
+    * Add size at the global count level.
+    * if totalSize &gt; globalMaxSize it will return true
+    */
+   PagingManager addSize(int size);
+
+   boolean isUsingGlobalSize();
+
+   boolean isGlobalFull();
+
+   boolean isDiskFull();
+
+   long getDiskUsableSpace();
+
+   long getDiskTotalSpace();
+
+   default long getGlobalSize() {
+      return 0;
+   }
+
+   /**
+    * Use this when you have no refernce of an address. (anonymous AMQP Producers for example)
+    * @param runWhenAvailable
+    */
+   void checkMemory(Runnable runWhenAvailable);
+
+
+   /**
+    * Use this when you have no refernce of an address. (anonymous AMQP Producers for example)
+    * @param runWhenAvailable
+    */
+   default void checkStorage(Runnable runWhenAvailable) {
+      checkMemory(runWhenAvailable);
+   }
+
 }

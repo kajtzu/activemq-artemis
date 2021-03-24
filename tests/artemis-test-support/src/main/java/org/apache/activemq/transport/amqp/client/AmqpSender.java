@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,18 +16,20 @@
  */
 package org.apache.activemq.transport.amqp.client;
 
-import javax.jms.InvalidDestinationException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import javax.jms.InvalidDestinationException;
+
 import org.apache.activemq.transport.amqp.client.util.AsyncResult;
 import org.apache.activemq.transport.amqp.client.util.ClientFuture;
-import org.apache.activemq.transport.amqp.client.util.UnmodifiableSender;
+import org.apache.activemq.transport.amqp.client.util.UnmodifiableProxy;
 import org.apache.qpid.proton.amqp.Binary;
 import org.apache.qpid.proton.amqp.Symbol;
 import org.apache.qpid.proton.amqp.messaging.Accepted;
@@ -54,9 +56,10 @@ import org.slf4j.LoggerFactory;
 public class AmqpSender extends AmqpAbstractResource<Sender> {
 
    private static final Logger LOG = LoggerFactory.getLogger(AmqpSender.class);
-   private static final byte[] EMPTY_BYTE_ARRAY = new byte[]{};
+   private static final byte[] EMPTY_BYTE_ARRAY = new byte[] {};
 
    public static final long DEFAULT_SEND_TIMEOUT = 15000;
+   public static final Symbol[] DEFAULT_OUTCOMES = {Accepted.DESCRIPTOR_SYMBOL, Rejected.DESCRIPTOR_SYMBOL};
 
    private final AmqpTransferTagGenerator tagGenerator = new AmqpTransferTagGenerator(true);
    private final AtomicBoolean closed = new AtomicBoolean();
@@ -64,7 +67,11 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
    private final AmqpSession session;
    private final String address;
    private final String senderId;
+
    private final Target userSpecifiedTarget;
+   private final SenderSettleMode userSpecifiedSenderSettlementMode;
+   private final ReceiverSettleMode userSpecifiedReceiverSettlementMode;
+   private final Symbol[] outcomes;
 
    private boolean presettle;
    private long sendTimeout = DEFAULT_SEND_TIMEOUT;
@@ -72,14 +79,46 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
    private final Set<Delivery> pending = new LinkedHashSet<>();
    private byte[] encodeBuffer = new byte[1024 * 8];
 
+   private Symbol[] desiredCapabilities;
+   private Symbol[] offeredCapabilities;
+   private Map<Symbol, Object> properties;
+
    /**
     * Create a new sender instance.
     *
-    * @param session  The parent session that created the session.
-    * @param address  The address that this sender produces to.
-    * @param senderId The unique ID assigned to this sender.
+    * @param session
+    *        The parent session that created the session.
+    * @param address
+    *        The address that this sender produces to.
+    * @param senderId
+    *        The unique ID assigned to this sender.
     */
    public AmqpSender(AmqpSession session, String address, String senderId) {
+      this(session, address, senderId, null, null, DEFAULT_OUTCOMES);
+   }
+
+   /**
+    * Create a new sender instance.
+    *
+    * @param session
+    *        The parent session that created the session.
+    * @param address
+    *        The address that this sender produces to.
+    * @param senderId
+    *        The unique ID assigned to this sender.
+    * @param senderMode
+    *        The {@link SenderSettleMode} to use on open.
+    * @param receiverMode
+    *        The {@link ReceiverSettleMode} to use on open.
+    * @param outcomes
+    *        The outcomes to use on open
+    */
+   public AmqpSender(AmqpSession session,
+                     String address,
+                     String senderId,
+                     SenderSettleMode senderMode,
+                     ReceiverSettleMode receiverMode,
+                     Symbol[] outcomes) {
 
       if (address != null && address.isEmpty()) {
          throw new IllegalArgumentException("Address cannot be empty.");
@@ -89,14 +128,20 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
       this.address = address;
       this.senderId = senderId;
       this.userSpecifiedTarget = null;
+      this.userSpecifiedSenderSettlementMode = senderMode;
+      this.userSpecifiedReceiverSettlementMode = receiverMode;
+      this.outcomes = outcomes;
    }
 
    /**
     * Create a new sender instance using the given Target when creating the link.
     *
-    * @param session  The parent session that created the session.
-    * @param target   The target that this sender produces to.
-    * @param senderId The unique ID assigned to this sender.
+    * @param session
+    *        The parent session that created the session.
+    * @param target
+    *        The target that this sender produces to.
+    * @param senderId
+    *        The unique ID assigned to this sender.
     */
    public AmqpSender(AmqpSession session, Target target, String senderId) {
 
@@ -105,18 +150,39 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
       }
 
       this.session = session;
-      this.userSpecifiedTarget = target;
       this.address = target.getAddress();
       this.senderId = senderId;
+      this.userSpecifiedTarget = target;
+      this.userSpecifiedSenderSettlementMode = null;
+      this.userSpecifiedReceiverSettlementMode = null;
+      outcomes = DEFAULT_OUTCOMES;
    }
 
    /**
     * Sends the given message to this senders assigned address.
     *
-    * @param message the message to send.
-    * @throws IOException if an error occurs during the send.
+    * @param message
+    *        the message to send.
+    * @throws IOException
+    *         if an error occurs during the send.
     */
    public void send(final AmqpMessage message) throws IOException {
+      checkClosed();
+      send(message, null);
+   }
+
+   /**
+    * Sends the given message to this senders assigned address using the supplied transaction
+    * ID.
+    *
+    * @param message
+    *        the message to send.
+    * @param txId
+    *        the transaction ID to assign the outgoing send.
+    * @throws IOException
+    *         if an error occurs during the send.
+    */
+   public void send(final AmqpMessage message, final AmqpTransactionId txId) throws IOException {
       checkClosed();
       final ClientFuture sendRequest = new ClientFuture();
 
@@ -125,10 +191,9 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
          @Override
          public void run() {
             try {
-               doSend(message, sendRequest);
+               doSend(message, sendRequest, txId);
                session.pumpToProtonTransport(sendRequest);
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                sendRequest.onFailure(e);
                session.getConnection().fireClientException(e);
             }
@@ -137,17 +202,17 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
 
       if (sendTimeout <= 0) {
          sendRequest.sync();
-      }
-      else {
+      } else {
          sendRequest.sync(sendTimeout, TimeUnit.MILLISECONDS);
       }
    }
 
    /**
-    * Close the sender, a closed sender will throw exceptions if any further send
-    * calls are made.
+    * Close the sender, a closed sender will throw exceptions if any further send calls are
+    * made.
     *
-    * @throws IOException if an error occurs while closing the sender.
+    * @throws IOException
+    *         if an error occurs while closing the sender.
     */
    public void close() throws IOException {
       if (closed.compareAndSet(false, true)) {
@@ -177,7 +242,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
     * @return an unmodifiable view of the underlying Sender instance.
     */
    public Sender getSender() {
-      return new UnmodifiableSender(getEndpoint());
+      return UnmodifiableProxy.senderProxy(getEndpoint());
    }
 
    /**
@@ -187,7 +252,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
       return address;
    }
 
-   //----- Sender configuration ---------------------------------------------//
+   // ----- Sender configuration ---------------------------------------------//
 
    /**
     * @return will messages be settle on send.
@@ -199,7 +264,8 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
    /**
     * Configure is sent messages are marked as settled on send, defaults to false.
     *
-    * @param presettle configure if this sender will presettle all sent messages.
+    * @param presettle
+    *        configure if this sender will presettle all sent messages.
     */
    public void setPresettle(boolean presettle) {
       this.presettle = presettle;
@@ -215,13 +281,38 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
    /**
     * Sets the amount of time the sender will block on a send before failing.
     *
-    * @param sendTimeout time in milliseconds to wait.
+    * @param sendTimeout
+    *        time in milliseconds to wait.
     */
    public void setSendTimeout(long sendTimeout) {
       this.sendTimeout = sendTimeout;
    }
 
-   //----- Private Sender implementation ------------------------------------//
+   public void setDesiredCapabilities(Symbol[] desiredCapabilities) {
+      if (getEndpoint() != null) {
+         throw new IllegalStateException("Endpoint already established");
+      }
+
+      this.desiredCapabilities = desiredCapabilities;
+   }
+
+   public void setOfferedCapabilities(Symbol[] offeredCapabilities) {
+      if (getEndpoint() != null) {
+         throw new IllegalStateException("Endpoint already established");
+      }
+
+      this.offeredCapabilities = offeredCapabilities;
+   }
+
+   public void setProperties(Map<Symbol, Object> properties) {
+      if (getEndpoint() != null) {
+         throw new IllegalStateException("Endpoint already established");
+      }
+
+      this.properties = properties;
+   }
+
+   // ----- Private Sender implementation ------------------------------------//
 
    private void checkClosed() {
       if (isClosed()) {
@@ -231,11 +322,9 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
 
    @Override
    protected void doOpen() {
-
-      Symbol[] outcomes = new Symbol[]{Accepted.DESCRIPTOR_SYMBOL, Rejected.DESCRIPTOR_SYMBOL};
       Source source = new Source();
       source.setAddress(senderId);
-      source.setOutcomes(outcomes);
+      source.setOutcomes(this.outcomes);
 
       Target target = userSpecifiedTarget;
       if (target == null) {
@@ -248,13 +337,29 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
       Sender sender = session.getEndpoint().sender(senderName);
       sender.setSource(source);
       sender.setTarget(target);
-      if (presettle) {
-         sender.setSenderSettleMode(SenderSettleMode.SETTLED);
+
+      if (userSpecifiedSenderSettlementMode != null) {
+         sender.setSenderSettleMode(userSpecifiedSenderSettlementMode);
+         if (SenderSettleMode.SETTLED.equals(userSpecifiedSenderSettlementMode)) {
+            presettle = true;
+         }
+      } else {
+         if (presettle) {
+            sender.setSenderSettleMode(SenderSettleMode.SETTLED);
+         } else {
+            sender.setSenderSettleMode(SenderSettleMode.UNSETTLED);
+         }
       }
-      else {
-         sender.setSenderSettleMode(SenderSettleMode.UNSETTLED);
+
+      if (userSpecifiedReceiverSettlementMode != null) {
+         sender.setReceiverSettleMode(userSpecifiedReceiverSettlementMode);
+      } else {
+         sender.setReceiverSettleMode(ReceiverSettleMode.FIRST);
       }
-      sender.setReceiverSettleMode(ReceiverSettleMode.FIRST);
+
+      sender.setDesiredCapabilities(desiredCapabilities);
+      sender.setOfferedCapabilities(offeredCapabilities);
+      sender.setProperties(properties);
 
       setEndpoint(sender);
 
@@ -267,8 +372,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
       org.apache.qpid.proton.amqp.transport.Target t = getEndpoint().getRemoteTarget();
       if (t != null) {
          super.doOpenCompletion();
-      }
-      else {
+      } else {
          // No link terminus was created, the peer will now detach/close us.
       }
    }
@@ -277,8 +381,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
    protected void doOpenInspection() {
       try {
          getStateInspector().inspectOpenedResource(getSender());
-      }
-      catch (Throwable error) {
+      } catch (Throwable error) {
          getStateInspector().markAsInvalid(error.getMessage());
       }
    }
@@ -287,8 +390,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
    protected void doClosedInspection() {
       try {
          getStateInspector().inspectClosedResource(getSender());
-      }
-      catch (Throwable error) {
+      } catch (Throwable error) {
          getStateInspector().markAsInvalid(error.getMessage());
       }
    }
@@ -297,8 +399,23 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
    protected void doDetachedInspection() {
       try {
          getStateInspector().inspectDetachedResource(getSender());
+      } catch (Throwable error) {
+         getStateInspector().markAsInvalid(error.getMessage());
       }
-      catch (Throwable error) {
+   }
+
+   protected void doDeliveryUpdateInspection(Delivery delivery) {
+      try {
+         getStateInspector().inspectDeliveryUpdate(getSender(), delivery);
+      } catch (Throwable error) {
+         getStateInspector().markAsInvalid(error.getMessage());
+      }
+   }
+
+   private void doCreditInspection() {
+      try {
+         getStateInspector().inspectCredit(getSender());
+      } catch (Throwable error) {
          getStateInspector().markAsInvalid(error.getMessage());
       }
    }
@@ -309,29 +426,33 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
       org.apache.qpid.proton.amqp.transport.Target t = getEndpoint().getRemoteTarget();
       if (t != null) {
          return super.getOpenAbortException();
-      }
-      else {
+      } else {
          // No link terminus was created, the peer has detach/closed us, create IDE.
          return new InvalidDestinationException("Link creation was refused");
       }
    }
 
-   private void doSend(AmqpMessage message, AsyncResult request) throws Exception {
+   private void doSend(AmqpMessage message, AsyncResult request, AmqpTransactionId txId) throws Exception {
       LOG.trace("Producer sending message: {}", message);
 
       Delivery delivery = null;
       if (presettle) {
          delivery = getEndpoint().delivery(EMPTY_BYTE_ARRAY, 0, 0);
-      }
-      else {
+      } else {
          byte[] tag = tagGenerator.getNextTag();
          delivery = getEndpoint().delivery(tag, 0, tag.length);
       }
 
       delivery.setContext(request);
 
-      if (session.isInTransaction()) {
-         Binary amqpTxId = session.getTransactionId().getRemoteTxId();
+      Binary amqpTxId = null;
+      if (txId != null) {
+         amqpTxId = txId.getRemoteTxId();
+      } else if (session.isInTransaction()) {
+         amqpTxId = session.getTransactionId().getRemoteTxId();
+      }
+
+      if (amqpTxId != null) {
          TransactionalState state = new TransactionalState();
          state.setTxnId(amqpTxId);
          delivery.disposition(state);
@@ -342,8 +463,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
       if (presettle) {
          delivery.settle();
          request.onSuccess();
-      }
-      else {
+      } else {
          pending.add(delivery);
          getEndpoint().advance();
       }
@@ -356,8 +476,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
          try {
             encodedSize = message.encode(encodeBuffer, 0, encodeBuffer.length);
             break;
-         }
-         catch (java.nio.BufferOverflowException e) {
+         } catch (java.nio.BufferOverflowException e) {
             encodeBuffer = new byte[encodeBuffer.length * 2];
          }
       }
@@ -371,15 +490,21 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
             if ((encodedSize - sentSoFar) == 0) {
                break;
             }
-         }
-         else {
+         } else {
             LOG.warn("{} failed to send any data from current Message.", this);
          }
       }
    }
 
    @Override
-   public void processDeliveryUpdates(AmqpConnection connection) throws IOException {
+   public void processFlowUpdates(AmqpConnection connection) throws IOException {
+      LOG.trace("Sender {} flow update, credit = {}", getEndpoint().getCredit());
+
+      doCreditInspection();
+   }
+
+   @Override
+   public void processDeliveryUpdates(AmqpConnection connection, Delivery updated) throws IOException {
       List<Delivery> toRemove = new ArrayList<>();
 
       for (Delivery delivery : pending) {
@@ -388,15 +513,15 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
             continue;
          }
 
+         doDeliveryUpdateInspection(delivery);
+
          Outcome outcome = null;
          if (state instanceof TransactionalState) {
             LOG.trace("State of delivery is Transactional, retrieving outcome: {}", state);
             outcome = ((TransactionalState) state).getOutcome();
-         }
-         else if (state instanceof Outcome) {
+         } else if (state instanceof Outcome) {
             outcome = (Outcome) state;
-         }
-         else {
+         } else {
             LOG.warn("Message send updated with unsupported state: {}", state);
             outcome = null;
          }
@@ -409,8 +534,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
             if (request != null && !request.isComplete()) {
                request.onSuccess();
             }
-         }
-         else if (outcome instanceof Rejected) {
+         } else if (outcome instanceof Rejected) {
             LOG.trace("Outcome of delivery was rejected: {}", delivery);
             ErrorCondition remoteError = ((Rejected) outcome).getError();
             if (remoteError == null) {
@@ -418,12 +542,10 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
             }
 
             deliveryError = AmqpSupport.convertToException(remoteError);
-         }
-         else if (outcome instanceof Released) {
+         } else if (outcome instanceof Released) {
             LOG.trace("Outcome of delivery was released: {}", delivery);
             deliveryError = new IOException("Delivery failed: released by receiver");
-         }
-         else if (outcome instanceof Modified) {
+         } else if (outcome instanceof Modified) {
             LOG.trace("Outcome of delivery was modified: {}", delivery);
             deliveryError = new IOException("Delivery failed: failure at remote");
          }
@@ -431,8 +553,7 @@ public class AmqpSender extends AmqpAbstractResource<Sender> {
          if (deliveryError != null) {
             if (request != null && !request.isComplete()) {
                request.onFailure(deliveryError);
-            }
-            else {
+            } else {
                connection.fireClientException(deliveryError);
             }
          }

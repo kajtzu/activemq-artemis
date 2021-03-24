@@ -18,7 +18,9 @@ package org.apache.activemq.artemis.tests.unit.core.journal.impl;
 
 import java.io.File;
 import java.io.FilenameFilter;
+import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -26,21 +28,27 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 
-import org.apache.activemq.artemis.cli.commands.tools.DecodeJournal;
-import org.apache.activemq.artemis.cli.commands.tools.EncodeJournal;
+import org.apache.activemq.artemis.cli.commands.tools.journal.DecodeJournal;
+import org.apache.activemq.artemis.cli.commands.tools.journal.EncodeJournal;
+import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
-import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.TestableJournal;
+import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
+import org.apache.activemq.artemis.core.journal.impl.JournalReaderCallback;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.ReusableLatch;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 
 public abstract class JournalImplTestBase extends ActiveMQTestBase {
+
+   private static final Logger log = Logger.getLogger(JournalImplTestBase.class);
 
    protected List<RecordInfo> records = new LinkedList<>();
 
@@ -131,7 +139,11 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
       this.maxAIO = maxAIO;
    }
 
-   protected void setup(final int minFreeFiles, final int poolSize, final int fileSize, final boolean sync, final int maxAIO) {
+   protected void setup(final int minFreeFiles,
+                        final int poolSize,
+                        final int fileSize,
+                        final boolean sync,
+                        final int maxAIO) {
       minFiles = minFreeFiles;
       this.poolSize = poolSize;
       this.fileSize = fileSize;
@@ -152,14 +164,11 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
          @Override
          public void onCompactDone() {
             latchDone.countDown();
-            System.out.println("Waiting on Compact");
             try {
                latchWait.await();
-            }
-            catch (InterruptedException e) {
+            } catch (InterruptedException e) {
                e.printStackTrace();
             }
-            System.out.println("Waiting on Compact Done");
          }
       };
 
@@ -177,8 +186,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
          public void run() {
             try {
                journal.testCompact();
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                e.printStackTrace();
             }
          }
@@ -203,6 +211,8 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
    }
 
    protected void stopJournal(final boolean reclaim) throws Exception {
+      journal.flush();
+
       // We do a reclaim in here
       if (reclaim) {
          checkAndReclaimFiles();
@@ -215,7 +225,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
     * @throws Exception
     */
    protected void exportImportJournal() throws Exception {
-      System.out.println("Exporting to " + getTestDir() + "/output.log");
+      log.debug("Exporting to " + getTestDir() + "/output.log");
 
       EncodeJournal.exportJournal(getTestDir(), this.filePrefix, this.fileExtension, this.minFiles, this.fileSize, getTestDir() + "/output.log");
 
@@ -228,12 +238,12 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
          }
       };
 
-      System.out.println("file = " + dir);
+      log.debug("file = " + dir);
 
       File[] files = dir.listFiles(fnf);
 
       for (File file : files) {
-         System.out.println("Deleting " + file);
+         log.debug("Deleting " + file);
          file.delete();
       }
 
@@ -242,6 +252,82 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
 
    protected void loadAndCheck() throws Exception {
       loadAndCheck(false);
+   }
+
+   /**
+    * @param fileFactory
+    * @param journal
+    * @throws Exception
+    */
+   private static void describeJournal(SequentialFileFactory fileFactory,
+                                       JournalImpl journal,
+                                       final File path,
+                                       PrintStream out) throws Exception {
+      List<JournalFile> files = journal.orderFiles();
+
+      out.println("Journal path: " + path);
+
+      for (JournalFile file : files) {
+         out.println("#" + file + " (size=" + file.getFile().size() + ")");
+
+         JournalImpl.readJournalFile(fileFactory, file, new JournalReaderCallback() {
+
+            @Override
+            public void onReadUpdateRecordTX(final long transactionID, final RecordInfo recordInfo) throws Exception {
+               out.println("operation@UpdateTX;txID=" + transactionID + "," + recordInfo);
+            }
+
+            @Override
+            public void onReadUpdateRecord(final RecordInfo recordInfo) throws Exception {
+               out.println("operation@Update;" + recordInfo);
+            }
+
+            @Override
+            public void onReadRollbackRecord(final long transactionID) throws Exception {
+               out.println("operation@Rollback;txID=" + transactionID);
+            }
+
+            @Override
+            public void onReadPrepareRecord(final long transactionID,
+                                            final byte[] extraData,
+                                            final int numberOfRecords) throws Exception {
+               out.println("operation@Prepare,txID=" + transactionID + ",numberOfRecords=" + numberOfRecords);
+            }
+
+            @Override
+            public void onReadDeleteRecordTX(final long transactionID, final RecordInfo recordInfo) throws Exception {
+               out.println("operation@DeleteRecordTX;txID=" + transactionID + "," + recordInfo);
+            }
+
+            @Override
+            public void onReadDeleteRecord(final long recordID) throws Exception {
+               out.println("operation@DeleteRecord;recordID=" + recordID);
+            }
+
+            @Override
+            public void onReadCommitRecord(final long transactionID, final int numberOfRecords) throws Exception {
+               out.println("operation@Commit;txID=" + transactionID + ",numberOfRecords=" + numberOfRecords);
+            }
+
+            @Override
+            public void onReadAddRecordTX(final long transactionID, final RecordInfo recordInfo) throws Exception {
+               out.println("operation@AddRecordTX;txID=" + transactionID + "," + recordInfo);
+            }
+
+            @Override
+            public void onReadAddRecord(final RecordInfo recordInfo) throws Exception {
+               out.println("operation@AddRecord;" + recordInfo);
+            }
+
+            @Override
+            public void markAsDataFile(final JournalFile file1) {
+            }
+
+         });
+      }
+
+      out.println();
+
    }
 
    protected void loadAndCheck(final boolean printDebugJournal) throws Exception {
@@ -277,7 +363,7 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
    }
 
    protected void load() throws Exception {
-      journal.load(null, null, null);
+      journal.load(new SparseArrayLinkedList<>(), null, null);
    }
 
    protected void beforeJournalOperation() throws Exception {
@@ -299,6 +385,20 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
       }
 
       journal.debugWait();
+   }
+
+   protected boolean tryUpdate(final long  argument) throws Exception {
+      byte[] updateRecord = generateRecord(recordLength);
+
+      beforeJournalOperation();
+
+      boolean result = journal.tryAppendUpdateRecord(argument, (byte) 0, updateRecord, sync);
+
+      if (result) {
+         records.add(new RecordInfo(argument, (byte) 0, updateRecord, true, (short) 0));
+      }
+
+      return result;
    }
 
    protected void update(final long... arguments) throws Exception {
@@ -325,6 +425,20 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
       }
 
       journal.debugWait();
+   }
+
+   protected boolean tryDelete(final long argument) throws Exception {
+      beforeJournalOperation();
+
+      boolean result = journal.tryAppendDeleteRecord(argument, sync);
+
+      if (result) {
+         removeRecordsForID(argument);
+      }
+
+      journal.debugWait();
+
+      return result;
    }
 
    protected void addTx(final long txID, final long... arguments) throws Exception {
@@ -518,19 +632,66 @@ public abstract class JournalImplTestBase extends ActiveMQTestBase {
     * @param actual
     */
    protected void printJournalLists(final List<RecordInfo> expected, final List<RecordInfo> actual) {
-      System.out.println("***********************************************");
-      System.out.println("Expected list:");
-      for (RecordInfo info : expected) {
-         System.out.println("Record " + info.id + " isUpdate = " + info.isUpdate);
-      }
-      if (actual != null) {
-         System.out.println("***********************************************");
-         System.out.println("Actual list:");
-         for (RecordInfo info : actual) {
-            System.out.println("Record " + info.id + " isUpdate = " + info.isUpdate);
+      try {
+
+         HashSet<RecordInfo> expectedSet = new HashSet<>();
+         expectedSet.addAll(expected);
+
+         Assert.assertEquals("There are duplicated on the expected list", expectedSet.size(), expected.size());
+
+         HashSet<RecordInfo> actualSet = new HashSet<>();
+         actualSet.addAll(actual);
+
+         expectedSet.removeAll(actualSet);
+
+         for (RecordInfo info : expectedSet) {
+            log.warn("The following record is missing:: " + info);
          }
+
+         Assert.assertEquals("There are duplicates on the actual list", actualSet.size(), actualSet.size());
+
+         RecordInfo[] expectedArray = expected.toArray(new RecordInfo[expected.size()]);
+         RecordInfo[] actualArray = actual.toArray(new RecordInfo[actual.size()]);
+         Assert.assertArrayEquals(expectedArray, actualArray);
+      } catch (AssertionError e) {
+
+         HashSet<RecordInfo> hashActual = new HashSet<>();
+         hashActual.addAll(actual);
+
+         HashSet<RecordInfo> hashExpected = new HashSet<>();
+         hashExpected.addAll(expected);
+
+         log.debug("#Summary **********************************************************************************************************************");
+         for (RecordInfo r : hashActual) {
+            if (!hashExpected.contains(r)) {
+               log.debug("Record " + r + " was supposed to be removed and it exists");
+            }
+         }
+
+         for (RecordInfo r : hashExpected) {
+            if (!hashActual.contains(r)) {
+               log.debug("Record " + r + " was not found on actual list");
+            }
+         }
+
+         log.debug("#expected **********************************************************************************************************************");
+         for (RecordInfo recordInfo : expected) {
+            log.debug("Record::" + recordInfo);
+         }
+         log.debug("#actual ************************************************************************************************************************");
+         for (RecordInfo recordInfo : actual) {
+            log.debug("Record::" + recordInfo);
+         }
+
+         log.debug("#records ***********************************************************************************************************************");
+
+         try {
+            describeJournal(journal.getFileFactory(), (JournalImpl) journal, journal.getFileFactory().getDirectory(), System.out);
+         } catch (Exception e2) {
+            e2.printStackTrace();
+         }
+
       }
-      System.out.println("***********************************************");
    }
 
    protected byte[] generateRecord(final int length) {

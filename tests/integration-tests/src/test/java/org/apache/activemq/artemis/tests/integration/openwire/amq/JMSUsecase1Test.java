@@ -16,18 +16,17 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import java.util.Arrays;
-import java.util.Collection;
-
 import javax.jms.DeliveryMode;
 import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
+import java.util.Arrays;
+import java.util.Collection;
 
+import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.command.ActiveMQMessage;
-import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -57,7 +56,6 @@ public class JMSUsecase1Test extends BasicOpenWireTest {
       connection.start();
       Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       ActiveMQDestination destination = createDestination(session, destinationType);
-      System.out.println("destionation: " + destination);
       MessageProducer producer = session.createProducer(destination);
       producer.setDeliveryMode(this.deliveryMode);
       MessageConsumer consumer = session.createConsumer(destination);

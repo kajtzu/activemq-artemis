@@ -16,7 +16,19 @@
  */
 package org.apache.activemq.artemis.tests.integration.server;
 
+import java.lang.reflect.Field;
+import java.net.URI;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -24,26 +36,37 @@ import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
+import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryImpl;
+import org.apache.activemq.artemis.core.client.impl.ServerLocatorImpl;
+import org.apache.activemq.artemis.core.client.impl.ServerLocatorInternal;
 import org.apache.activemq.artemis.core.config.ScaleDownConfiguration;
 import org.apache.activemq.artemis.core.config.ha.LiveOnlyPolicyConfiguration;
 import org.apache.activemq.artemis.core.postoffice.Binding;
 import org.apache.activemq.artemis.core.postoffice.impl.LocalQueueBinding;
+import org.apache.activemq.artemis.core.server.cluster.ClusterController;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
+import org.apache.activemq.artemis.core.server.impl.QueueImpl;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.tests.integration.cluster.distribution.ClusterTestBase;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
+import org.apache.activemq.transport.amqp.client.AmqpClient;
+import org.apache.activemq.transport.amqp.client.AmqpConnection;
+import org.apache.activemq.transport.amqp.client.AmqpMessage;
+import org.apache.activemq.transport.amqp.client.AmqpSender;
+import org.apache.activemq.transport.amqp.client.AmqpSession;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Map;
+import static org.apache.activemq.artemis.utils.collections.IterableStream.iterableOf;
 
 @RunWith(value = Parameterized.class)
 public class ScaleDownTest extends ClusterTestBase {
+
+   private static final String AMQP_ACCEPTOR_URI = "tcp://127.0.0.1:5672";
 
    private boolean useScaleDownGroupName;
 
@@ -64,6 +87,7 @@ public class ScaleDownTest extends ClusterTestBase {
       super.setUp();
       setupLiveServer(0, isFileStorage(), isNetty(), true);
       setupLiveServer(1, isFileStorage(), isNetty(), true);
+      servers[0].getConfiguration().addAcceptorConfiguration("amqp", AMQP_ACCEPTOR_URI + "?protocols=AMQP");
       LiveOnlyPolicyConfiguration haPolicyConfiguration0 = (LiveOnlyPolicyConfiguration) servers[0].getConfiguration().getHAPolicyConfiguration();
       haPolicyConfiguration0.setScaleDownConfiguration(new ScaleDownConfiguration());
       LiveOnlyPolicyConfiguration haPolicyConfiguration1 = (LiveOnlyPolicyConfiguration) servers[1].getConfiguration().getHAPolicyConfiguration();
@@ -84,6 +108,11 @@ public class ScaleDownTest extends ClusterTestBase {
    }
 
    protected boolean isNetty() {
+      return true;
+   }
+
+   @Override
+   protected boolean isResolveProtocols() {
       return true;
    }
 
@@ -144,6 +173,76 @@ public class ScaleDownTest extends ClusterTestBase {
       removeConsumer(0);
    }
 
+
+   @Test
+   public void testScaleDownNodeReconnect() throws Exception {
+
+      try {
+         ClusterController controller = servers[0].getClusterManager().getClusterController();
+
+         Map<SimpleString, ServerLocatorInternal> locatorsMap = controller.getLocators();
+         Iterator<Map.Entry<SimpleString, ServerLocatorInternal>> iter = locatorsMap.entrySet().iterator();
+         assertTrue(iter.hasNext());
+         Map.Entry<SimpleString, ServerLocatorInternal> entry = iter.next();
+         ServerLocatorImpl locator = (ServerLocatorImpl) entry.getValue();
+
+         waitForClusterConnected(locator);
+
+         servers[1].stop();
+
+         servers[1].start();
+
+         //by this moment server0 is trying to reconnect to server1
+         //In normal case server1 will check if the reconnection's scaleDown
+         //server has been scaled down before granting the connection.
+         //but if the scaleDown is server1 itself, it should grant
+         //the connection without checking scaledown state against it.
+         //Otherwise the connection will never be estabilished, and more,
+         //the repetitive reconnect attempts will cause
+         //ClientSessionFactory's closeExecutor to be filled with
+         //tasks that keep growing until OOM.
+         checkClusterConnectionExecutorNotBlocking(locator);
+      } finally {
+         servers[1].stop();
+         servers[0].stop();
+      }
+   }
+
+   private void checkClusterConnectionExecutorNotBlocking(ServerLocatorImpl locator) throws NoSuchFieldException, IllegalAccessException {
+      Field factoriesField = locator.getClass().getDeclaredField("factories");
+      factoriesField.setAccessible(true);
+      Set factories = (Set) factoriesField.get(locator);
+      assertEquals(1, factories.size());
+
+      ClientSessionFactoryImpl factory = (ClientSessionFactoryImpl) factories.iterator().next();
+
+      Field executorField = factory.getClass().getDeclaredField("closeExecutor");
+      executorField.setAccessible(true);
+      Executor pool = (Executor) executorField.get(factory);
+      final CountDownLatch latch = new CountDownLatch(1);
+      pool.execute(()->
+         latch.countDown()
+      );
+      boolean result = false;
+      try {
+         result = latch.await(10, TimeUnit.SECONDS);
+      } catch (InterruptedException e) {
+      }
+      assertTrue("executor got blocked.", result);
+   }
+
+   private void waitForClusterConnected(ServerLocatorImpl locator) throws Exception {
+
+      boolean result = Wait.waitFor(new Wait.Condition() {
+         @Override
+         public boolean isSatisfied() throws Exception {
+            return !locator.getTopology().isEmpty();
+         }
+      }, 5000);
+
+      assertTrue("topology should not be empty", result);
+   }
+
    @Test
    public void testStoreAndForward() throws Exception {
       final int TEST_SIZE = 50;
@@ -160,13 +259,13 @@ public class ScaleDownTest extends ClusterTestBase {
 
       // find and pause the sf queue so no messages actually move from node 0 to node 1
       String sfQueueName = null;
-      for (Map.Entry<SimpleString, Binding> entry : servers[0].getPostOffice().getAllBindings().entrySet()) {
-         String temp = entry.getValue().getAddress().toString();
+      for (Binding binding : iterableOf(servers[0].getPostOffice().getAllBindings())) {
+         String temp = binding.getAddress().toString();
 
-         if (temp.startsWith("sf.") && temp.endsWith(servers[1].getNodeID().toString())) {
+         if (temp.startsWith(servers[1].getInternalNamingPrefix() + "sf.") && temp.endsWith(servers[1].getNodeID().toString())) {
             // we found the sf queue for the other node
             // need to pause the sfQueue here
-            ((LocalQueueBinding) entry.getValue()).getQueue().pause();
+            ((LocalQueueBinding) binding).getQueue().pause();
             sfQueueName = temp;
          }
       }
@@ -289,6 +388,111 @@ public class ScaleDownTest extends ClusterTestBase {
       Assert.assertNull(clientMessage);
       removeConsumer(0);
    }
+
+   @Test
+   public void testScaleDownWithMissingAnycastQueue() throws Exception {
+      final int TEST_SIZE = 2;
+      final String addressName = "testAddress";
+      final String queueName = "testQueue";
+
+      // create 2 queues on each node mapped to the same address
+      createQueue(0, addressName, queueName, null, false, null, null, RoutingType.ANYCAST);
+
+      // send messages to node 0
+      send(0, addressName, TEST_SIZE, false, null);
+
+      // trigger scaleDown from node 0 to node 1
+      servers[0].stop();
+
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[1].getPostOffice().getBinding(new SimpleString(queueName))).getBindable()).getRoutingType(), RoutingType.ANYCAST);
+      // get the 1 message from queue 2
+      addConsumer(0, 1, queueName, null);
+      ClientMessage clientMessage = consumers[0].getConsumer().receive(250);
+      Assert.assertNotNull(clientMessage);
+      clientMessage.acknowledge();
+
+   }
+
+   private void sendAMQPMessages(final String address, final int numMessages, final boolean durable) throws Exception {
+      AmqpClient client = new AmqpClient(new URI(AMQP_ACCEPTOR_URI), "admin", "admin");
+      AmqpConnection connection = client.connect();
+      try {
+         AmqpSession session = connection.createSession();
+         AmqpSender sender = session.createSender(address);
+         for (int i = 0; i < numMessages; ++i) {
+            AmqpMessage message = new AmqpMessage();
+            message.setMessageId("MessageID:" + i);
+            message.setDurable(durable);
+            sender.send(message);
+         }
+      } finally {
+         connection.close();
+      }
+   }
+
+   @Test
+   public void testScaleDownAMQPMessagesWithMissingAnycastQueue() throws Exception {
+      final int TEST_SIZE = 2;
+      final String addressName = "testAddress";
+      final String queueName = "testQueue";
+
+      // create 2 queues on each node mapped to the same address
+      createQueue(0, addressName, queueName, null, false, null, null, RoutingType.ANYCAST);
+
+      // send messages to node 0
+      sendAMQPMessages(addressName, TEST_SIZE, false);
+
+      // trigger scaleDown from node 0 to node 1
+      servers[0].stop();
+
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[1].getPostOffice().getBinding(new SimpleString(queueName))).getBindable()).getRoutingType(), RoutingType.ANYCAST);
+      // get the 1 message from queue 2
+      addConsumer(0, 1, queueName, null);
+      ClientMessage clientMessage = consumers[0].getConsumer().receive(250);
+      Assert.assertNotNull(clientMessage);
+      clientMessage.acknowledge();
+   }
+
+   @Test
+   public void testScaleDownAMQPMessagesWithMissingMulticastQueues() throws Exception {
+      final int TEST_SIZE = 2;
+      ClientMessage clientMessage;
+      final String addressName = "testAddress";
+      final String queueName1 = "testQueue1";
+      final String queueName2 = "testQueue2";
+
+      // create 2 queues on each node mapped to the same address
+      createQueue(0, addressName, queueName1, null, false, null, null, RoutingType.MULTICAST);
+      createQueue(0, addressName, queueName2, null, false, null, null, RoutingType.MULTICAST);
+
+      // send messages to node 0
+      sendAMQPMessages(addressName, TEST_SIZE, false);
+
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName1))).getBindable()).getMessageCount(), 2);
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[0].getPostOffice().getBinding(new SimpleString(queueName2))).getBindable()).getMessageCount(), 2);
+
+      // trigger scaleDown from node 0 to node 1
+      servers[0].stop();
+
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[1].getPostOffice().getBinding(new SimpleString(queueName1))).getBindable()).getRoutingType(), RoutingType.MULTICAST);
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[1].getPostOffice().getBinding(new SimpleString(queueName2))).getBindable()).getRoutingType(), RoutingType.MULTICAST);
+
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[1].getPostOffice().getBinding(new SimpleString(queueName1))).getBindable()).getMessageCount(), 2);
+      Assert.assertEquals(((QueueImpl)((LocalQueueBinding) servers[1].getPostOffice().getBinding(new SimpleString(queueName2))).getBindable()).getMessageCount(), 2);
+
+      // get the 1 message from queue 1
+      addConsumer(0, 1, queueName1, null);
+      clientMessage = consumers[0].getConsumer().receive(250);
+      Assert.assertNotNull(clientMessage);
+      clientMessage.acknowledge();
+
+      // get the 1 message from queue 2
+      addConsumer(1, 1, queueName2, null);
+      clientMessage = consumers[1].getConsumer().receive(250);
+      Assert.assertNotNull(clientMessage);
+      clientMessage.acknowledge();
+   }
+
 
    @Test
    public void testMessageProperties() throws Exception {
@@ -425,7 +629,7 @@ public class ScaleDownTest extends ClusterTestBase {
 
       while (!servers[0].getPagingManager().getPageStore(new SimpleString(addressName)).isPaging()) {
          for (int i = 0; i < CHUNK_SIZE; i++) {
-            Message message = session.createMessage(true);
+            ClientMessage message = session.createMessage(true);
             message.getBodyBuffer().writeBytes(new byte[1024]);
             producer.send(message);
             messageCount++;
@@ -463,7 +667,7 @@ public class ScaleDownTest extends ClusterTestBase {
 
       while (!servers[0].getPagingManager().getPageStore(new SimpleString(addressName)).isPaging()) {
          for (int i = 0; i < CHUNK_SIZE; i++) {
-            Message message = session.createMessage(true);
+            ClientMessage message = session.createMessage(true);
             message.getBodyBuffer().writeBytes(new byte[1024]);
             message.putIntProperty("order", i);
             producer.send(message);
@@ -519,8 +723,7 @@ public class ScaleDownTest extends ClusterTestBase {
          if (i % 2 == 0) {
             message = consumers[0].getConsumer().receive(250);
             compare = "0";
-         }
-         else {
+         } else {
             message = consumers[1].getConsumer().receive(250);
             compare = "1";
          }

@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,6 +17,9 @@
 
 package org.apache.activemq.broker.artemiswrapper;
 
+import javax.management.MBeanServer;
+import javax.management.MBeanServerInvocationHandler;
+import javax.management.ObjectName;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,16 +27,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.activemq.artemis.api.core.management.ObjectNameBuilder;
-import org.apache.activemq.artemis.api.jms.management.JMSQueueControl;
-import org.apache.activemq.artemis.api.jms.management.JMSServerControl;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.server.JournalType;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.jms.server.config.impl.JMSConfigurationImpl;
 import org.apache.activemq.artemis.jms.server.embedded.EmbeddedJMS;
-import org.apache.activemq.artemis.tests.util.ThreadLeakCheckRule;
+import org.apache.activemq.artemis.utils.ThreadLeakCheckRule;
 import org.apache.activemq.artemis.utils.uri.URISupport;
 import org.apache.activemq.broker.BrokerService;
 import org.junit.Assert;
@@ -41,16 +41,10 @@ import org.junit.Rule;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 
-import javax.management.MBeanServer;
-import javax.management.MBeanServerInvocationHandler;
-import javax.management.ObjectName;
-
 public class OpenwireArtemisBaseTest {
+
    @Rule
    public CleanupThreadRule cleanupRules = new CleanupThreadRule();
-
-   @Rule
-   public ThreadLeakCheckRule leakCheckRule = new ThreadLeakCheckRule();
 
    @Rule
    public TemporaryFolder temporaryFolder;
@@ -68,7 +62,6 @@ public class OpenwireArtemisBaseTest {
       //can prevent the auto-creation from happening.
       BrokerService.disableWrapper = true;
    }
-
 
    public String getTmp() {
       return getTmpFile().getAbsolutePath();
@@ -123,16 +116,18 @@ public class OpenwireArtemisBaseTest {
       return createConfig(hostAddress, serverID, Collections.EMPTY_MAP);
    }
 
-   protected Configuration createConfig(final String hostAddress, final int serverID, Map<String, String> params) throws Exception {
+   protected Configuration createConfig(final String hostAddress,
+                                        final int serverID,
+                                        Map<String, String> params) throws Exception {
       ConfigurationImpl configuration = new ConfigurationImpl().setJMXManagementEnabled(false).
-              setSecurityEnabled(false).setJournalMinFiles(2).setJournalFileSize(1000 * 1024).setJournalType(JournalType.NIO).
-              setJournalDirectory(getJournalDir(serverID, false)).
-              setBindingsDirectory(getBindingsDir(serverID, false)).
-              setPagingDirectory(getPageDir(serverID, false)).
-              setLargeMessagesDirectory(getLargeMessagesDir(serverID, false)).
-              setJournalCompactMinFiles(0).
-              setJournalCompactPercentage(0).
-              setClusterPassword(CLUSTER_PASSWORD);
+         setSecurityEnabled(false).setJournalMinFiles(2).setJournalFileSize(1000 * 1024).setJournalType(JournalType.NIO).
+         setJournalDirectory(getJournalDir(serverID, false)).
+         setBindingsDirectory(getBindingsDir(serverID, false)).
+         setPagingDirectory(getPageDir(serverID, false)).
+         setLargeMessagesDirectory(getLargeMessagesDir(serverID, false)).
+         setJournalCompactMinFiles(0).
+         setJournalCompactPercentage(0).
+         setClusterPassword(CLUSTER_PASSWORD);
 
       configuration.addAddressesSetting("#", new AddressSettings().setAutoCreateJmsQueues(true).setAutoDeleteJmsQueues(true));
 
@@ -145,14 +140,14 @@ public class OpenwireArtemisBaseTest {
    //extraAcceptor takes form: "?name=value&name1=value ..."
    protected Configuration createConfig(final int serverID, String extraAcceptorParams) throws Exception {
       ConfigurationImpl configuration = new ConfigurationImpl().setJMXManagementEnabled(false).
-              setSecurityEnabled(false).setJournalMinFiles(2).setJournalFileSize(100 * 1024).setJournalType(JournalType.NIO).
-              setJournalDirectory(getJournalDir(serverID, false)).
-              setBindingsDirectory(getBindingsDir(serverID, false)).
-              setPagingDirectory(getPageDir(serverID, false)).
-              setLargeMessagesDirectory(getLargeMessagesDir(serverID, false)).
-              setJournalCompactMinFiles(0).
-              setJournalCompactPercentage(0).
-              setClusterPassword(CLUSTER_PASSWORD);
+         setSecurityEnabled(false).setJournalMinFiles(2).setJournalFileSize(100 * 1024).setJournalType(JournalType.NIO).
+         setJournalDirectory(getJournalDir(serverID, false)).
+         setBindingsDirectory(getBindingsDir(serverID, false)).
+         setPagingDirectory(getPageDir(serverID, false)).
+         setLargeMessagesDirectory(getLargeMessagesDir(serverID, false)).
+         setJournalCompactMinFiles(0).
+         setJournalCompactPercentage(0).
+         setClusterPassword(CLUSTER_PASSWORD);
 
       configuration.addAddressesSetting("#", new AddressSettings().setAutoCreateJmsQueues(true).setAutoDeleteJmsQueues(true));
 
@@ -163,7 +158,7 @@ public class OpenwireArtemisBaseTest {
       return configuration;
    }
 
-   public void deployClusterConfiguration(Configuration config, Integer ... targetIDs) throws Exception {
+   public void deployClusterConfiguration(Configuration config, Integer... targetIDs) throws Exception {
       StringBuffer stringBuffer = new StringBuffer();
       String separator = "";
       for (int x : targetIDs) {
@@ -188,17 +183,10 @@ public class OpenwireArtemisBaseTest {
       return newURIwithPort(localhostAddress, port, Collections.EMPTY_MAP);
    }
 
-   protected static String newURIwithPort(String localhostAddress, int port, Map<String, String> params) throws Exception {
+   protected static String newURIwithPort(String localhostAddress,
+                                          int port,
+                                          Map<String, String> params) throws Exception {
       return "tcp://" + localhostAddress + ":" + port + "?" + URISupport.createQueryString(params);
-   }
-
-   public static JMSServerControl createJMSServerControl(final MBeanServer mbeanServer) throws Exception {
-      return (JMSServerControl) createProxy(ObjectNameBuilder.DEFAULT.getJMSServerObjectName(), JMSServerControl.class, mbeanServer);
-   }
-
-   public static JMSQueueControl createJMSQueueControl(final String name,
-                                                       final MBeanServer mbeanServer) throws Exception {
-      return (JMSQueueControl) createProxy(ObjectNameBuilder.DEFAULT.getJMSQueueObjectName(name), JMSQueueControl.class, mbeanServer);
    }
 
    private static Object createProxy(final ObjectName objectName,
@@ -211,8 +199,7 @@ public class OpenwireArtemisBaseTest {
       for (int i = 0; i < servers.length; i++) {
          try {
             servers[i].stop();
-         }
-         catch (Throwable t) {
+         } catch (Throwable t) {
             t.printStackTrace();
          }
       }
@@ -262,8 +249,7 @@ public class OpenwireArtemisBaseTest {
       }
    }
 
-   private Integer[] getTargets(int total, int self)
-   {
+   private Integer[] getTargets(int total, int self) {
       int lenTargets = total - self;
       List<Integer> targets = new ArrayList<>();
       for (int i = 0; i < lenTargets; i++) {

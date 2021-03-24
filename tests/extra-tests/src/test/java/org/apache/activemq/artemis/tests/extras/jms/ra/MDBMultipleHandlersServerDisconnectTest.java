@@ -1,14 +1,18 @@
 /*
- * Copyright 2005-2014 Red Hat, Inc.
- * Red Hat licenses this file to you under the Apache License, version
- * 2.0 (the "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
- *    http://www.apache.org/licenses/LICENSE-2.0
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
- * implied.  See the License for the specific language governing
- * permissions and limitations under the License.
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 package org.apache.activemq.artemis.tests.extras.jms.ra;
 
@@ -54,6 +58,7 @@ import org.apache.activemq.artemis.ra.inflow.ActiveMQActivationSpec;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.tests.integration.ra.ActiveMQRATestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -63,6 +68,7 @@ import org.junit.Test;
  * Simulates several messages being received over multiple instances with reconnects during the process.
  */
 public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase {
+   private static final Logger log = Logger.getLogger(MDBMultipleHandlersServerDisconnectTest.class);
 
    final ConcurrentHashMap<Integer, AtomicInteger> mapCounter = new ConcurrentHashMap<>();
 
@@ -82,8 +88,8 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
    @Before
    public void setUp() throws Exception {
       nettyLocator = createNettyNonHALocator();
-      nettyLocator.setRetryInterval(10);
-      nettyLocator.setReconnectAttempts(-1);
+      nettyLocator.setRetryInterval(100);
+      nettyLocator.setReconnectAttempts(300);
       mapCounter.clear();
       resourceAdapter = null;
       super.setUp();
@@ -139,7 +145,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
       spec.setTransactionTimeout(1);
       spec.setMaxSession(NUMBER_OF_SESSIONS);
       spec.setSetupAttempts(-1);
-      spec.setSetupInterval(100);
+      spec.setSetupInterval(100L);
       spec.setResourceAdapter(qResourceAdapter);
       spec.setUseJNDI(false);
       spec.setDestinationType("javax.jms.Queue");
@@ -187,8 +193,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
                   }
                }
                session.commit();
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
             }
 
@@ -205,8 +210,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
             while (running.get()) {
                try {
                   Thread.sleep(RandomUtil.randomInterval(100, 200));
-               }
-               catch (InterruptedException intex) {
+               } catch (InterruptedException intex) {
                   intex.printStackTrace();
                   return;
                }
@@ -218,8 +222,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
                if (serverSessions.size() != NUMBER_OF_SESSIONS) {
                   System.err.println("the server was supposed to have " + NUMBER_OF_MESSAGES + " RA Sessions but it only contained accordingly to the meta-data");
                   metaDataFailed.set(true);
-               }
-               else if (serverSessions.size() == NUMBER_OF_SESSIONS) {
+               } else if (serverSessions.size() == NUMBER_OF_SESSIONS) {
                   // it became the same after some reconnect? which would be acceptable
                   metaDataFailed.set(false);
                }
@@ -227,7 +230,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
                if (playServerClosingSession && serverSessions.size() > 0) {
 
                   int randomBother = RandomUtil.randomInterval(0, serverSessions.size() - 1);
-                  System.out.println("bugging session " + randomBother);
+                  log.debug("bugging session " + randomBother);
 
                   ServerSession serverSession = serverSessions.get(randomBother);
 
@@ -239,8 +242,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
                            // where the consumer is closed while things are still happening
                            consumer.close(true);
                            Thread.sleep(100);
-                        }
-                        catch (Exception e) {
+                        } catch (Exception e) {
                            e.printStackTrace();
                         }
                      }
@@ -262,7 +264,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
       ClientSession session = factory.createSession(false, false);
       session.start();
 
-      ClientConsumer consumer = session.createConsumer("jms.queue.outQueue");
+      ClientConsumer consumer = session.createConsumer("outQueue");
 
       for (int i = 0; i < NUMBER_OF_MESSAGES; i++) {
          ClientMessage message = consumer.receive(60000);
@@ -278,19 +280,19 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
          }
 
          if (i == NUMBER_OF_MESSAGES * 0.90) {
-            System.out.println("Disabled failures at " + i);
+            log.debug("Disabled failures at " + i);
             playTXTimeouts = false;
             playServerClosingSession = false;
             playServerClosingConsumer = false;
 
          }
 
-         System.out.println("Received " + i + " messages");
+         log.debug("Received " + i + " messages");
 
          doReceiveMessage(message);
 
          if (i % 200 == 0) {
-            System.out.println("received " + i);
+            log.debug("received " + i);
             session.commit();
          }
       }
@@ -303,7 +305,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
             break;
          }
 
-         System.out.println("Received extra message " + message);
+         log.debug("Received extra message " + message);
 
          doReceiveMessage(message);
       }
@@ -322,8 +324,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
          if (atomicInteger == null) {
             out.println("didn't receive message with i=" + i);
             failed = true;
-         }
-         else if (atomicInteger.get() > 1) {
+         } else if (atomicInteger.get() > 1) {
             out.println("message with i=" + i + " received " + atomicInteger.get() + " times");
             failed = true;
          }
@@ -339,15 +340,12 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
       session.close();
 
       if (failed) {
-         for (int i = 0; i < 10; i++) {
-            System.out.println("----------------------------------------------------");
-         }
-         System.out.println(writer.toString());
+         log.debug(writer.toString());
       }
 
       Assert.assertFalse(writer.toString(), failed);
 
-      System.out.println("Received " + NUMBER_OF_MESSAGES + " messages");
+      log.debug("Received " + NUMBER_OF_MESSAGES + " messages");
 
       Assert.assertFalse("There was meta-data failures, some sessions didn't reconnect properly", metaDataFailed.get());
 
@@ -375,8 +373,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
             serverSessions.clear();
             try {
                Thread.sleep(100);
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                break;
             }
          }
@@ -386,7 +383,8 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
                serverSessions.add(session);
             }
          }
-      } while (running.get() && serverSessions.size() != numberOfSessions && timeout > System.currentTimeMillis());
+      }
+      while (running.get() && serverSessions.size() != numberOfSessions && timeout > System.currentTimeMillis());
 
       System.err.println("Returning " + serverSessions.size() + " sessions");
       return serverSessions;
@@ -429,9 +427,8 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
             factory = nettyLocator.createSessionFactory();
             //            buggingList.add(factory);
             endpointSession = factory.createSession(true, false, false);
-            producer = endpointSession.createProducer("jms.queue.outQueue");
-         }
-         catch (Throwable e) {
+            producer = endpointSession.createProducer("outQueue");
+         } catch (Throwable e) {
             throw new RuntimeException(e);
          }
       }
@@ -443,8 +440,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
             DummyTMLocator.tm.begin();
             currentTX = DummyTMLocator.tm.getTransaction();
             currentTX.enlistResource(xaResource);
-         }
-         catch (Throwable e) {
+         } catch (Throwable e) {
             throw new RuntimeException(e.getMessage(), e);
          }
 
@@ -456,8 +452,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
 
          try {
             value = message.getIntProperty("i");
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
 
          }
 
@@ -475,13 +470,11 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
                   Thread.sleep(2000);
                }
             }
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             e.printStackTrace();
             try {
                currentTX.setRollbackOnly();
-            }
-            catch (Exception ex) {
+            } catch (Exception ex) {
             }
             e.printStackTrace();
             //            throw new RuntimeException(e);
@@ -494,21 +487,16 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
          try {
             if (currentTX.getStatus() == Status.STATUS_MARKED_ROLLBACK) {
                DummyTMLocator.tm.rollback();
-            }
-            else {
+            } else {
                DummyTMLocator.tm.commit();
             }
-         }
-         catch (HeuristicMixedException e) {
+         } catch (HeuristicMixedException e) {
             throw new LocalTransactionException(e);
-         }
-         catch (SystemException e) {
+         } catch (SystemException e) {
             throw new LocalTransactionException(e);
-         }
-         catch (HeuristicRollbackException e) {
+         } catch (HeuristicRollbackException e) {
             throw new LocalTransactionException(e);
-         }
-         catch (RollbackException e) {
+         } catch (RollbackException e) {
             throw new LocalTransactionException(e);
          }
          super.afterDelivery();
@@ -523,8 +511,7 @@ public class MDBMultipleHandlersServerDisconnectTest extends ActiveMQRATestBase 
          try {
             TransactionReaper.terminate(true);
             TxControl.disable(true);
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             e.printStackTrace();
          }
          tm = null;

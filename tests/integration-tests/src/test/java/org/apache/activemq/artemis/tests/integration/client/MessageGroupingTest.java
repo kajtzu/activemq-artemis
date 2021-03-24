@@ -16,8 +16,15 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import javax.transaction.xa.XAResource;
+import javax.transaction.xa.Xid;
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -30,22 +37,16 @@ import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.core.transaction.impl.XidImpl;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-import javax.transaction.xa.XAResource;
-import javax.transaction.xa.Xid;
-import java.util.ArrayList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-
 public class MessageGroupingTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(MessageGroupingTest.class);
 
    private ActiveMQServer server;
 
@@ -132,8 +133,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
             Assert.assertNotEquals("You shouldn't have all messages bound to a single consumer", 30, count);
             Assert.assertNotEquals("But you shouldn't have also a single consumer bound to none", 0, count);
          }
-      }
-      finally {
+      } finally {
          consumer1.close();
          consumer2.close();
          consumer3.close();
@@ -183,8 +183,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          ClientMessage message = createTextMessage(clientSession, "m" + i);
          if (i % 2 == 0 || i == 0) {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId);
-         }
-         else {
+         } else {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId2);
          }
          clientProducer.send(message);
@@ -200,7 +199,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          Assert.assertEquals(cm.getBodyBuffer().readString(), "m" + i);
       }
 
-      MessageGroupingTest.log.info("closing consumer2");
+      log.debug("closing consumer2");
 
       consumer2.close();
 
@@ -220,8 +219,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          ClientMessage message = createTextMessage(clientSession, "m" + i);
          if (i % 2 == 0 || i == 0) {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId);
-         }
-         else {
+         } else {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId2);
          }
          clientProducer.send(message);
@@ -262,8 +260,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          ClientMessage message = createTextMessage(clientSession, "m" + i);
          if (i % 2 == 0 || i == 0) {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId);
-         }
-         else {
+         } else {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId2);
          }
          clientProducer.send(message);
@@ -297,7 +294,6 @@ public class MessageGroupingTest extends ActiveMQTestBase {
    }
 
    private void doTestMultipleGroupingTXRollback() throws Exception {
-      log.info("*** starting test");
       ServerLocator locator = createInVMNonHALocator();
       locator.setBlockOnAcknowledge(true);
       ClientSessionFactory sessionFactory = createSessionFactory(locator);
@@ -317,8 +313,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          ClientMessage message = createTextMessage(clientSession, "m" + i);
          if (i % 2 == 0 || i == 0) {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId);
-         }
-         else {
+         } else {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId2);
          }
          clientProducer.send(message);
@@ -384,8 +379,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          ClientMessage message = createTextMessage(clientSession, "m" + i);
          if (i % 2 == 0 || i == 0) {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId);
-         }
-         else {
+         } else {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId2);
          }
          clientProducer.send(message);
@@ -439,8 +433,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          ClientMessage message = createTextMessage(clientSession, "m" + i);
          if (i % 2 == 0 || i == 0) {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId);
-         }
-         else {
+         } else {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId2);
          }
          clientProducer.send(message);
@@ -505,8 +498,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          ClientMessage message = createTextMessage(clientSession, "m" + i);
          if (i % 2 == 0 || i == 0) {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId);
-         }
-         else {
+         } else {
             message.putStringProperty(Message.HDR_GROUP_ID, groupId2);
          }
          clientProducer.send(message);
@@ -544,7 +536,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
       locator = createInVMNonHALocator();
       clientSessionFactory = createSessionFactory(locator);
       clientSession = addClientSession(clientSessionFactory.createSession(false, true, true));
-      clientSession.createQueue(qName, qName, null, false);
+      clientSession.createQueue(new QueueConfiguration(qName).setDurable(false));
    }
 
    private static class DummyMessageHandler implements MessageHandler {
@@ -566,8 +558,7 @@ public class MessageGroupingTest extends ActiveMQTestBase {
          if (acknowledge) {
             try {
                message.acknowledge();
-            }
-            catch (ActiveMQException e) {
+            } catch (ActiveMQException e) {
                // ignore
             }
          }

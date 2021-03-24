@@ -19,15 +19,16 @@ package org.apache.activemq.artemis.tests.integration.client;
 import java.util.Arrays;
 import java.util.Collection;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -76,7 +77,7 @@ public class OrderTest extends ActiveMQTestBase {
 
       ClientSession session = sf.createSession(true, true, 0);
 
-      session.createQueue("queue", "queue", true);
+      session.createQueue(new QueueConfiguration("queue"));
 
       ClientProducer prod = session.createProducer("queue");
 
@@ -141,7 +142,7 @@ public class OrderTest extends ActiveMQTestBase {
       ClientSession session = sf.createSession(true, true, 0);
 
       int numberOfMessages = 500;
-      session.createQueue("queue", "queue", true);
+      session.createQueue(new QueueConfiguration("queue"));
 
       ClientProducer prod = session.createProducer("queue");
 
@@ -199,7 +200,7 @@ public class OrderTest extends ActiveMQTestBase {
 
       int numberOfMessages = 500;
 
-      session.createQueue("queue", "queue", true);
+      session.createQueue(new QueueConfiguration("queue"));
 
       ClientProducer prod = session.createProducer("queue");
 

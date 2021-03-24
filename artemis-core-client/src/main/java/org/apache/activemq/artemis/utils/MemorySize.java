@@ -16,9 +16,9 @@
  */
 package org.apache.activemq.artemis.utils;
 
-import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
-
 import java.lang.ref.WeakReference;
+
+import org.apache.activemq.artemis.core.client.ActiveMQClientLogger;
 
 public class MemorySize {
 
@@ -37,8 +37,7 @@ public class MemorySize {
          if (arch != null) {
             is64bit = arch.contains("64");
          }
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          // Ignore
       }
 
@@ -57,11 +56,11 @@ public class MemorySize {
 
       MemorySize.newObject(factory);
 
-      int i = 0;
-      long heap1 = 0;
-      long heap2 = 0;
-      long totalMemory1 = 0;
-      long totalMemory2 = 0;
+      int i;
+      long heap1;
+      long heap2;
+      long totalMemory1;
+      long totalMemory2;
 
       // First we do a dry run with twice as many then throw away the results
 
@@ -111,8 +110,7 @@ public class MemorySize {
          System.gc();
          try {
             Thread.sleep(500);
-         }
-         catch (InterruptedException e) {
+         } catch (InterruptedException e) {
          }
       }
    }

@@ -16,11 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import java.util.ArrayList;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-
 import javax.jms.Connection;
 import javax.jms.DeliveryMode;
 import javax.jms.Destination;
@@ -32,14 +27,18 @@ import javax.jms.MessageProducer;
 import javax.jms.Queue;
 import javax.jms.Session;
 import javax.jms.TextMessage;
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.ActiveMQConnectionFactory;
 import org.apache.activemq.ActiveMQMessageConsumer;
 import org.apache.activemq.RedeliveryPolicy;
+import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
 import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.command.ActiveMQMessage;
 import org.apache.activemq.command.ActiveMQQueue;
-import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -99,19 +98,14 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
       @Override
       public void onMessage(Message message) {
          try {
-            System.out.println("Message Received: " + message);
             counter++;
             if (counter <= 4) {
-               System.out.println("Message Rollback.");
                session.rollback();
-            }
-            else {
-               System.out.println("Message Commit.");
+            } else {
                message.acknowledge();
                session.commit();
             }
-         }
-         catch (JMSException e) {
+         } catch (JMSException e) {
             System.out.println("Error when rolling back transaction");
          }
       }
@@ -140,8 +134,7 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(500);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
       }
 
       // first try.. should get 2 since there is no delay on the
@@ -150,16 +143,14 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(1000);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
       }
       // 2nd redeliver (redelivery after 1 sec)
       assertEquals(3, listener.counter);
 
       try {
          Thread.sleep(2000);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
       }
       // 3rd redeliver (redelivery after 2 seconds) - it should give up after
       // that
@@ -171,16 +162,14 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(500);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
       }
       // it should be committed, so no redelivery
       assertEquals(5, listener.counter);
 
       try {
          Thread.sleep(1500);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
       }
       // no redelivery, counter should still be 4
       assertEquals(5, listener.counter);
@@ -211,8 +200,7 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(500);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
 
       }
       // first try
@@ -220,8 +208,7 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(1000);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
 
       }
       // second try (redelivery after 1 sec)
@@ -229,8 +216,7 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(2000);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
 
       }
       // third try (redelivery after 2 seconds) - it should give up after that
@@ -242,8 +228,7 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(500);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
          // ignore
       }
       // it should be committed, so no redelivery
@@ -251,8 +236,7 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
 
       try {
          Thread.sleep(1500);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
          // ignore
       }
       // no redelivery, counter should still be 4
@@ -284,11 +268,9 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
       consumer.setMessageListener(new MessageListener() {
          @Override
          public void onMessage(Message message) {
-            System.out.println("Message Received: " + message);
             try {
                received.add(((TextMessage) message).getText());
-            }
-            catch (JMSException e) {
+            } catch (JMSException e) {
                e.printStackTrace();
                fail(e.toString());
             }
@@ -332,7 +314,6 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
       dlqConsumer.setMessageListener(new MessageListener() {
          @Override
          public void onMessage(Message message) {
-            System.out.println("DLQ Message Received: " + message);
             dlqMessage[0] = message;
             gotDlqMessage.countDown();
          }
@@ -341,13 +322,11 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
       MessageConsumer consumer = session.createConsumer(queue);
 
       final int maxDeliveries = getRedeliveryPolicy().getMaximumRedeliveries();
-      System.out.println("max redlivery: " + maxDeliveries);
       final CountDownLatch gotMessage = new CountDownLatch(maxDeliveries);
 
       consumer.setMessageListener(new MessageListener() {
          @Override
          public void onMessage(Message message) {
-            System.out.println("Message Received: " + message);
             gotMessage.countDown();
             throw new RuntimeException(getName() + " force a redelivery");
          }
@@ -362,8 +341,6 @@ public class MessageListenerRedeliveryTest extends BasicOpenWireTest {
       message = dlqMessage[0];
       assertNotNull("dlq message captured", message);
       String cause = message.getStringProperty(ActiveMQMessage.DLQ_DELIVERY_FAILURE_CAUSE_PROPERTY);
-
-      System.out.println("DLQ'd message cause reported as: " + cause);
 
       assertTrue("cause 'cause' exception is remembered", cause.contains("RuntimeException"));
       assertTrue("is correct exception", cause.contains(getName()));

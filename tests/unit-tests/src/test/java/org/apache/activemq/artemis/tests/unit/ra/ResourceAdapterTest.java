@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.activemq.artemis.api.core.DiscoveryGroupConfiguration;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.UDPBroadcastEndpointFactory;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -374,8 +375,7 @@ public class ResourceAdapterTest extends ActiveMQTestBase {
       try {
          ra.getConnectionFactory(connectionFactoryProperties);
          Assert.fail("should throw exception");
-      }
-      catch (IllegalArgumentException e) {
+      } catch (IllegalArgumentException e) {
          // pass
       }
    }
@@ -384,7 +384,7 @@ public class ResourceAdapterTest extends ActiveMQTestBase {
    public void testValidateProperties() throws Exception {
       validateGettersAndSetters(new ActiveMQResourceAdapter(), "backupTransportConfiguration", "connectionParameters", "jndiParams");
       validateGettersAndSetters(new ActiveMQRAManagedConnectionFactory(), "connectionParameters", "sessionDefaultType", "backupConnectionParameters", "jndiParams");
-      validateGettersAndSetters(new ActiveMQActivationSpec(), "connectionParameters", "acknowledgeMode", "subscriptionDurability", "jndiParams");
+      validateGettersAndSetters(new ActiveMQActivationSpec(), "connectionParameters", "acknowledgeMode", "subscriptionDurability", "jndiParams", "maxSession");
 
       ActiveMQActivationSpec spec = new ActiveMQActivationSpec();
 
@@ -396,6 +396,13 @@ public class ResourceAdapterTest extends ActiveMQTestBase {
 
       spec.setSubscriptionDurability("NonDurable");
       Assert.assertEquals("NonDurable", spec.getSubscriptionDurability());
+
+      final int validMaxSessionValue = 110;
+      spec.setMaxSession(validMaxSessionValue);
+      Assert.assertTrue(validMaxSessionValue == spec.getMaxSession());
+
+      spec.setMaxSession(-3);
+      Assert.assertTrue(spec.getMaxSession() == 1);
 
       spec = new ActiveMQActivationSpec();
       ActiveMQResourceAdapter adapter = new ActiveMQResourceAdapter();
@@ -430,7 +437,7 @@ public class ResourceAdapterTest extends ActiveMQTestBase {
          ClientSessionFactory factory = createSessionFactory(locator);
          ClientSession session = factory.createSession(false, false, false);
          ActiveMQDestination queue = (ActiveMQDestination) ActiveMQJMSClient.createQueue("test");
-         session.createQueue(queue.getSimpleAddress(), queue.getSimpleAddress(), true);
+         session.createQueue(new QueueConfiguration(queue.getSimpleAddress()));
          session.close();
 
          ActiveMQResourceAdapter ra = new ActiveMQResourceAdapter();
@@ -468,8 +475,7 @@ public class ResourceAdapterTest extends ActiveMQTestBase {
 
          locator.close();
 
-      }
-      finally {
+      } finally {
          server.stop();
       }
    }
@@ -505,8 +511,7 @@ public class ResourceAdapterTest extends ActiveMQTestBase {
 
          ra.stop();
 
-      }
-      finally {
+      } finally {
          server.stop();
       }
    }
@@ -548,14 +553,12 @@ public class ResourceAdapterTest extends ActiveMQTestBase {
 
          try {
             activation.start();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             // ignore
          }
 
          assertEquals(0, server.getRemotingService().getConnections().size());
-      }
-      finally {
+      } finally {
          if (activation != null)
             activation.stop();
          if (ra != null)

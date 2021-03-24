@@ -27,10 +27,16 @@ import org.apache.activemq.artemis.api.core.client.TopologyMember;
 import org.apache.activemq.artemis.core.config.ha.ReplicaPolicyConfiguration;
 import org.apache.activemq.artemis.core.config.ha.ReplicatedPolicyConfiguration;
 import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
+import org.apache.activemq.artemis.core.server.impl.SharedNothingLiveActivation;
 import org.apache.activemq.artemis.tests.integration.cluster.util.BackupSyncDelay;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.junit.Rule;
 import org.junit.Test;
 
 public class QuorumFailOverTest extends StaticClusterWithBackupFailoverTest {
+
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
 
    @Override
    protected void setupServers() throws Exception {
@@ -42,6 +48,11 @@ public class QuorumFailOverTest extends StaticClusterWithBackupFailoverTest {
       ((ReplicaPolicyConfiguration) servers[3].getConfiguration().getHAPolicyConfiguration()).setGroupName("group0");
       ((ReplicaPolicyConfiguration) servers[4].getConfiguration().getHAPolicyConfiguration()).setGroupName("group1");
       ((ReplicaPolicyConfiguration) servers[5].getConfiguration().getHAPolicyConfiguration()).setGroupName("group2");
+
+      //reduce the numbers so that the vote finishes faster
+      ((ReplicaPolicyConfiguration) servers[3].getConfiguration().getHAPolicyConfiguration()).setVoteRetries(5);
+      ((ReplicaPolicyConfiguration) servers[3].getConfiguration().getHAPolicyConfiguration()).setVoteRetryWait(500);
+
    }
 
    @Test
@@ -92,6 +103,49 @@ public class QuorumFailOverTest extends StaticClusterWithBackupFailoverTest {
 
       failNode(1);
       assertFalse("4 should have failed over ", servers[4].getHAPolicy().isBackup());
+   }
+
+   @Test
+   public void testQuorumVotingLiveNotDead() throws Exception {
+      int[] liveServerIDs = new int[]{0, 1, 2};
+      setupCluster();
+      startServers(0, 1, 2);
+      new BackupSyncDelay(servers[4], servers[1], PacketImpl.REPLICATION_SCHEDULED_FAILOVER);
+      startServers(3, 4, 5);
+
+      for (int i : liveServerIDs) {
+         waitForTopology(servers[i], 3, 3);
+      }
+
+      waitForFailoverTopology(3, 0, 1, 2);
+      waitForFailoverTopology(4, 0, 1, 2);
+      waitForFailoverTopology(5, 0, 1, 2);
+
+      for (int i : liveServerIDs) {
+         setupSessionFactory(i, i + 3, isNetty(), false);
+         createQueue(i, QUEUES_TESTADDRESS, QUEUE_NAME, null, true);
+         addConsumer(i, i, QUEUE_NAME, null);
+      }
+
+      waitForBindings(0, QUEUES_TESTADDRESS, 1, 1, true);
+      waitForBindings(1, QUEUES_TESTADDRESS, 1, 1, true);
+      waitForBindings(2, QUEUES_TESTADDRESS, 1, 1, true);
+
+      send(0, QUEUES_TESTADDRESS, 10, false, null);
+      verifyReceiveRoundRobinInSomeOrder(true, 10, 0, 1, 2);
+
+      final TopologyListener liveTopologyListener = new TopologyListener("LIVE-1");
+
+      locators[0].addClusterTopologyListener(liveTopologyListener);
+
+      assertTrue("we assume 3 is a backup", servers[3].getHAPolicy().isBackup());
+      assertFalse("no shared storage", servers[3].getHAPolicy().isSharedStore());
+
+      SharedNothingLiveActivation liveActivation = (SharedNothingLiveActivation) servers[0].getActivation();
+      liveActivation.freezeReplication();
+      assertFalse(servers[0].isReplicaSync());
+      waitForRemoteBackupSynchronization(servers[0]);
+      assertTrue(servers[0].isReplicaSync());
    }
 
    @Override

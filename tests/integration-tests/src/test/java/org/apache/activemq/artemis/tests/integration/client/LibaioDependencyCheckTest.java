@@ -16,10 +16,9 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
-import org.apache.activemq.artemis.jlibaio.LibaioContext;
-import org.junit.Test;
-
+import org.apache.activemq.artemis.nativo.jlibaio.LibaioContext;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.junit.Test;
 
 /**
  * This tests is placed in duplication here to validate that the libaio module is properly loaded on this

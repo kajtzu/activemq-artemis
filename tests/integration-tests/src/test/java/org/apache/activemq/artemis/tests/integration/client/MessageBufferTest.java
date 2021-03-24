@@ -19,13 +19,20 @@ package org.apache.activemq.artemis.tests.integration.client;
 
 import java.util.UUID;
 
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.UnpooledByteBufAllocator;
+import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
+import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
+import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.client.impl.ClientMessageImpl;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
@@ -55,10 +62,10 @@ public class MessageBufferTest extends ActiveMQTestBase {
       final String queueName = "simpleQueue";
       final String addressName = "simpleAddress";
 
-      session.createQueue(addressName, queueName);
+      session.createQueue(new QueueConfiguration(queueName).setAddress(addressName).setRoutingType(RoutingType.ANYCAST));
       ClientProducer producer = session.createProducer(addressName);
 
-      ClientMessageImpl message = (ClientMessageImpl)session.createMessage(true);
+      ClientMessageImpl message = (ClientMessageImpl) session.createMessage(true);
       message.getBodyBuffer().writeString(data);
 
       for (int i = 0; i < 100; i++) {
@@ -79,5 +86,51 @@ public class MessageBufferTest extends ActiveMQTestBase {
       assertNotNull(message);
       message.acknowledge();
       assertEquals(data, message.getBodyBuffer().readString());
+   }
+
+   @Test
+   public void simpleTestBytes() throws Exception {
+      ByteBuf buf = UnpooledByteBufAllocator.DEFAULT.buffer(1500);
+      for (int i = 0; i < 1024; i++) {
+         buf.writeByte(getSamplebyte(i));
+      }
+      final String queueName = "simpleQueue";
+      final String addressName = "simpleAddress";
+
+      session.createQueue(new QueueConfiguration(queueName).setAddress(addressName).setRoutingType(RoutingType.ANYCAST));
+      ClientProducer producer = session.createProducer(addressName);
+
+      {
+         ClientMessage message = (ClientMessageImpl) session.createMessage(true);
+         Assert.assertEquals(1024, buf.readableBytes());
+         message.getBodyBuffer().writeBytes(buf, 0, buf.readableBytes());
+         producer.send(message);
+      }
+
+      session.commit();
+
+      producer.close();
+
+      ClientConsumer consumer = session.createConsumer(queueName);
+      session.start();
+
+      {
+         ClientMessage message = consumer.receive(5000);
+         Assert.assertNotNull(message);
+         Assert.assertEquals(1024, message.getBodySize());
+         ActiveMQBuffer buffer = message.getDataBuffer();
+         Assert.assertEquals(1024, message.getBodySize());
+         ActiveMQBuffer bodyBuffer = message.getBodyBuffer();
+         Assert.assertEquals(1024, message.getBodySize());
+
+         ActiveMQBuffer result = ActiveMQBuffers.fixedBuffer(message.getBodyBufferSize());
+         buffer.readBytes(result);
+         Assert.assertEquals(1024, result.readableBytes());
+         for (int i = 0; i < 1024; i++) {
+            Assert.assertEquals(getSamplebyte(i), result.readByte());
+         }
+         assertNotNull(message);
+         message.acknowledge();
+      }
    }
 }

@@ -16,22 +16,21 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-
 import javax.jms.DeliveryMode;
 import javax.jms.Message;
 import javax.jms.MessageConsumer;
 import javax.jms.MessageListener;
 import javax.jms.Session;
 import javax.jms.TextMessage;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.activemq.ActiveMQConnection;
-import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
+import org.apache.activemq.command.ActiveMQDestination;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -88,11 +87,8 @@ public class JMSConsumer7Test extends BasicOpenWireTest {
                   connection.close();
                   got2Done.countDown();
                }
-               System.out.println("acking tm: " + tm.getText());
                tm.acknowledge();
-            }
-            catch (Throwable e) {
-               System.out.println("ack failed!!");
+            } catch (Throwable e) {
                e.printStackTrace();
             }
          }
@@ -120,7 +116,6 @@ public class JMSConsumer7Test extends BasicOpenWireTest {
          public void onMessage(Message m) {
             try {
                TextMessage tm = (TextMessage) m;
-               System.out.println("2nd received: " + tm.getText());
                // order is not guaranteed as the connection is started before
                // the listener is set.
                // assertEquals("" + counter.get(), tm.getText());
@@ -128,8 +123,7 @@ public class JMSConsumer7Test extends BasicOpenWireTest {
                if (counter.get() == 4) {
                   done2.countDown();
                }
-            }
-            catch (Throwable e) {
+            } catch (Throwable e) {
                System.err.println("Unexpected exception: " + e);
             }
          }

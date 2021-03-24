@@ -16,13 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
-import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
-import org.junit.Before;
-
-import org.junit.Test;
-
-import org.junit.Assert;
-
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -31,8 +25,12 @@ import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class DurableQueueTest extends ActiveMQTestBase {
 
@@ -59,7 +57,7 @@ public class DurableQueueTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, true);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address));
 
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(false));
@@ -79,7 +77,7 @@ public class DurableQueueTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, true);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address));
 
       ClientProducer producer = session.createProducer(address);
       producer.send(session.createMessage(true));
@@ -111,7 +109,7 @@ public class DurableQueueTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, true);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address));
 
       session.close();
 
@@ -126,7 +124,7 @@ public class DurableQueueTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, true);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address));
 
       session.close();
 

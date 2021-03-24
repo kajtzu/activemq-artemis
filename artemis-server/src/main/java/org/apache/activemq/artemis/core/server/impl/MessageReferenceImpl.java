@@ -16,52 +16,77 @@
  */
 package org.apache.activemq.artemis.core.server.impl;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.function.Consumer;
 
+import org.apache.activemq.artemis.api.core.ActiveMQException;
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.core.server.ServerConsumer;
 import org.apache.activemq.artemis.core.transaction.Transaction;
-import org.apache.activemq.artemis.utils.MemorySize;
+import org.apache.activemq.artemis.utils.collections.LinkedListImpl;
 
 /**
  * Implementation of a MessageReference
  */
-public class MessageReferenceImpl implements MessageReference {
+public class MessageReferenceImpl extends LinkedListImpl.Node<MessageReferenceImpl> implements MessageReference, Runnable {
 
-   private final AtomicInteger deliveryCount = new AtomicInteger();
+   private static final MessageReferenceComparatorByID idComparator = new MessageReferenceComparatorByID();
+
+   public static Comparator<MessageReference> getIDComparator() {
+      return idComparator;
+   }
+
+   private static class MessageReferenceComparatorByID implements Comparator<MessageReference> {
+
+      @Override
+      public int compare(MessageReference o1, MessageReference o2) {
+         long value = o2.getMessage().getMessageID() - o1.getMessage().getMessageID();
+         if (value > 0) {
+            return 1;
+         } else if (value < 0) {
+            return -1;
+         } else {
+            return 0;
+         }
+      }
+   }
+
+
+   private static final AtomicIntegerFieldUpdater<MessageReferenceImpl> DELIVERY_COUNT_UPDATER = AtomicIntegerFieldUpdater
+      .newUpdater(MessageReferenceImpl.class, "deliveryCount");
+
+   @SuppressWarnings("unused")
+   private volatile int deliveryCount = 0;
 
    private volatile int persistedCount;
 
    private volatile long scheduledDeliveryTime;
 
-   private final ServerMessage message;
+   private final Message message;
 
    private final Queue queue;
 
-   private Long consumerID;
+   private long consumerID;
+
+   private boolean hasConsumerID = false;
 
    private boolean alreadyAcked;
 
+   private boolean deliveredDirectly;
+
    private Object protocolData;
+
+   private Consumer<? super MessageReference> onDelivery;
 
    // Static --------------------------------------------------------
 
-   private static final int memoryOffset;
-
-   static {
-      // This is an estimate of how much memory a ServerMessageImpl takes up, exclusing body and properties
-      // Note, it is only an estimate, it's not possible to be entirely sure with Java
-      // This figure is calculated using the test utilities in org.apache.activemq.tests.unit.util.sizeof
-      // The value is somewhat higher on 64 bit architectures, probably due to different alignment
-
-      if (MemorySize.is64bitArch()) {
-         memoryOffset = 48;
-      }
-      else {
-         memoryOffset = 32;
-      }
-   }
+   // This value has been computed by using https://github.com/openjdk/jol
+   // on HotSpot 64-bit VM COOPS, 8-byte alignment
+   private static final int memoryOffset = 72;
 
    // Constructors --------------------------------------------------
 
@@ -72,22 +97,48 @@ public class MessageReferenceImpl implements MessageReference {
    }
 
    public MessageReferenceImpl(final MessageReferenceImpl other, final Queue queue) {
-      deliveryCount.set(other.deliveryCount.get());
+      DELIVERY_COUNT_UPDATER.set(this, other.getDeliveryCount());
 
       scheduledDeliveryTime = other.scheduledDeliveryTime;
 
       message = other.message;
 
       this.queue = queue;
+
    }
 
-   protected MessageReferenceImpl(final ServerMessage message, final Queue queue) {
+   public MessageReferenceImpl(final Message message, final Queue queue) {
       this.message = message;
 
       this.queue = queue;
+
    }
 
    // MessageReference implementation -------------------------------
+
+   @Override
+   public void onDelivery(Consumer<? super MessageReference> onDelivery) {
+      // I am keeping this commented out as a documentation feature:
+      // a Message reference may eventually be taken back before the connection.run was finished.
+      // as a result it may be possible to have this.onDelivery != null here due to cancellations.
+      // assert this.onDelivery == null;
+      this.onDelivery = onDelivery;
+   }
+
+   /**
+    * It will call {@link Consumer#accept(Object)} on {@code this} of the {@link Consumer} registered in {@link #onDelivery(Consumer)}, if any.
+    */
+   @Override
+   public void run() {
+      final Consumer<? super MessageReference> onDelivery = this.onDelivery;
+      if (onDelivery != null) {
+         try {
+            onDelivery.accept(this);
+         } finally {
+            this.onDelivery = null;
+         }
+      }
+   }
 
    @Override
    public Object getProtocolData() {
@@ -124,25 +175,26 @@ public class MessageReferenceImpl implements MessageReference {
       return MessageReferenceImpl.memoryOffset;
    }
 
+
    @Override
    public int getDeliveryCount() {
-      return deliveryCount.get();
+      return DELIVERY_COUNT_UPDATER.get(this);
    }
 
    @Override
    public void setDeliveryCount(final int deliveryCount) {
-      this.deliveryCount.set(deliveryCount);
-      this.persistedCount = this.deliveryCount.get();
+      DELIVERY_COUNT_UPDATER.set(this, deliveryCount);
+      this.persistedCount = deliveryCount;
    }
 
    @Override
    public void incrementDeliveryCount() {
-      deliveryCount.incrementAndGet();
+      DELIVERY_COUNT_UPDATER.incrementAndGet(this);
    }
 
    @Override
    public void decrementDeliveryCount() {
-      deliveryCount.decrementAndGet();
+      DELIVERY_COUNT_UPDATER.decrementAndGet(this);
    }
 
    @Override
@@ -156,8 +208,13 @@ public class MessageReferenceImpl implements MessageReference {
    }
 
    @Override
-   public ServerMessage getMessage() {
+   public Message getMessage() {
       return message;
+   }
+
+   @Override
+   public long getMessageID() {
+      return getMessage().getMessageID();
    }
 
    @Override
@@ -166,8 +223,23 @@ public class MessageReferenceImpl implements MessageReference {
    }
 
    @Override
+   public boolean isDurable() {
+      return getMessage().isDurable();
+   }
+
+   @Override
    public void handled() {
-      queue.referenceHandled();
+      queue.referenceHandled(this);
+   }
+
+   @Override
+   public void setInDelivery(boolean inDelivery) {
+      this.deliveredDirectly = inDelivery;
+   }
+
+   @Override
+   public boolean isInDelivery() {
+      return deliveredDirectly;
    }
 
    @Override
@@ -192,27 +264,54 @@ public class MessageReferenceImpl implements MessageReference {
 
    @Override
    public void acknowledge(Transaction tx) throws Exception {
-      acknowledge(tx, AckReason.NORMAL);
+      acknowledge(tx, null);
    }
 
    @Override
-   public void acknowledge(Transaction tx, AckReason reason) throws Exception {
+   public void acknowledge(Transaction tx, ServerConsumer consumer) throws Exception {
+      acknowledge(tx, AckReason.NORMAL, consumer);
+   }
+
+   @Override
+   public void acknowledge(Transaction tx, AckReason reason, ServerConsumer consumer) throws Exception {
       if (tx == null) {
-         getQueue().acknowledge(this, reason);
-      }
-      else {
-         getQueue().acknowledge(tx, this, reason);
+         getQueue().acknowledge(this, reason, consumer);
+      } else {
+         getQueue().acknowledge(tx, this, reason, consumer);
       }
    }
 
    @Override
-   public void setConsumerId(Long consumerID) {
+   public void emptyConsumerID() {
+      this.hasConsumerID = false;
+   }
+
+   @Override
+   public void setConsumerId(long consumerID) {
+      this.hasConsumerID = true;
       this.consumerID = consumerID;
    }
 
    @Override
-   public Long getConsumerId() {
+   public boolean hasConsumerId() {
+      return hasConsumerID;
+   }
+
+   @Override
+   public long getConsumerId() {
+      if (!this.hasConsumerID) {
+         throw new IllegalStateException("consumerID isn't specified: please check hasConsumerId first");
+      }
       return this.consumerID;
+   }
+
+   @Override
+   public SimpleString getLastValueProperty() {
+      SimpleString lastValue = message.getSimpleStringProperty(queue.getLastValueKey());
+      if (lastValue == null) {
+         lastValue = message.getLastValueProperty();
+      }
+      return lastValue;
    }
 
    @Override
@@ -249,4 +348,10 @@ public class MessageReferenceImpl implements MessageReference {
    public int hashCode() {
       return this.getMessage().hashCode();
    }
+
+   @Override
+   public long getPersistentSize() throws ActiveMQException {
+      return this.getMessage().getPersistentSize();
+   }
+
 }

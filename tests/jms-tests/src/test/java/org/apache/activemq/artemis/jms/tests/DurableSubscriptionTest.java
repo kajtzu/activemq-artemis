@@ -94,14 +94,13 @@ public class DurableSubscriptionTest extends JMSTestCase {
          TextMessage tm = (TextMessage) durable.receive(1000);
          ProxyAssertSupport.assertEquals("k", tm.getText());
 
-         Message m = durable.receive(1000);
+         Message m = durable.receiveNoWait();
          ProxyAssertSupport.assertNull(m);
 
          durable.close();
 
          s.unsubscribe("monicabelucci");
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -155,8 +154,7 @@ public class DurableSubscriptionTest extends JMSTestCase {
             durable.close();
 
             s.unsubscribe(subscriptionName);
-         }
-         finally {
+         } finally {
             if (conn != null) {
                conn.close();
             }
@@ -199,14 +197,13 @@ public class DurableSubscriptionTest extends JMSTestCase {
 
          conn.start();
 
-         Message m = durable.receive(1000);
+         Message m = durable.receiveNoWait();
          ProxyAssertSupport.assertNull(m);
 
          durable.close();
 
          s.unsubscribe("monicabelucci");
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -269,7 +266,7 @@ public class DurableSubscriptionTest extends JMSTestCase {
 
          conn.start();
 
-         Message m = durable.receive(1000);
+         Message m = durable.receiveNoWait();
 
          // the durable subscription is destroyed and re-created. The red square message stored by
          // the previous durable subscription is lost and (hopefully) garbage collected.
@@ -278,8 +275,7 @@ public class DurableSubscriptionTest extends JMSTestCase {
          durable.close();
 
          s.unsubscribe("monicabelucci");
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -300,12 +296,10 @@ public class DurableSubscriptionTest extends JMSTestCase {
          try {
             s.createDurableSubscriber(temporaryTopic, "mySubscription");
             ProxyAssertSupport.fail("this should throw exception");
-         }
-         catch (InvalidDestinationException e) {
+         } catch (InvalidDestinationException e) {
             // OK
          }
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -333,13 +327,12 @@ public class DurableSubscriptionTest extends JMSTestCase {
          MessageConsumer ds = s.createDurableSubscriber(ActiveMQServerTestCase.topic1, "uzzi");
          conn.start();
 
-         ProxyAssertSupport.assertNull(ds.receive(1000));
+         ProxyAssertSupport.assertNull(ds.receiveNoWait());
 
          ds.close();
 
          s.unsubscribe("uzzi");
-      }
-      finally {
+      } finally {
          if (conn != null) {
             conn.close();
          }
@@ -355,8 +348,7 @@ public class DurableSubscriptionTest extends JMSTestCase {
       try {
          s.createDurableSubscriber(ActiveMQServerTestCase.topic1, "mysubscribption", "=TEST 'test'", true);
          ProxyAssertSupport.fail("this should fail");
-      }
-      catch (InvalidSelectorException e) {
+      } catch (InvalidSelectorException e) {
          // OK
       }
    }
@@ -374,8 +366,7 @@ public class DurableSubscriptionTest extends JMSTestCase {
       try {
          s.unsubscribe("dursub0");
          ProxyAssertSupport.fail();
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // Ok - it is illegal to ubscribe a subscription if it has active consumers
       }
 
@@ -396,8 +387,7 @@ public class DurableSubscriptionTest extends JMSTestCase {
       try {
          s.createDurableSubscriber(ActiveMQServerTestCase.topic1, "dursub1");
          ProxyAssertSupport.fail();
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // Ok - it is illegal to have more than one active subscriber on a subscrtiption at any one time
       }
 
@@ -457,8 +447,7 @@ public class DurableSubscriptionTest extends JMSTestCase {
 
       if (noLocal) {
          ProxyAssertSupport.assertNull(m);
-      }
-      else {
+      } else {
          ProxyAssertSupport.assertNotNull(m);
       }
 

@@ -17,6 +17,9 @@
 package org.apache.activemq.artemis.utils;
 
 import java.net.URL;
+import java.util.Properties;
+
+import org.jboss.logging.Logger;
 
 /**
  * This class will be used to perform generic class-loader operations,
@@ -27,15 +30,20 @@ import java.net.URL;
 
 public final class ClassloadingUtil {
 
+   private static final Logger logger = Logger.getLogger(ClassloadingUtil.class);
+
    private static final String INSTANTIATION_EXCEPTION_MESSAGE = "Your class must have a constructor without arguments. If it is an inner class, it must be static!";
 
    public static Object newInstanceFromClassLoader(final String className) {
-      ClassLoader loader = ClassloadingUtil.class.getClassLoader();
+      return newInstanceFromClassLoader(ClassloadingUtil.class, className);
+   }
+
+   public static Object newInstanceFromClassLoader(final Class<?> classOwner, final String className) {
+      ClassLoader loader = classOwner.getClassLoader();
       try {
          Class<?> clazz = loader.loadClass(className);
          return clazz.newInstance();
-      }
-      catch (Throwable t) {
+      } catch (Throwable t) {
          if (t instanceof InstantiationException) {
             System.out.println(INSTANTIATION_EXCEPTION_MESSAGE);
          }
@@ -45,21 +53,22 @@ public final class ClassloadingUtil {
 
          try {
             return loader.loadClass(className).newInstance();
-         }
-         catch (InstantiationException e) {
+         } catch (InstantiationException e) {
             throw new RuntimeException(INSTANTIATION_EXCEPTION_MESSAGE + " " + className, e);
-         }
-         catch (ClassNotFoundException e) {
+         } catch (ClassNotFoundException e) {
             throw new IllegalStateException(e);
-         }
-         catch (IllegalAccessException e) {
+         } catch (IllegalAccessException e) {
             throw new RuntimeException(e);
          }
       }
    }
 
    public static Object newInstanceFromClassLoader(final String className, Object... objs) {
-      ClassLoader loader = ClassloadingUtil.class.getClassLoader();
+      return newInstanceFromClassLoader(ClassloadingUtil.class, className, objs);
+   }
+
+   public static Object newInstanceFromClassLoader(final Class<?> classOwner, final String className, Object... objs) {
+      ClassLoader loader = classOwner.getClassLoader();
       try {
          Class<?>[] parametersType = new Class<?>[objs.length];
          for (int i = 0; i < objs.length; i++) {
@@ -67,8 +76,7 @@ public final class ClassloadingUtil {
          }
          Class<?> clazz = loader.loadClass(className);
          return clazz.getConstructor(parametersType).newInstance(objs);
-      }
-      catch (Throwable t) {
+      } catch (Throwable t) {
          if (t instanceof InstantiationException) {
             System.out.println(INSTANTIATION_EXCEPTION_MESSAGE);
          }
@@ -78,27 +86,26 @@ public final class ClassloadingUtil {
 
          try {
             return loader.loadClass(className).newInstance();
-         }
-         catch (InstantiationException e) {
+         } catch (InstantiationException e) {
             throw new RuntimeException(INSTANTIATION_EXCEPTION_MESSAGE + " " + className, e);
-         }
-         catch (ClassNotFoundException e) {
+         } catch (ClassNotFoundException e) {
             throw new IllegalStateException(e);
-         }
-         catch (IllegalAccessException e) {
+         } catch (IllegalAccessException e) {
             throw new RuntimeException(e);
          }
       }
    }
 
    public static URL findResource(final String resourceName) {
-      ClassLoader loader = ClassloadingUtil.class.getClassLoader();
+      return findResource(ClassloadingUtil.class.getClassLoader(), resourceName);
+   }
+
+   public static URL findResource(ClassLoader loader, final String resourceName) {
       try {
          URL resource = loader.getResource(resourceName);
          if (resource != null)
             return resource;
-      }
-      catch (Throwable t) {
+      } catch (Throwable t) {
       }
 
       loader = Thread.currentThread().getContextClassLoader();
@@ -107,4 +114,26 @@ public final class ClassloadingUtil {
 
       return loader.getResource(resourceName);
    }
+
+
+   public static String loadProperty(ClassLoader loader, String propertiesFile, String name) {
+      Properties properties = loadProperties(loader, propertiesFile);
+
+      return (String)properties.get(name);
+   }
+
+   public static Properties loadProperties(ClassLoader loader, String propertiesFile) {
+      Properties properties = new Properties();
+
+      try {
+         URL url = findResource(loader, propertiesFile);
+         if (url != null) {
+            properties.load(url.openStream());
+         }
+      } catch (Throwable ignored) {
+         logger.warn(ignored);
+      }
+      return properties;
+   }
+
 }

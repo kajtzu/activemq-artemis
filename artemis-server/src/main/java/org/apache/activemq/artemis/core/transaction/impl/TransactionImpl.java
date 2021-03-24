@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.core.transaction.impl;
 
 import javax.transaction.xa.Xid;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
@@ -30,6 +31,7 @@ import org.apache.activemq.artemis.core.io.IOCallback;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.Queue;
+import org.apache.activemq.artemis.core.server.impl.AckReason;
 import org.apache.activemq.artemis.core.server.impl.RefsOperation;
 import org.apache.activemq.artemis.core.transaction.Transaction;
 import org.apache.activemq.artemis.core.transaction.TransactionOperation;
@@ -45,7 +47,7 @@ public class TransactionImpl implements Transaction {
 
    private static final int INITIAL_NUM_PROPERTIES = 10;
 
-   private Object[] properties = new Object[TransactionImpl.INITIAL_NUM_PROPERTIES];
+   private Object[] properties = null;
 
    protected final StorageManager storageManager;
 
@@ -67,6 +69,22 @@ public class TransactionImpl implements Transaction {
 
    private Object protocolData;
 
+   private void ensurePropertiesCapacity(int capacity) {
+      if (properties != null && properties.length >= capacity) {
+         return;
+      }
+      createOrEnlargeProperties(capacity);
+   }
+
+   private void createOrEnlargeProperties(int capacity) {
+      if (properties == null) {
+         properties = new Object[Math.min(TransactionImpl.INITIAL_NUM_PROPERTIES, capacity)];
+      } else {
+         assert properties.length < capacity;
+         properties = Arrays.copyOf(properties, capacity);
+      }
+   }
+
    @Override
    public Object getProtocolData() {
       return protocolData;
@@ -78,47 +96,32 @@ public class TransactionImpl implements Transaction {
    }
 
    public TransactionImpl(final StorageManager storageManager, final int timeoutSeconds) {
-      this.storageManager = storageManager;
-
-      xid = null;
-
-      id = storageManager.generateID();
-
-      createTime = System.currentTimeMillis();
-
-      this.timeoutSeconds = timeoutSeconds;
+      this(storageManager.generateID(), null, storageManager, timeoutSeconds);
    }
 
    public TransactionImpl(final StorageManager storageManager) {
-      this.storageManager = storageManager;
-
-      xid = null;
-
-      id = storageManager.generateID();
-
-      createTime = System.currentTimeMillis();
+      this(storageManager.generateID(), null, storageManager,-1);
    }
 
+
    public TransactionImpl(final Xid xid, final StorageManager storageManager, final int timeoutSeconds) {
-      this.storageManager = storageManager;
-
-      this.xid = xid;
-
-      id = storageManager.generateID();
-
-      createTime = System.currentTimeMillis();
-
-      this.timeoutSeconds = timeoutSeconds;
+      this(storageManager.generateID(), xid, storageManager, timeoutSeconds);
    }
 
    public TransactionImpl(final long id, final Xid xid, final StorageManager storageManager) {
+      this(id, xid, storageManager, -1);
+   }
+
+   private TransactionImpl(final long id, final Xid xid, final StorageManager storageManager, final int timeoutSeconds) {
       this.storageManager = storageManager;
 
       this.xid = xid;
 
       this.id = id;
 
-      createTime = System.currentTimeMillis();
+      this.createTime = System.currentTimeMillis();
+
+      this.timeoutSeconds = timeoutSeconds;
    }
 
    // Transaction implementation
@@ -145,8 +148,8 @@ public class TransactionImpl implements Transaction {
    }
 
    @Override
-   public RefsOperation createRefsOperation(Queue queue) {
-      return new RefsOperation(queue, storageManager);
+   public RefsOperation createRefsOperation(Queue queue, AckReason reason) {
+      return new RefsOperation(queue, reason, storageManager);
    }
 
    @Override
@@ -164,10 +167,9 @@ public class TransactionImpl implements Transaction {
       synchronized (timeoutLock) {
          boolean timedout;
          if (timeoutSeconds == -1) {
-            timedout = getState() != Transaction.State.PREPARED && currentTime > createTime + defaultTimeout * 1000;
-         }
-         else {
-            timedout = getState() != Transaction.State.PREPARED && currentTime > createTime + timeoutSeconds * 1000;
+            timedout = getState() != Transaction.State.PREPARED && currentTime > createTime + (long) defaultTimeout * 1000;
+         } else {
+            timedout = getState() != Transaction.State.PREPARED && currentTime > createTime + (long) timeoutSeconds * 1000;
          }
 
          if (timedout) {
@@ -204,13 +206,11 @@ public class TransactionImpl implements Transaction {
 
                if (exception != null) {
                   throw exception;
-               }
-               else {
+               } else {
                   // Do nothing
                   return;
                }
-            }
-            else if (state != State.ACTIVE) {
+            } else if (state != State.ACTIVE) {
                throw new IllegalStateException("Transaction is in invalid state " + state);
             }
 
@@ -239,8 +239,7 @@ public class TransactionImpl implements Transaction {
                }
             });
          }
-      }
-      finally {
+      } finally {
          storageManager.readUnLock();
       }
    }
@@ -266,8 +265,7 @@ public class TransactionImpl implements Transaction {
 
             if (exception != null) {
                throw exception;
-            }
-            else {
+            } else {
                // Do nothing
                return;
             }
@@ -277,8 +275,7 @@ public class TransactionImpl implements Transaction {
             if (onePhase && state != State.ACTIVE || !onePhase && state != State.PREPARED) {
                throw new ActiveMQIllegalStateException("Transaction is in invalid state " + state);
             }
-         }
-         else {
+         } else {
             if (state != State.ACTIVE) {
                throw new ActiveMQIllegalStateException("Transaction is in invalid state " + state);
             }
@@ -346,6 +343,27 @@ public class TransactionImpl implements Transaction {
    }
 
    @Override
+   public void rollbackIfPossible() {
+      synchronized (timeoutLock) {
+         if (state == State.ROLLEDBACK) {
+            // I don't think this could happen, but just in case
+            logger.debug("TransactionImpl::rollbackIfPossible::" + this + " is being ignored");
+            return;
+         }
+         if (state != State.PREPARED) {
+            try {
+               internalRollback();
+            } catch (Exception e) {
+               // nothing we can do beyond logging
+               // no need to special handler here as this was not even supposed to happen at this point
+               // even if it happenes this would be the exception of the exception, so we just log here
+               logger.warn(e.getMessage(), e);
+            }
+         }
+      }
+   }
+
+   @Override
    public void rollback() throws Exception {
       if (logger.isTraceEnabled()) {
          logger.trace("TransactionImpl::rollback::" + this);
@@ -361,8 +379,7 @@ public class TransactionImpl implements Transaction {
             if (state != State.PREPARED && state != State.ACTIVE && state != State.ROLLBACK_ONLY) {
                throw new ActiveMQIllegalStateException("Transaction is in invalid state " + state);
             }
-         }
-         else {
+         } else {
             if (state != State.ACTIVE && state != State.ROLLBACK_ONLY) {
                throw new ActiveMQIllegalStateException("Transaction is in invalid state " + state);
             }
@@ -382,11 +399,10 @@ public class TransactionImpl implements Transaction {
       try {
          doRollback();
          state = State.ROLLEDBACK;
-      }
-      catch (IllegalStateException e) {
+      } catch (IllegalStateException e) {
          // Something happened before and the TX didn't make to the Journal / Storage
          // We will like to execute afterRollback and clear anything pending
-         ActiveMQServerLogger.LOGGER.warn(e);
+         ActiveMQServerLogger.LOGGER.failedToPerformRollback(e);
       }
       // We want to make sure that nothing else gets done after the commit is issued
       // this will eliminate any possibility or races
@@ -491,7 +507,6 @@ public class TransactionImpl implements Transaction {
       operations.add(operation);
    }
 
-
    @Override
    public synchronized void afterStore(TransactionOperation sync) {
       if (storeOperations == null) {
@@ -511,28 +526,21 @@ public class TransactionImpl implements Transaction {
 
       if (operations != null) {
          return new ArrayList<>(operations);
-      }
-      else {
+      } else {
          return new ArrayList<>();
       }
    }
 
    @Override
    public void putProperty(final int index, final Object property) {
-      if (index >= properties.length) {
-         Object[] newProperties = new Object[index];
-
-         System.arraycopy(properties, 0, newProperties, 0, properties.length);
-
-         properties = newProperties;
-      }
+      ensurePropertiesCapacity(index + 1);
 
       properties[index] = property;
    }
 
    @Override
    public Object getProperty(final int index) {
-      return properties[index];
+      return properties == null ? null : (index < properties.length ? properties[index] : null);
    }
 
    // Private
@@ -626,7 +634,7 @@ public class TransactionImpl implements Transaction {
    public String toString() {
       Date dt = new Date(this.createTime);
       return "TransactionImpl [xid=" + xid +
-         ", id=" +
+         ", txID=" +
          id +
          ", xid=" + xid +
          ", state=" +

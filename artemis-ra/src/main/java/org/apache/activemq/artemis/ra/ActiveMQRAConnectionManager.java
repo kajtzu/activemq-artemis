@@ -22,7 +22,7 @@ import javax.resource.spi.ConnectionRequestInfo;
 import javax.resource.spi.ManagedConnection;
 import javax.resource.spi.ManagedConnectionFactory;
 
-import org.apache.activemq.artemis.utils.ConcurrentHashSet;
+import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
 
 /**
  * The connection manager used in non-managed environments.
@@ -33,16 +33,12 @@ public class ActiveMQRAConnectionManager implements ConnectionManager {
     * Serial version UID
     */
    static final long serialVersionUID = 4409118162975011014L;
-   /**
-    * Trace enabled
-    */
-   private static boolean trace = ActiveMQRALogger.LOGGER.isTraceEnabled();
 
    /**
     * Constructor
     */
    public ActiveMQRAConnectionManager() {
-      if (ActiveMQRAConnectionManager.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("constructor()");
       }
    }
@@ -60,14 +56,14 @@ public class ActiveMQRAConnectionManager implements ConnectionManager {
    @Override
    public Object allocateConnection(final ManagedConnectionFactory mcf,
                                     final ConnectionRequestInfo cxRequestInfo) throws ResourceException {
-      if (ActiveMQRAConnectionManager.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("allocateConnection(" + mcf + ", " + cxRequestInfo + ")");
       }
 
       ManagedConnection mc = mcf.createManagedConnection(null, cxRequestInfo);
       Object c = mc.getConnection(null, cxRequestInfo);
 
-      if (ActiveMQRAConnectionManager.trace) {
+      if (ActiveMQRALogger.LOGGER.isTraceEnabled()) {
          ActiveMQRALogger.LOGGER.trace("Allocated connection: " + c + ", with managed connection: " + mc);
       }
 
@@ -79,8 +75,7 @@ public class ActiveMQRAConnectionManager implements ConnectionManager {
       for (ManagedConnection conn : connections) {
          try {
             conn.destroy();
-         }
-         catch (Throwable e) {
+         } catch (Throwable e) {
 
          }
       }

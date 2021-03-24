@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements. See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -20,8 +20,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -58,6 +59,9 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
 
    @Parameter(defaultValue = "${activemq.basedir}", required = true)
    private File home;
+
+   @Parameter
+   private String[] replacePairs;
 
    @Parameter(defaultValue = "${activemq.basedir}/artemis-distribution/target/apache-artemis-${project.version}-bin/apache-artemis-${project.version}/", required = true)
    private File alternateHome;
@@ -98,6 +102,9 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
    @Parameter(defaultValue = "false")
    private boolean slave;
 
+   @Parameter
+   private String staticCluster;
+
    @Parameter(defaultValue = "./data")
    String dataFolder;
 
@@ -128,36 +135,17 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
    @Parameter
    private String[] libListWithDeps;
 
+   @Parameter
+   private String[] webList;
+
+   @Parameter
+   private String[] webListWithDeps;
 
    @Parameter(defaultValue = "${localRepository}")
    private org.apache.maven.artifact.repository.ArtifactRepository localRepository;
 
    @Parameter(defaultValue = "${noServer}")
    boolean ignore;
-
-   /**
-    * Validate if the directory is a artemis.home *
-    *
-    * @param path
-    * @return
-    */
-   private boolean lookupHome(Path path) {
-
-      if (path == null) {
-         return false;
-      }
-
-      Path binFolder = path.resolve("bin");
-
-      if (binFolder == null && Files.exists(binFolder, LinkOption.NOFOLLOW_LINKS)) {
-         return false;
-      }
-
-      Path artemisScript = binFolder.resolve("artemis");
-
-      return artemisScript != null && Files.exists(artemisScript, LinkOption.NOFOLLOW_LINKS);
-
-   }
 
    private void add(List<String> list, String... str) {
       for (String s : str) {
@@ -175,11 +163,10 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
       getLog().info("Local " + localRepository);
       MavenProject project = (MavenProject) getPluginContext().get("project");
 
-      if (!lookupHome(home.toPath())) {
-         if (lookupHome(alternateHome.toPath())) {
+      if (!isArtemisHome(home.toPath())) {
+         if (isArtemisHome(alternateHome.toPath())) {
             home = alternateHome;
-         }
-         else {
+         } else {
             getLog().error("********************************************************************************************");
             getLog().error("Could not locate suitable Artemis.home on either " + home + " or " + alternateHome);
             getLog().error("Use the binary distribution or build the distribution before running the examples");
@@ -200,17 +187,24 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
 
       ArrayList<String> listCommands = new ArrayList<>();
 
-      add(listCommands, "create", "--allow-anonymous", "--silent", "--force", "--no-web", "--user", user, "--password", password, "--role", role, "--port-offset", "" + portOffset, "--data", dataFolder);
+      add(listCommands, "create", "--silent", "--force", "--user", user, "--password", password, "--role", role, "--port-offset", "" + portOffset, "--data", dataFolder);
 
       if (allowAnonymous) {
          add(listCommands, "--allow-anonymous");
-      }
-      else {
+      } else {
          add(listCommands, "--require-login");
+      }
+
+      if (staticCluster != null) {
+         add(listCommands, "--staticCluster", staticCluster);
       }
 
       if (!javaOptions.isEmpty()) {
          add(listCommands, "--java-options", javaOptions);
+      }
+
+      if (noWeb) {
+         add(listCommands, "--no-web");
       }
 
       if (slave) {
@@ -256,17 +250,15 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
       FileOutputStream outputStream;
       try {
          outputStream = new FileOutputStream(commandLine);
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          e.printStackTrace();
          throw new MojoExecutionException(e.getMessage(), e);
       }
 
-      PrintStream commandLineStream = new PrintStream(outputStream);
-      commandLineStream.println("# These are the commands used to create " + instance.getName());
-      commandLineStream.println(getCommandline(listCommands));
+      try (PrintStream commandLineStream = new PrintStream(outputStream)) {
+         commandLineStream.println("# These are the commands used to create " + instance.getName());
+         commandLineStream.println(getCommandline(listCommands));
 
-      try {
          Artemis.execute(home, null, listCommands);
 
          if (configuration != null) {
@@ -282,16 +274,25 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
 
          Set<File> files = resolveDependencies(libListWithDeps, libList);
 
-         if (!files.isEmpty() ) {
+         if (!files.isEmpty()) {
             commandLineStream.println();
             commandLineStream.println("# This is a list of files that need to be installed under ./lib.");
             commandLineStream.println("# We are copying them from your maven lib home");
             for (File file : files) {
-               copyToLib(file, commandLineStream);
+               copyToDir("lib", file, commandLineStream);
             }
          }
 
-         commandLineStream.close();
+         files = resolveDependencies(webListWithDeps, webList);
+
+         if (!files.isEmpty()) {
+            commandLineStream.println();
+            commandLineStream.println("# This is a list of files that need to be installed under ./web.");
+            commandLineStream.println("# We are copying them from your maven lib home");
+            for (File file : files) {
+               copyToDir("web", file, commandLineStream);
+            }
+         }
 
          FileUtil.makeExec(commandLine);
 
@@ -300,19 +301,36 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
          getLog().info("under " + commandLine.getParent());
          getLog().info("###################################################################################################");
 
-      }
-      catch (Throwable e) {
+      } catch (Throwable e) {
          getLog().error(e);
          throw new MojoFailureException(e.getMessage());
       }
    }
 
-   private void copyConfigurationFiles(String[] list, Path sourcePath, Path targetPath, PrintStream commandLineStream) throws IOException {
+   private void copyConfigurationFiles(String[] list,
+                                       Path sourcePath,
+                                       Path targetPath,
+                                       PrintStream commandLineStream) throws IOException {
+      boolean hasReplacements = false;
+      if (replacePairs != null && replacePairs.length > 0) {
+         hasReplacements = true;
+         if (replacePairs.length % 2 == 1) {
+            throw new IllegalArgumentException("You need to pass an even number of replacement pairs");
+         }
+         for (int i = 0; i < replacePairs.length; i += 2) {
+            commandLineStream.println("# replace " + replacePairs[i] + " by " + replacePairs[i + 1] + " on these files");
+         }
+      }
       for (String file : list) {
          Path target = targetPath.resolve(file);
 
          Path originalFile = sourcePath.resolve(file);
-         Files.copy(originalFile, target, StandardCopyOption.REPLACE_EXISTING);
+
+         if (hasReplacements) {
+            copyWithReplacements(originalFile, target);
+         } else {
+            Files.copy(originalFile, target, StandardCopyOption.REPLACE_EXISTING);
+         }
 
          commandLineStream.println("");
 
@@ -322,13 +340,22 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
             commandLineStream.println("mkdir " + target);
 
             copyConfigurationFiles(originalFile.toFile().list(), originalFile, target, commandLineStream);
-         }
-         else {
+         } else {
             getLog().debug("Copying " + file + " to " + target);
             commandLineStream.println("# copying config file " + originalFile.getFileName());
             commandLineStream.println("cp " + originalFile + " " + target);
          }
       }
+   }
+
+   private void copyWithReplacements(Path original, Path target) throws IOException {
+      Charset charset = StandardCharsets.UTF_8;
+
+      String content = new String(Files.readAllBytes(original), charset);
+      for (int i = 0; i + 1 < replacePairs.length; i += 2) {
+         content = content.replaceAll(replacePairs[i], replacePairs[i + 1]);
+      }
+      Files.write(target, content.getBytes(charset));
    }
 
    private String getCommandline(ArrayList<String> listCommands) {
@@ -340,15 +367,14 @@ public class ArtemisCreatePlugin extends ArtemisAbstractPlugin {
       return buffer.toString();
    }
 
-   private void copyToLib(File projectLib, PrintStream commandLineStream) throws IOException {
-      Path target = instance.toPath().resolve("lib").resolve(projectLib.getName());
+   private void copyToDir(String destination, File projectLib, PrintStream commandLineStream) throws IOException {
+      Path target = instance.toPath().resolve(destination).resolve(projectLib.getName());
       File file = target.toFile();
       File parent = file.getParentFile();
       if (!parent.exists()) {
          parent.mkdirs();
          commandLineStream.println("mkdir " + file.getParent());
       }
-
 
       commandLineStream.println("cp " + projectLib.getAbsolutePath() + " " + target);
       getLog().debug("Copying " + projectLib.getName() + " as " + target.toFile().getAbsolutePath());

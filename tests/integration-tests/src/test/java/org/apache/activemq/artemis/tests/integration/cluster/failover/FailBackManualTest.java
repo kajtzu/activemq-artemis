@@ -18,6 +18,7 @@ package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
 import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -50,7 +51,7 @@ public class FailBackManualTest extends FailoverTestBase {
 
    @Test
    public void testNoAutoFailback() throws Exception {
-      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setFailoverOnInitialConnection(true).setReconnectAttempts(-1);
+      locator.setBlockOnNonDurableSend(true).setBlockOnDurableSend(true).setReconnectAttempts(15);
 
       ClientSessionFactoryInternal sf = createSessionFactoryAndWaitForTopology(locator, 2);
 
@@ -128,7 +129,7 @@ public class FailBackManualTest extends FailoverTestBase {
       ClientSession session = sf.createSession(false, true, true);
 
       if (createQueue) {
-         session.createQueue(ADDRESS, ADDRESS, null, false);
+         session.createQueue(new QueueConfiguration(ADDRESS).setDurable(false));
       }
 
       ClientProducer producer = session.createProducer(ADDRESS);
@@ -185,8 +186,7 @@ public class FailBackManualTest extends FailoverTestBase {
       public void run() {
          try {
             server.start();
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             e.printStackTrace();
          }
       }

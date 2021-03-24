@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.failover;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -66,7 +67,7 @@ public class ReplicatedMultipleServerFailoverTest extends MultipleServerFailover
          ClientSession[] sessions = new ClientSession[liveServers.size()];
          for (int i = 0; i < factories.length; i++) {
             sessions[i] = createSession(factories[i], true, true);
-            sessions[i].createQueue(ADDRESS, ADDRESS, null, true);
+            sessions[i].createQueue(new QueueConfiguration(ADDRESS));
          }
 
          //make sure bindings are ready before sending messages
@@ -110,14 +111,12 @@ public class ReplicatedMultipleServerFailoverTest extends MultipleServerFailover
             }
 
          }
-      }
-      finally {
+      } finally {
          for (ServerLocator locator : locators) {
             if (locator != null) {
                try {
                   locator.close();
-               }
-               catch (Exception e) {
+               } catch (Exception e) {
                   //ignore
                }
             }
@@ -137,7 +136,7 @@ public class ReplicatedMultipleServerFailoverTest extends MultipleServerFailover
 
    @Override
    public boolean isNetty() {
-      return false;
+      return true;
    }
 
    @Override

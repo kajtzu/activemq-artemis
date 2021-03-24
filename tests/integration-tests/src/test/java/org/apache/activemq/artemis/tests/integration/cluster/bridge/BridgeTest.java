@@ -29,7 +29,6 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +37,8 @@ import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Interceptor;
 import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -49,37 +50,39 @@ import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
+import org.apache.activemq.artemis.core.config.TransformerConfiguration;
+import org.apache.activemq.artemis.core.io.SequentialFileFactory;
+import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
-import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
-import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.persistence.impl.journal.DescribeJournal;
 import org.apache.activemq.artemis.core.persistence.impl.journal.JournalRecordIds;
 import org.apache.activemq.artemis.core.postoffice.DuplicateIDCache;
 import org.apache.activemq.artemis.core.postoffice.impl.PostOfficeImpl;
 import org.apache.activemq.artemis.core.protocol.core.Packet;
-import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionSendContinuationMessage;
-import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionSendLargeMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.SessionSendMessage;
 import org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.cluster.Bridge;
-import org.apache.activemq.artemis.core.server.cluster.Transformer;
 import org.apache.activemq.artemis.core.server.cluster.impl.BridgeImpl;
+import org.apache.activemq.artemis.core.server.cluster.impl.BridgeMetrics;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.core.server.impl.ServiceRegistryImpl;
+import org.apache.activemq.artemis.core.server.transformer.AddHeadersTransformer;
+import org.apache.activemq.artemis.core.server.transformer.Transformer;
+import org.apache.activemq.artemis.core.settings.impl.AddressFullMessagePolicy;
+import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.core.transaction.impl.TransactionImpl;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.utils.LinkedListIterator;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.artemis.utils.RandomUtil;
 import org.apache.activemq.artemis.utils.ReusableLatch;
+import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -88,6 +91,8 @@ import org.junit.runners.Parameterized;
 
 @RunWith(value = Parameterized.class)
 public class BridgeTest extends ActiveMQTestBase {
+
+   private static final Logger log = Logger.getLogger(BridgeTest.class);
 
    private ActiveMQServer server0;
    private ActiveMQServer server1;
@@ -118,8 +123,7 @@ public class BridgeTest extends ActiveMQTestBase {
    private String getConnector() {
       if (isNetty()) {
          return NETTY_CONNECTOR_FACTORY;
-      }
-      else {
+      } else {
          return INVM_CONNECTOR_FACTORY;
       }
    }
@@ -167,7 +171,7 @@ public class BridgeTest extends ActiveMQTestBase {
       connectors.put(server1tc.getName(), server1tc);
       server0.getConfiguration().setConnectorConfigurations(connectors);
 
-      final int messageSize = 1024 * 1024 * 5;
+      final int messageSize = 1024 * 200;
 
       final int numMessages = 10;
 
@@ -179,15 +183,15 @@ public class BridgeTest extends ActiveMQTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       server1.start();
       server0.start();
@@ -221,7 +225,7 @@ public class BridgeTest extends ActiveMQTestBase {
       }
 
       for (int i = 0; i < numMessages; i++) {
-         ClientMessage message = consumer1.receive(500000);
+         ClientMessage message = consumer1.receive(5000);
 
          Assert.assertNotNull(message);
 
@@ -247,9 +251,149 @@ public class BridgeTest extends ActiveMQTestBase {
          assertEquals(0, loadQueues(server0).size());
       }
       long timeTaken = System.currentTimeMillis() - time;
-      System.out.println(timeTaken + "ms");
    }
 
+   @Test
+   public void testBlockedBridgeAndReconnect() throws Exception {
+      long time = System.currentTimeMillis();
+      Map<String, Object> server0Params = new HashMap<>();
+      server0 = createClusteredServerWithParams(isNetty(), 0, true, server0Params);
+
+      Map<String, Object> server1Params = new HashMap<>();
+      addTargetParameters(server1Params);
+      server1 = createClusteredServerWithParams(isNetty(), 1, true, server1Params);
+      server1.getAddressSettingsRepository().clear();
+      server1.getAddressSettingsRepository().addMatch("#", new AddressSettings().setMaxSizeBytes(10124 * 10).setAddressFullMessagePolicy(AddressFullMessagePolicy.BLOCK));
+
+      server0.getAddressSettingsRepository().clear();
+      server0.getAddressSettingsRepository().addMatch("#", new AddressSettings().setMaxSizeBytes(Long.MAX_VALUE).setAddressFullMessagePolicy(AddressFullMessagePolicy.BLOCK));
+
+      final String testAddress = "testAddress";
+      final String queueName0 = "queue0";
+      final String forwardAddress = "forwardAddress";
+      final String queueName1 = "queue1";
+
+      TransportConfiguration server0tc = new TransportConfiguration(getConnector(), server0Params);
+
+      TransportConfiguration server1tc = new TransportConfiguration(getConnector(), server1Params);
+
+      HashMap<String, TransportConfiguration> connectors = new HashMap<>();
+      connectors.put(server1tc.getName(), server1tc);
+      server0.getConfiguration().setConnectorConfigurations(connectors);
+
+      final int messageSize = 1024;
+
+      final int numMessages = 1000;
+
+      ArrayList<String> connectorConfig = new ArrayList<>();
+      connectorConfig.add(server1tc.getName());
+      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(100).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(true).setConfirmationWindowSize(numMessages * messageSize / 2).setStaticConnectors(connectorConfig).setProducerWindowSize(1024);
+
+      List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
+      bridgeConfigs.add(bridgeConfiguration);
+      server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
+
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
+      queueConfigs0.add(queueConfig0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
+
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
+      queueConfigs1.add(queueConfig1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
+
+      server1.start();
+      server0.start();
+      locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(server0tc, server1tc));
+      ClientSessionFactory sf0 = addSessionFactory(locator.createSessionFactory(server0tc));
+
+      ClientSessionFactory sf1 = addSessionFactory(locator.createSessionFactory(server1tc));
+
+      ClientSession session0 = sf0.createSession(false, true, 0);
+      ClientProducer producer0 = session0.createProducer(new SimpleString(testAddress));
+
+      ClientSession session1 = sf1.createSession(true, true, 0);
+      ClientConsumer consumer1 = session1.createConsumer(queueName1);
+
+      session1.start();
+
+      final byte[] bytes = new byte[messageSize];
+
+      final SimpleString propKey = new SimpleString("testkey");
+
+      for (int i = 0; i < numMessages; i++) {
+         ClientMessage message = session0.createMessage(true);
+
+         message.putIntProperty(propKey, i);
+
+         message.getBodyBuffer().writeBytes(bytes);
+
+         producer0.send(message);
+
+         if (i % 100 == 0) {
+            session0.commit();
+         }
+      }
+      session0.commit();
+
+      for (int i = 0; i < numMessages / 2; i++) {
+         ClientMessage message = consumer1.receive(5000);
+
+         Assert.assertNotNull(message);
+
+         Assert.assertEquals(i, message.getObjectProperty(propKey));
+
+         message.acknowledge();
+      }
+      session1.commit();
+
+      BridgeImpl bridge = (BridgeImpl) server0.getClusterManager().getBridges().get("bridge1");
+
+      // stop in the middle. wait the bridge to block
+      Wait.assertTrue("bridge is never blocked", bridge::isBlockedOnFlowControl);
+
+      session1.close();
+      sf1.close();
+
+      // now restart the server.. the bridge should be reconnecting now
+      server1.stop();
+      server1.start();
+
+      sf1 = addSessionFactory(locator.createSessionFactory(server1tc));
+      session1 = sf1.createSession(true, true, 0);
+      consumer1 = session1.createConsumer(queueName1);
+      session1.start();
+
+      // consume the rest of the messages
+      for (int i = numMessages / 2; i < numMessages; i++) {
+         ClientMessage message = consumer1.receive(5000);
+
+         Assert.assertNotNull(message);
+
+         Assert.assertEquals(i, message.getObjectProperty(propKey));
+
+         message.acknowledge();
+      }
+
+      Wait.assertEquals(0, server0.locateQueue(SimpleString.toSimpleString("queue0"))::getMessageCount);
+
+      Assert.assertNull(consumer1.receiveImmediate());
+
+      session0.close();
+
+      session1.close();
+
+      sf0.close();
+
+      sf1.close();
+
+      closeFields();
+      if (server0.getConfiguration().isPersistenceEnabled()) {
+         assertEquals(0, loadQueues(server0).size());
+      }
+      long timeTaken = System.currentTimeMillis() - time;
+   }
 
    public void internaltestSimpleBridge(final boolean largeMessage, final boolean useFiles) throws Exception {
       Map<String, Object> server0Params = new HashMap<>();
@@ -285,15 +429,15 @@ public class BridgeTest extends ActiveMQTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       server1.start();
       server0.start();
@@ -354,165 +498,15 @@ public class BridgeTest extends ActiveMQTestBase {
 
       sf1.close();
 
+      assertEquals(1, server0.getClusterManager().getBridges().size());
+      BridgeMetrics bridgeMetrics = server0.getClusterManager().getBridges().get("bridge1").getMetrics();
+      assertEquals(10, bridgeMetrics.getMessagesPendingAcknowledgement());
+      assertEquals(10, bridgeMetrics.getMessagesAcknowledged());
+
       closeFields();
       if (server0.getConfiguration().isPersistenceEnabled()) {
          assertEquals(0, loadQueues(server0).size());
       }
-   }
-
-   @Test
-   public void testLostMessageSimpleMessage() throws Exception {
-      internalTestMessageLoss(false);
-   }
-
-   @Test
-   public void testLostMessageLargeMessage() throws Exception {
-      internalTestMessageLoss(true);
-   }
-
-   /**
-    * This test will ignore messages
-    * What will cause the bridge to fail with a timeout
-    * The bridge should still recover the failure and reconnect on that case
-    */
-   public void internalTestMessageLoss(final boolean largeMessage) throws Exception {
-      class MyInterceptor implements Interceptor {
-
-         public boolean ignoreSends = true;
-         public CountDownLatch latch;
-
-         MyInterceptor(int numberOfIgnores) {
-            latch = new CountDownLatch(numberOfIgnores);
-         }
-
-         @Override
-         public boolean intercept(Packet packet, RemotingConnection connection) throws ActiveMQException {
-            if (ignoreSends && packet instanceof SessionSendMessage ||
-               ignoreSends && packet instanceof SessionSendLargeMessage ||
-               ignoreSends && packet instanceof SessionSendContinuationMessage && !((SessionSendContinuationMessage) packet).isContinues()) {
-               IntegrationTestLogger.LOGGER.info("IGNORED: " + packet);
-               latch.countDown();
-               return false;
-            }
-            else {
-               IntegrationTestLogger.LOGGER.info(packet);
-               return true;
-            }
-         }
-
-      }
-
-      MyInterceptor myInterceptor = new MyInterceptor(3);
-
-      Map<String, Object> server0Params = new HashMap<>();
-      server0 = createClusteredServerWithParams(isNetty(), 0, true, server0Params);
-
-      Map<String, Object> server1Params = new HashMap<>();
-      addTargetParameters(server1Params);
-      server1 = createClusteredServerWithParams(isNetty(), 1, true, server1Params);
-
-      final String testAddress = "testAddress";
-      final String queueName0 = "queue0";
-      final String forwardAddress = "forwardAddress";
-      final String queueName1 = "queue1";
-
-      TransportConfiguration server0tc = new TransportConfiguration(getConnector(), server0Params);
-      TransportConfiguration server1tc = new TransportConfiguration(getConnector(), server1Params);
-
-      HashMap<String, TransportConfiguration> connectors = new HashMap<>();
-      connectors.put(server1tc.getName(), server1tc);
-      server0.getConfiguration().setConnectorConfigurations(connectors);
-
-      final int messageSize = 1024;
-
-      final int numMessages = 1;
-
-      ArrayList<String> connectorConfig = new ArrayList<>();
-      connectorConfig.add(server1tc.getName());
-      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(100).setReconnectAttempts(-1).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(numMessages * messageSize / 2).setStaticConnectors(connectorConfig).setCallTimeout(500);
-
-      List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
-      bridgeConfigs.add(bridgeConfiguration);
-      server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
-
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
-      queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
-
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
-      queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
-
-      server1.start();
-
-      server1.getRemotingService().addIncomingInterceptor(myInterceptor);
-
-      server0.start();
-      locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(server0tc, server1tc));
-      ClientSessionFactory sf0 = addSessionFactory(locator.createSessionFactory(server0tc));
-
-      ClientSessionFactory sf1 = addSessionFactory(locator.createSessionFactory(server1tc));
-
-      ClientSession session0 = sf0.createSession(false, true, true);
-
-      ClientSession session1 = sf1.createSession(false, true, true);
-
-      ClientProducer producer0 = session0.createProducer(new SimpleString(testAddress));
-
-      ClientConsumer consumer1 = session1.createConsumer(queueName1);
-
-      session1.start();
-
-      final byte[] bytes = new byte[messageSize];
-
-      final SimpleString propKey = new SimpleString("testkey");
-
-      for (int i = 0; i < numMessages; i++) {
-         ClientMessage message = session0.createMessage(true);
-
-         if (largeMessage) {
-            message.setBodyInputStream(ActiveMQTestBase.createFakeLargeStream(10 * 1024));
-         }
-
-         message.putIntProperty(propKey, i);
-
-         message.getBodyBuffer().writeBytes(bytes);
-
-         producer0.send(message);
-      }
-
-      assertTrue("where is the countDown?", myInterceptor.latch.await(30, TimeUnit.SECONDS));
-      myInterceptor.ignoreSends = false;
-      server1.getRemotingService().removeIncomingInterceptor(myInterceptor);
-      IntegrationTestLogger.LOGGER.info("No longer ignoring packets.");
-
-      for (int i = 0; i < numMessages; i++) {
-         ClientMessage message = consumer1.receive(30000);
-
-         Assert.assertNotNull(message);
-
-         Assert.assertEquals(i, message.getObjectProperty(propKey));
-
-         if (largeMessage) {
-            readLargeMessages(message, 10);
-         }
-
-         message.acknowledge();
-      }
-
-      Assert.assertNull(consumer1.receiveImmediate());
-
-      session0.close();
-
-      session1.close();
-
-      sf0.close();
-
-      sf1.close();
-      closeFields();
-      assertEquals("there should be no queues", 0, loadQueues(server0).size());
    }
 
    /**
@@ -521,8 +515,7 @@ public class BridgeTest extends ActiveMQTestBase {
    private void addTargetParameters(final Map<String, Object> server1Params) {
       if (isNetty()) {
          server1Params.put("port", org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants.DEFAULT_PORT + 1);
-      }
-      else {
+      } else {
          server1Params.put(TransportConstants.SERVER_ID_PROP_NAME, 1);
       }
    }
@@ -591,15 +584,15 @@ public class BridgeTest extends ActiveMQTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       server1.start();
       server0.start();
@@ -707,7 +700,7 @@ public class BridgeTest extends ActiveMQTestBase {
 
       final String testAddress = "testAddress";
       final String queueName0 = "queue0";
-      final String forwardAddress = "jms.queue.forwardAddress";
+      final String forwardAddress = "forwardAddress";
       final String queueName1 = "forwardAddress";
 
       Map<String, TransportConfiguration> connectors = new HashMap<>();
@@ -725,10 +718,10 @@ public class BridgeTest extends ActiveMQTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
       server0.start();
 
@@ -759,16 +752,16 @@ public class BridgeTest extends ActiveMQTestBase {
 
       server1.start();
 
-      Thread.sleep(1000);
+      Wait.assertTrue(server1::isActive);
+
 
       ClientSessionFactory sf1 = locator.createSessionFactory(server1tc);
 
       ClientSession session1 = sf1.createSession(false, true, true);
 
       try {
-         session1.createQueue(forwardAddress, queueName1);
-      }
-      catch (Throwable ignored) {
+         session1.createQueue(new QueueConfiguration(queueName1).setAddress(forwardAddress).setRoutingType(RoutingType.ANYCAST));
+      } catch (Throwable ignored) {
          ignored.printStackTrace();
       }
 
@@ -815,8 +808,9 @@ public class BridgeTest extends ActiveMQTestBase {
 
       final String testAddress = "testAddress";
       final String queueName0 = "queue0";
-      final String forwardAddress = "jms.queue.forwardAddress";
-      final String queueName1 = "forwardAddress";
+      final String secondQueue = "queue1";
+      final String forwardAddress = "forwardAddress";
+      final String queueName1 = "forwardQueue";
 
       Map<String, TransportConfiguration> connectors = new HashMap<>();
       TransportConfiguration server0tc = new TransportConfiguration(getConnector(), server0Params);
@@ -833,10 +827,12 @@ public class BridgeTest extends ActiveMQTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      queueConfig0 = new QueueConfiguration(secondQueue).setAddress(testAddress);
+      queueConfigs0.add(queueConfig0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
       server0.start();
 
@@ -891,16 +887,14 @@ public class BridgeTest extends ActiveMQTestBase {
          tx.commit();
       }
 
-      Thread.sleep(1000);
 
       ClientSessionFactory sf1 = locator.createSessionFactory(server1tc);
 
       ClientSession session1 = sf1.createSession(false, true, true);
 
       try {
-         session1.createQueue(forwardAddress, queueName1);
-      }
-      catch (Throwable ignored) {
+         session1.createQueue(new QueueConfiguration(queueName1).setAddress(forwardAddress).setRoutingType(RoutingType.ANYCAST));
+      } catch (Throwable ignored) {
          ignored.printStackTrace();
       }
 
@@ -919,6 +913,20 @@ public class BridgeTest extends ActiveMQTestBase {
 
       Assert.assertNull(consumer1.receiveImmediate());
 
+      ClientConsumer otherConsumer = session0.createConsumer(secondQueue);
+      session0.start();
+      for (int i = 0; i < numMessages; i++) {
+         ClientMessage message = otherConsumer.receive(5000);
+         Assert.assertNotNull(message);
+         // This is validating the Bridge is not messing up with the original message
+         // and should make a copy of the message before sending it
+         Assert.assertEquals(2, message.getPropertyNames().size());
+         Assert.assertEquals(i, message.getIntProperty(propKey).intValue());
+         Assert.assertEquals(new SimpleString("monkey" + i), message.getSimpleStringProperty(selectorKey));
+         message.acknowledge();
+
+      }
+
       consumer1.close();
 
       session1.deleteQueue(queueName1);
@@ -927,6 +935,9 @@ public class BridgeTest extends ActiveMQTestBase {
 
       sf1.close();
 
+      SimpleString queueName1Str = new SimpleString(queueName1);
+      Wait.assertTrue(() -> server1.locateQueue(queueName1Str) == null);
+
       server1.stop();
 
       session0.close();
@@ -934,7 +945,8 @@ public class BridgeTest extends ActiveMQTestBase {
       sf0.close();
 
       closeFields();
-      assertEquals(0, loadQueues(server0).size());
+
+      Wait.assertEquals(0, () -> loadQueues(server0).size());
 
    }
 
@@ -954,7 +966,7 @@ public class BridgeTest extends ActiveMQTestBase {
       internaltestWithTransformer(true);
    }
 
-   public void internaltestWithTransformer(final boolean useFiles) throws Exception {
+   private void internaltestWithTransformer(final boolean useFiles) throws Exception {
       Map<String, Object> server0Params = new HashMap<>();
       server0 = createClusteredServerWithParams(isNetty(), 0, false, server0Params);
 
@@ -977,21 +989,21 @@ public class BridgeTest extends ActiveMQTestBase {
       ArrayList<String> staticConnectors = new ArrayList<>();
       staticConnectors.add(server1tc.getName());
 
-      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setTransformerClassName(SimpleTransformer.class.getName()).setRetryInterval(1000).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(1024).setStaticConnectors(staticConnectors);
+      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setTransformerConfiguration(new TransformerConfiguration(SimpleTransformer.class.getName())).setRetryInterval(1000).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(1024).setStaticConnectors(staticConnectors);
 
       List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       server1.start();
       server0.start();
@@ -1058,6 +1070,112 @@ public class BridgeTest extends ActiveMQTestBase {
    }
 
    @Test
+   public void testWithTransformerProperties() throws Exception {
+      final String propKey = "bridged";
+      final String propValue = "true";
+
+      TransformerConfiguration transformerConfiguration = new TransformerConfiguration(AddHeadersTransformer.class.getName());
+      transformerConfiguration.getProperties().put(propKey, propValue);
+
+      Map<String, Object> server0Params = new HashMap<>();
+      server0 = createClusteredServerWithParams(isNetty(), 0, false, server0Params);
+
+      Map<String, Object> server1Params = new HashMap<>();
+      addTargetParameters(server1Params);
+      server1 = createClusteredServerWithParams(isNetty(), 1, false, server1Params);
+
+      final String testAddress = "testAddress";
+      final String queueName0 = "queue0";
+      final String forwardAddress = "forwardAddress";
+      final String queueName1 = "queue1";
+
+      Map<String, TransportConfiguration> connectors = new HashMap<>();
+      TransportConfiguration server0tc = new TransportConfiguration(getConnector(), server0Params);
+      TransportConfiguration server1tc = new TransportConfiguration(getConnector(), server1Params);
+      connectors.put(server1tc.getName(), server1tc);
+
+      server0.getConfiguration().setConnectorConfigurations(connectors);
+
+      ArrayList<String> staticConnectors = new ArrayList<>();
+      staticConnectors.add(server1tc.getName());
+
+      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setTransformerConfiguration(transformerConfiguration).setRetryInterval(1000).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(1024).setStaticConnectors(staticConnectors);
+
+      List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
+      bridgeConfigs.add(bridgeConfiguration);
+      server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
+
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
+      queueConfigs0.add(queueConfig0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
+
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
+      queueConfigs1.add(queueConfig1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
+
+      server1.start();
+      server0.start();
+
+      locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(server0tc, server1tc));
+      ClientSessionFactory sf0 = locator.createSessionFactory(server0tc);
+
+      ClientSessionFactory sf1 = locator.createSessionFactory(server1tc);
+
+      ClientSession session0 = sf0.createSession(false, true, true);
+
+      ClientSession session1 = sf1.createSession(false, true, true);
+
+      ClientProducer producer0 = session0.createProducer(new SimpleString(testAddress));
+
+      ClientConsumer consumer1 = session1.createConsumer(queueName1);
+
+      session1.start();
+
+      final int numMessages = 10;
+
+      for (int i = 0; i < numMessages; i++) {
+         ClientMessage message = session0.createMessage(true);
+
+         message.getBodyBuffer().writeString("doo be doo be doo be doo");
+
+         producer0.send(message);
+      }
+
+      for (int i = 0; i < numMessages; i++) {
+         ClientMessage message = consumer1.receive(200);
+
+         Assert.assertNotNull(message);
+
+         String messagePropVal = message.getStringProperty(propKey);
+
+         Assert.assertEquals(propValue, messagePropVal);
+
+         String sval = message.getBodyBuffer().readString();
+
+         Assert.assertEquals("doo be doo be doo be doo", sval);
+
+         message.acknowledge();
+
+      }
+
+      Assert.assertNull(consumer1.receiveImmediate());
+
+      session0.close();
+
+      session1.close();
+
+      sf0.close();
+
+      sf1.close();
+
+      if (server0.getConfiguration().isPersistenceEnabled()) {
+         assertEquals(0, loadQueues(server0).size());
+      }
+   }
+
+   @Test
    public void testSawtoothLoad() throws Exception {
       Map<String, Object> server0Params = new HashMap<>();
       ActiveMQServer server0 = createClusteredServerWithParams(isNetty(), 0, true, server0Params);
@@ -1083,21 +1201,21 @@ public class BridgeTest extends ActiveMQTestBase {
       ArrayList<String> staticConnectors = new ArrayList<>();
       staticConnectors.add(server1tc.getName());
 
-      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(1000).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(0).setStaticConnectors(staticConnectors);
+      BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(1000).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(0).setStaticConnectors(staticConnectors).setProducerWindowSize(1);
 
       List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       try {
          server1.start();
@@ -1145,8 +1263,7 @@ public class BridgeTest extends ActiveMQTestBase {
                   sf.close();
                   locator.close();
 
-               }
-               catch (Throwable e) {
+               } catch (Throwable e) {
                   e.printStackTrace();
                   errors.incrementAndGet();
                }
@@ -1188,8 +1305,7 @@ public class BridgeTest extends ActiveMQTestBase {
 
                      if (i % 100 == 0) {
                         message.setPriority((byte) (RandomUtil.randomPositiveInt() % 9));
-                     }
-                     else {
+                     } else {
                         message.setPriority((byte) 5);
                      }
 
@@ -1198,18 +1314,15 @@ public class BridgeTest extends ActiveMQTestBase {
                      producer.send(message);
                      assertTrue(semop.tryAcquire(1, 10, TimeUnit.SECONDS));
                   }
-               }
-               catch (Throwable e) {
+               } catch (Throwable e) {
                   e.printStackTrace(System.out);
                   errors.incrementAndGet();
-               }
-               finally {
+               } finally {
                   try {
                      session.close();
                      sf.close();
                      locator.close();
-                  }
-                  catch (Exception ignored) {
+                  } catch (Exception ignored) {
                      errors.incrementAndGet();
                   }
                }
@@ -1233,19 +1346,16 @@ public class BridgeTest extends ActiveMQTestBase {
 
             assertEquals(0, errors.get());
          }
-      }
-      finally {
+      } finally {
          try {
             server0.stop();
-         }
-         catch (Exception ignored) {
+         } catch (Exception ignored) {
 
          }
 
          try {
             server1.stop();
-         }
-         catch (Exception ignored) {
+         } catch (Exception ignored) {
 
          }
       }
@@ -1269,7 +1379,7 @@ public class BridgeTest extends ActiveMQTestBase {
 
          Map<String, Object> server1Params = new HashMap<>();
          addTargetParameters(server1Params);
-         server1 = createClusteredServerWithParams(isNetty(), 1, true, PAGE_SIZE, PAGE_MAX, server1Params);
+         server1 = createClusteredServerWithParams(isNetty(), 1, true, PAGE_SIZE, -1, server1Params);
          server1.getConfiguration().setJournalBufferTimeout_AIO(10).setJournalBufferTimeout_NIO(10);
 
          final String testAddress = "testAddress";
@@ -1290,25 +1400,23 @@ public class BridgeTest extends ActiveMQTestBase {
          ArrayList<String> staticConnectors = new ArrayList<>();
          staticConnectors.add(server1tc.getName());
 
-         BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(1).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(1).setStaticConnectors(staticConnectors);
+         BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(1).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(true).setConfirmationWindowSize(1).setStaticConnectors(staticConnectors);
 
          bridgeConfiguration.setCallTimeout(1000);
-
-         bridgeConfiguration.setUseDuplicateDetection(true);
 
          List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
          bridgeConfigs.add(bridgeConfiguration);
          server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-         CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-         List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+         QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+         List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
          queueConfigs0.add(queueConfig0);
-         server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+         server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-         CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-         List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+         QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+         List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
          queueConfigs1.add(queueConfig1);
-         server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+         server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
          List<String> interceptorToStop = new ArrayList<>();
          interceptorToStop.add(StopInterceptor.class.getName());
@@ -1386,7 +1494,7 @@ public class BridgeTest extends ActiveMQTestBase {
             msgCount.incrementAndGet();
 
             if (i % 500 == 0)
-               System.out.println("received " + i);
+              instanceLog.debug("received " + i);
          }
 
          boolean failed = false;
@@ -1401,8 +1509,7 @@ public class BridgeTest extends ActiveMQTestBase {
             if (msgCount == null) {
                System.err.println("Msg " + i + " wasn't received");
                failed = true;
-            }
-            else if (msgCount.get() > 1) {
+            } else if (msgCount.get() > 1) {
                System.err.println("msg " + i + " was received " + msgCount.get() + " times");
                failed = true;
             }
@@ -1419,21 +1526,18 @@ public class BridgeTest extends ActiveMQTestBase {
 
          sf1.close();
 
-      }
-      finally {
+      } finally {
          if (locator != null) {
             locator.close();
          }
          try {
             server0.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
 
          try {
             server1.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
       }
 
@@ -1464,18 +1568,14 @@ public class BridgeTest extends ActiveMQTestBase {
 
          if (packet instanceof SessionSendMessage && ++count == 100) {
             try {
-               System.out.println("Stopping server after " + count + " messages");
-
                thread = new Thread("***Server Restarter***") {
 
                   @Override
                   public void run() {
                      try {
-                        System.out.println("Stopping server");
+                        serverToStop.fail(false);
                         latch.countDown();
-                        serverToStop.stop(false);
-                     }
-                     catch (Exception e) {
+                     } catch (Exception e) {
                         e.printStackTrace();
                      }
                   }
@@ -1485,8 +1585,7 @@ public class BridgeTest extends ActiveMQTestBase {
 
                latch.await();
                return true;
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
             }
          }
@@ -1534,15 +1633,15 @@ public class BridgeTest extends ActiveMQTestBase {
          bridgeConfigs.add(bridgeConfiguration);
          server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-         CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-         List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+         QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+         List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
          queueConfigs0.add(queueConfig0);
-         server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+         server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-         CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName1);
-         List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+         QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+         List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
          queueConfigs1.add(queueConfig1);
-         server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+         server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
          server1.start();
          server0.start();
@@ -1606,21 +1705,18 @@ public class BridgeTest extends ActiveMQTestBase {
 
          sf1.close();
 
-      }
-      finally {
+      } finally {
          if (locator != null) {
             locator.close();
          }
          try {
             server0.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
 
          try {
             server1.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
       }
 
@@ -1661,35 +1757,23 @@ public class BridgeTest extends ActiveMQTestBase {
          ArrayList<String> staticConnectors = new ArrayList<>();
          staticConnectors.add(server1tc.getName());
 
-         int minLargeMessageSize = 1024 * 1024;
+         int minLargeMessageSize = 200 * 1024;
 
-         BridgeConfiguration bridgeConfiguration = new BridgeConfiguration()
-            .setName("bridge1")
-            .setQueueName(queueName0)
-            .setForwardingAddress(forwardAddress)
-            .setRetryInterval(1000)
-            .setReconnectAttemptsOnSameNode(-1)
-            .setUseDuplicateDetection(false)
-            .setConfirmationWindowSize(1024)
-            .setStaticConnectors(staticConnectors)
-            .setMinLargeMessageSize(minLargeMessageSize)
-            .setProducerWindowSize(minLargeMessageSize / 2);
+         BridgeConfiguration bridgeConfiguration = new BridgeConfiguration().setName("bridge1").setQueueName(queueName0).setForwardingAddress(forwardAddress).setRetryInterval(1000).setReconnectAttemptsOnSameNode(-1).setUseDuplicateDetection(false).setConfirmationWindowSize(1024).setStaticConnectors(staticConnectors).setMinLargeMessageSize(minLargeMessageSize).setProducerWindowSize(minLargeMessageSize / 2);
 
          List<BridgeConfiguration> bridgeConfigs = new ArrayList<>();
          bridgeConfigs.add(bridgeConfiguration);
          server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-         CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-         List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+         QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+         List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
          queueConfigs0.add(queueConfig0);
-         server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+         server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-         CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration()
-            .setAddress(forwardAddress)
-            .setName(queueName1);
-         List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+         QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(forwardAddress);
+         List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
          queueConfigs1.add(queueConfig1);
-         server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+         server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
          server1.start();
          server0.start();
@@ -1711,7 +1795,7 @@ public class BridgeTest extends ActiveMQTestBase {
          session1.start();
 
          //create a large message bigger than Integer.MAX_VALUE
-         final long largeMessageSize = Integer.MAX_VALUE + 1000L;
+         final long largeMessageSize = 200 * 1024;
 
          ClientMessage largeMessage = createLargeMessage(session0, largeMessageSize);
 
@@ -1720,20 +1804,7 @@ public class BridgeTest extends ActiveMQTestBase {
          session0.commit();
 
          //check target queue for large message arriving
-         ClientSession.QueueQuery query = session1.queueQuery(new SimpleString(queueName1));
-         long messageCount = query.getMessageCount();
-         int count = 0;
-         //wait for 300 sec max
-         while (messageCount == 0 && count < 300) {
-            count++;
-            Thread.sleep(1000);
-            query = session1.queueQuery(new SimpleString(queueName1));
-            messageCount = query.getMessageCount();
-         }
-
-         if (messageCount == 0) {
-            fail("large message didn't arrived after 5 min!");
-         }
+         Wait.waitFor(() -> session1.queueQuery(SimpleString.toSimpleString(queueName1)).getMessageCount() > 0);
 
          //receive the message
          ClientMessage message = consumer1.receive(5000);
@@ -1741,7 +1812,7 @@ public class BridgeTest extends ActiveMQTestBase {
 
          File outputFile = new File(getTemporaryDir(), "huge_message_received.dat");
 
-         System.out.println("-----message save to: " + outputFile.getAbsolutePath());
+         instanceLog.debug("-----message save to: " + outputFile.getAbsolutePath());
          FileOutputStream fileOutputStream = new FileOutputStream(outputFile);
 
          BufferedOutputStream bufferedOutput = new BufferedOutputStream(fileOutputStream);
@@ -1763,21 +1834,18 @@ public class BridgeTest extends ActiveMQTestBase {
 
          sf1.close();
 
-      }
-      finally {
+      } finally {
          if (locator != null) {
             locator.close();
          }
          try {
             server0.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
 
          try {
             server1.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
       }
 
@@ -1789,7 +1857,7 @@ public class BridgeTest extends ActiveMQTestBase {
 
       createFile(fileInput, largeMessageSize);
 
-      System.out.println("File created at: " + fileInput.getAbsolutePath());
+      instanceLog.debug("File created at: " + fileInput.getAbsolutePath());
 
       ClientMessage message = session.createMessage(Message.BYTES_TYPE, true);
 
@@ -1803,13 +1871,13 @@ public class BridgeTest extends ActiveMQTestBase {
 
    private static void createFile(final File file, final long fileSize) throws IOException {
       if (file.exists()) {
-         System.out.println("---file already there " + file.length());
+         log.warn("---file already there " + file.length());
          return;
       }
       FileOutputStream fileOut = new FileOutputStream(file);
       BufferedOutputStream buffOut = new BufferedOutputStream(fileOut);
       byte[] outBuffer = new byte[1024 * 1024];
-      System.out.println(" --- creating file, size: " + fileSize);
+      log.debug(" --- creating file, size: " + fileSize);
       for (long i = 0; i < fileSize; i += outBuffer.length) {
          buffOut.write(outBuffer);
       }
@@ -1850,16 +1918,16 @@ public class BridgeTest extends ActiveMQTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName0);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName0).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
       // on server #1, we bind queueName1 to same address testAddress
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName1);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName1).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       server1.start();
       server0.start();
@@ -1924,22 +1992,56 @@ public class BridgeTest extends ActiveMQTestBase {
       ServiceRegistryImpl serviceRegistry = new ServiceRegistryImpl();
       Transformer transformer = new Transformer() {
          @Override
-         public ServerMessage transform(ServerMessage message) {
+         public Message transform(Message message) {
             return null;
          }
       };
+
       serviceRegistry.addBridgeTransformer(BRIDGE, transformer);
       Configuration config = createDefaultInVMConfig().addConnectorConfiguration("in-vm", new TransportConfiguration(INVM_CONNECTOR_FACTORY));
       ActiveMQServer server = addServer(new ActiveMQServerImpl(config, null, null, null, serviceRegistry));
       server.start();
       server.waitForActivation(100, TimeUnit.MILLISECONDS);
-      server.deployQueue(ADDRESS, QUEUE, null, false, false);
+      server.createQueue(new QueueConfiguration(QUEUE).setAddress(ADDRESS).setRoutingType(RoutingType.ANYCAST).setDurable(false));
       List<String> connectors = new ArrayList<>();
       connectors.add("in-vm");
       server.deployBridge(new BridgeConfiguration().setName(BRIDGE).setQueueName(QUEUE.toString()).setForwardingAddress(ADDRESS.toString()).setStaticConnectors(connectors));
       Bridge bridge = server.getClusterManager().getBridges().get(BRIDGE);
       assertNotNull(bridge);
       assertEquals(transformer, ((BridgeImpl) bridge).getTransformer());
+   }
+
+   @Test
+   public void testDefaultConfirmationWindowSize() throws Exception {
+      final SimpleString ADDRESS = new SimpleString("myAddress");
+      final SimpleString QUEUE = new SimpleString("myQueue");
+      final SimpleString FORWARDING_ADDRESS = new SimpleString("myForwardingAddress");
+      final SimpleString FORWARDING_QUEUE = new SimpleString("myForwardingQueue");
+      final String BRIDGE = "myBridge";
+
+      Configuration config = createDefaultConfig(0, isNetty()).addConnectorConfiguration("myConnector", new TransportConfiguration(getConnector()));
+      ActiveMQServer server = addServer(new ActiveMQServerImpl(config));
+      server.start();
+      server.waitForActivation(100, TimeUnit.MILLISECONDS);
+      server.createQueue(new QueueConfiguration(QUEUE).setAddress(ADDRESS).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      server.createQueue(new QueueConfiguration(FORWARDING_QUEUE).setAddress(FORWARDING_ADDRESS).setRoutingType(RoutingType.ANYCAST).setDurable(false));
+      ArrayList<String> connectors = new ArrayList<>();
+      connectors.add("myConnector");
+      server.deployBridge(new BridgeConfiguration()
+                             .setName(BRIDGE)
+                             .setQueueName(QUEUE.toString())
+                             .setForwardingAddress(FORWARDING_ADDRESS.toString())
+                             .setStaticConnectors(connectors));
+
+      // now we actually have to use the bridge to make sure it connected correctly
+      locator = addServerLocator(ActiveMQClient.createServerLocatorWithoutHA(new TransportConfiguration(getConnector())));
+      ClientSessionFactory sf = addSessionFactory(locator.createSessionFactory());
+      ClientSession session = addClientSession(sf.createSession(false, true, true));
+      ClientProducer producer = addClientProducer(session.createProducer(ADDRESS));
+      ClientConsumer consumer = addClientConsumer(session.createConsumer(FORWARDING_QUEUE));
+      session.start();
+      producer.send(session.createMessage(true));
+      Assert.assertNotNull(consumer.receive(200));
    }
 
    /**
@@ -1971,8 +2073,7 @@ public class BridgeTest extends ActiveMQTestBase {
             if (count == null) {
                count = new AtomicInteger(1);
                messageRefCounts.put(ref.refEncoding.queueID, count);
-            }
-            else {
+            } else {
                count.incrementAndGet();
             }
          }

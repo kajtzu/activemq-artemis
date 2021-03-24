@@ -16,7 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import javax.jms.DeliveryMode;
 import javax.jms.JMSException;
 import javax.jms.MessageConsumer;
 import javax.jms.Session;
@@ -39,33 +38,25 @@ public class JmsTopicSendReceiveTest extends JmsSendReceiveTestSupport {
          connection.setClientID(getClass().getName());
       }
 
-      System.out.println("Created connection: " + connection);
-
       session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
       consumeSession = createConsumerSession();
 
-      System.out.println("Created session: " + session);
       producer = session.createProducer(null);
       producer.setDeliveryMode(deliveryMode);
-
-      System.out.println("Created producer: " + producer + " delivery mode = " + (deliveryMode == DeliveryMode.PERSISTENT ? "PERSISTENT" : "NON_PERSISTENT"));
 
       if (topic) {
          consumerDestination = createDestination(session, ActiveMQDestination.TOPIC_TYPE, getConsumerSubject());
          producerDestination = createDestination(session, ActiveMQDestination.TOPIC_TYPE, getProducerSubject());
-      }
-      else {
+      } else {
          consumerDestination = createDestination(session, ActiveMQDestination.QUEUE_TYPE, getConsumerSubject());
          producerDestination = createDestination(session, ActiveMQDestination.QUEUE_TYPE, getConsumerSubject());
       }
 
-      System.out.println("Created  consumer destination: " + consumerDestination + " of type: " + consumerDestination.getClass());
-      System.out.println("Created  producer destination: " + producerDestination + " of type: " + producerDestination.getClass());
       consumer = createConsumer();
       consumer.setMessageListener(this);
       connection.start();
 
-      // log.info("Created connection: " + connection);
+      // log.debug("Created connection: " + connection);
    }
 
    protected String getConsumerSubject() {
@@ -78,7 +69,6 @@ public class JmsTopicSendReceiveTest extends JmsSendReceiveTestSupport {
 
    protected MessageConsumer createConsumer() throws JMSException {
       if (durable) {
-         System.out.println("Creating durable consumer");
          return session.createDurableSubscriber((Topic) consumerDestination, getName());
       }
       return session.createConsumer(consumerDestination);
@@ -87,8 +77,7 @@ public class JmsTopicSendReceiveTest extends JmsSendReceiveTestSupport {
    protected Session createConsumerSession() throws JMSException {
       if (useSeparateSession) {
          return connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-      }
-      else {
+      } else {
          return session;
       }
    }

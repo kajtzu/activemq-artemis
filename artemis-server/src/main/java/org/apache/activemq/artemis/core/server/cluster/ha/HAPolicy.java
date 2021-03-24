@@ -18,6 +18,8 @@ package org.apache.activemq.artemis.core.server.cluster.ha;
 
 import java.util.Map;
 
+import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
 import org.apache.activemq.artemis.core.server.impl.Activation;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 
@@ -33,11 +35,15 @@ public interface HAPolicy<T extends Activation> {
    T createActivation(ActiveMQServerImpl server,
                       boolean wasLive,
                       Map<String, Object> activationParams,
-                      ActiveMQServerImpl.ShutdownOnCriticalErrorListener shutdownOnCriticalIO) throws Exception;
+                      IOCriticalErrorListener shutdownOnCriticalIO) throws Exception;
 
    boolean isSharedStore();
 
    boolean isBackup();
+
+   default boolean isWaitForActivation() {
+      return ActiveMQDefaultConfiguration.isDefaultWaitForActivation();
+   }
 
    boolean canScaleDown();
 

@@ -19,14 +19,17 @@ package org.apache.activemq.artemis.tests.integration.client;
 import javax.management.MBeanServer;
 import java.lang.management.ManagementFactory;
 import java.util.LinkedList;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.Message;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
+import org.apache.activemq.artemis.api.core.RoutingType;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -41,6 +44,8 @@ import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.io.nio.NIOSequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
 import org.apache.activemq.artemis.core.journal.impl.JournalImpl;
+import org.apache.activemq.artemis.core.paging.PagingManager;
+import org.apache.activemq.artemis.core.paging.PagingStore;
 import org.apache.activemq.artemis.core.paging.cursor.PageSubscription;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
@@ -53,7 +58,6 @@ import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.ServerConsumer;
-import org.apache.activemq.artemis.core.server.ServerMessage;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.core.server.impl.QueueFactoryImpl;
 import org.apache.activemq.artemis.core.server.impl.QueueImpl;
@@ -67,8 +71,10 @@ import org.apache.activemq.artemis.spi.core.security.ActiveMQJAASSecurityManager
 import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
 import org.apache.activemq.artemis.spi.core.security.jaas.InVMLoginModule;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.Wait;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
 import org.apache.activemq.artemis.utils.ReusableLatch;
+import org.apache.activemq.artemis.utils.actors.ArtemisExecutor;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -106,7 +112,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
 
    @Test
    public void testHangOnDelivery() throws Exception {
-      queue = server.createQueue(QUEUE, QUEUE, null, true, false);
+      queue = server.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
       try {
 
          ClientSessionFactory factory = locator.createSessionFactory();
@@ -147,8 +153,9 @@ public class HangConsumerTest extends ActiveMQTestBase {
 
          // a flush to guarantee any pending task is finished on flushing out delivery and pending msgs
          queue.flushExecutor();
-         Assert.assertEquals(2, getMessageCount(queue));
-         Assert.assertEquals(2, getMessagesAdded(queue));
+         Wait.waitFor(() -> getMessageCount(queue) == 2);
+         Wait.assertEquals(2, queue::getMessageCount);
+         Wait.assertEquals(2, queue::getMessagesAdded);
 
          ClientMessage msg = consumer.receive(5000);
          Assert.assertNotNull(msg);
@@ -163,8 +170,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
 
          sessionProducer.close();
          sessionConsumer.close();
-      }
-      finally {
+      } finally {
          releaseConsumers();
       }
    }
@@ -202,34 +208,37 @@ public class HangConsumerTest extends ActiveMQTestBase {
       class MyQueueWithBlocking extends QueueImpl {
 
          /**
-          * @param id
-          * @param address
-          * @param name
-          * @param filter
+          * @param queueConfiguration
           * @param pageSubscription
-          * @param durable
-          * @param temporary
           * @param scheduledExecutor
           * @param postOffice
           * @param storageManager
           * @param addressSettingsRepository
           * @param executor
           */
-         MyQueueWithBlocking(final long id,
-                             final SimpleString address,
-                             final SimpleString name,
-                             final Filter filter,
-                             final SimpleString user,
+         MyQueueWithBlocking(final QueueConfiguration queueConfiguration,
+                             final PagingStore pagingStore,
                              final PageSubscription pageSubscription,
-                             final boolean durable,
-                             final boolean temporary,
-                             final boolean autoCreated,
                              final ScheduledExecutorService scheduledExecutor,
                              final PostOffice postOffice,
                              final StorageManager storageManager,
                              final HierarchicalRepository<AddressSettings> addressSettingsRepository,
-                             final Executor executor) {
-            super(id, address, name, filter, pageSubscription, user, durable, temporary, autoCreated, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executor);
+                             final ArtemisExecutor executor, final ActiveMQServer server) {
+            super(queueConfiguration,
+                  pagingStore,
+                  pageSubscription,
+                  scheduledExecutor,
+                  postOffice,
+                  storageManager,
+                  addressSettingsRepository,
+                  executor,
+                  server,
+                  null);
+         }
+
+         @Override
+         public boolean allowsReferenceCallback() {
+            return false;
          }
 
          @Override
@@ -250,33 +259,27 @@ public class HangConsumerTest extends ActiveMQTestBase {
          LocalFactory(final ExecutorFactory executorFactory,
                       final ScheduledExecutorService scheduledExecutor,
                       final HierarchicalRepository<AddressSettings> addressSettingsRepository,
-                      final StorageManager storageManager) {
-            super(executorFactory, scheduledExecutor, addressSettingsRepository, storageManager);
+                      final StorageManager storageManager, final ActiveMQServer server) {
+            super(executorFactory, scheduledExecutor, addressSettingsRepository, storageManager, server);
          }
 
          @Override
-         public Queue createQueue(final long persistenceID,
-                                  final SimpleString address,
-                                  final SimpleString name,
-                                  final Filter filter,
-                                  final PageSubscription pageSubscription,
-                                  final SimpleString user,
-                                  final boolean durable,
-                                  final boolean temporary,
-                                  final boolean autoCreated) {
-            queue = new MyQueueWithBlocking(persistenceID, address, name, filter, user, pageSubscription, durable, temporary, autoCreated, scheduledExecutor, postOffice, storageManager, addressSettingsRepository, executorFactory.getExecutor());
+         public Queue createQueueWith(final QueueConfiguration config, PagingManager pagingManager) {
+            PageSubscription pageSubscription = getPageSubscription(config, pagingManager);
+            queue = new MyQueueWithBlocking(config, pageSubscription != null ? pageSubscription.getPagingStore() : null, pageSubscription, scheduledExecutor,
+                                            postOffice, storageManager, addressSettingsRepository,
+                                            executorFactory.getExecutor(), server);
             return queue;
          }
-
       }
 
-      LocalFactory queueFactory = new LocalFactory(server.getExecutorFactory(), server.getScheduledPool(), server.getAddressSettingsRepository(), server.getStorageManager());
+      LocalFactory queueFactory = new LocalFactory(server.getExecutorFactory(), server.getScheduledPool(), server.getAddressSettingsRepository(), server.getStorageManager(), server);
 
       queueFactory.setPostOffice(server.getPostOffice());
 
       ((ActiveMQServerImpl) server).replaceQueueFactory(queueFactory);
 
-      queue = server.createQueue(QUEUE, QUEUE, null, true, false);
+      queue = server.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
 
       blocked.acquire();
 
@@ -293,8 +296,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
          public void run() {
             try {
                server.destroyQueue(QUEUE);
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
             }
          }
@@ -305,9 +307,8 @@ public class HangConsumerTest extends ActiveMQTestBase {
       Assert.assertTrue(latchDelete.await(10, TimeUnit.SECONDS));
 
       try {
-         server.createQueue(QUEUE, QUEUE, null, true, false);
-      }
-      catch (Exception expected) {
+         server.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
+      } catch (Exception expected) {
       }
 
       blocked.release();
@@ -334,7 +335,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
     */
    @Test
    public void testForceDuplicationOnBindings() throws Exception {
-      queue = server.createQueue(QUEUE, QUEUE, null, true, false);
+      queue = server.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
 
       ClientSessionFactory factory = locator.createSessionFactory();
       ClientSession session = factory.createSession(false, false, false);
@@ -348,7 +349,10 @@ public class HangConsumerTest extends ActiveMQTestBase {
       long txID = server.getStorageManager().generateID();
 
       // Forcing a situation where the server would unexpectedly create a duplicated queue. The server should still start normally
-      LocalQueueBinding newBinding = new LocalQueueBinding(QUEUE, new QueueImpl(queueID, QUEUE, QUEUE, null, null, true, false, false, null, null, null, null, null), server.getNodeID());
+      LocalQueueBinding newBinding = new LocalQueueBinding(QUEUE,
+                                                           new QueueImpl(queueID, QUEUE, QUEUE, null, null, true, false,
+                                                                         false, null, null, null, null, null, null, null),
+                                                           server.getNodeID());
       server.getStorageManager().addQueueBinding(txID, newBinding);
       server.getStorageManager().commitBindings(txID);
 
@@ -365,7 +369,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
    // An exception during delivery shouldn't make the message disappear
    @Test
    public void testExceptionWhileDelivering() throws Exception {
-      queue = server.createQueue(QUEUE, QUEUE, null, true, false);
+      queue = server.createQueue(new QueueConfiguration(QUEUE).setRoutingType(RoutingType.ANYCAST));
 
       HangInterceptor hangInt = new HangInterceptor();
       try {
@@ -403,8 +407,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
          msg.acknowledge();
 
          session.commit();
-      }
-      finally {
+      } finally {
          hangInt.open();
       }
 
@@ -419,8 +422,8 @@ public class HangConsumerTest extends ActiveMQTestBase {
    public void testDuplicateDestinationsOnTopic() throws Exception {
       try {
          for (int i = 0; i < 5; i++) {
-            if (server.locateQueue(SimpleString.toSimpleString("jms.topic.tt")) == null) {
-               server.createQueue(SimpleString.toSimpleString("jms.topic.tt"), SimpleString.toSimpleString("jms.topic.tt"), SimpleString.toSimpleString(ActiveMQServerImpl.GENERIC_IGNORED_FILTER), true, false);
+            if (server.locateQueue(SimpleString.toSimpleString("tt")) == null) {
+               server.createQueue(new QueueConfiguration("tt").setRoutingType(RoutingType.ANYCAST).setFilterString(Filter.GENERIC_IGNORED_FILTER));
             }
 
             server.stop();
@@ -437,24 +440,22 @@ public class HangConsumerTest extends ActiveMQTestBase {
 
             int bindings = 0;
             for (RecordInfo info : infos) {
-               System.out.println("info: " + info);
+               instanceLog.debug("info: " + info);
                if (info.getUserRecordType() == JournalRecordIds.QUEUE_BINDING_RECORD) {
                   bindings++;
                }
             }
             assertEquals(1, bindings);
 
-            System.out.println("Bindings: " + bindings);
+            instanceLog.debug("Bindings: " + bindings);
             messagesJournal.stop();
             if (i < 4)
                server.start();
          }
-      }
-      finally {
+      } finally {
          try {
             server.stop();
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
          }
       }
    }
@@ -494,7 +495,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
       }
 
       @Override
-      public boolean isWritable(ReadyListener callback) {
+      public boolean isWritable(ReadyListener callback, Object protocolContext) {
          return true;
       }
 
@@ -509,23 +510,21 @@ public class HangConsumerTest extends ActiveMQTestBase {
       }
 
       /* (non-Javadoc)
-       * @see SessionCallback#sendMessage(org.apache.activemq.artemis.core.server.ServerMessage, long, int)
+       * @see SessionCallback#sendJmsMessage(org.apache.activemq.artemis.core.server.ServerMessage, long, int)
        */
       @Override
-      public int sendMessage(MessageReference ref, ServerMessage message, ServerConsumer consumer, int deliveryCount) {
+      public int sendMessage(MessageReference ref, Message message, ServerConsumer consumer, int deliveryCount) {
          inCall.countDown();
          try {
             callbackSemaphore.acquire();
-         }
-         catch (InterruptedException e) {
+         } catch (InterruptedException e) {
             inCall.countUp();
             return -1;
          }
 
          try {
             return targetCallback.sendMessage(ref, message, consumer, deliveryCount);
-         }
-         finally {
+         } finally {
             callbackSemaphore.release();
             inCall.countUp();
          }
@@ -535,7 +534,11 @@ public class HangConsumerTest extends ActiveMQTestBase {
        * @see SessionCallback#sendLargeMessage(org.apache.activemq.artemis.core.server.ServerMessage, long, long, int)
        */
       @Override
-      public int sendLargeMessage(MessageReference reference, ServerMessage message, ServerConsumer consumer, long bodySize, int deliveryCount) {
+      public int sendLargeMessage(MessageReference reference,
+                                  Message message,
+                                  ServerConsumer consumer,
+                                  long bodySize,
+                                  int deliveryCount) {
          return targetCallback.sendLargeMessage(reference, message, consumer, bodySize, deliveryCount);
       }
 
@@ -559,7 +562,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
       }
 
       @Override
-      public void disconnect(ServerConsumer consumerId, String queueName) {
+      public void disconnect(ServerConsumer consumerId, SimpleString queueName) {
          //To change body of implemented methods use File | Settings | File Templates.
       }
 
@@ -567,9 +570,7 @@ public class HangConsumerTest extends ActiveMQTestBase {
 
    class MyActiveMQServer extends ActiveMQServerImpl {
 
-      MyActiveMQServer(Configuration configuration,
-                       MBeanServer mbeanServer,
-                       ActiveMQSecurityManager securityManager) {
+      MyActiveMQServer(Configuration configuration, MBeanServer mbeanServer, ActiveMQSecurityManager securityManager) {
          super(configuration, mbeanServer, securityManager);
       }
 
@@ -587,8 +588,10 @@ public class HangConsumerTest extends ActiveMQTestBase {
                                                         String defaultAddress,
                                                         SessionCallback callback,
                                                         OperationContext context,
-                                                        boolean autoCreateQueue) throws Exception {
-         return new ServerSessionImpl(name, username, password, validatedUser, minLargeMessageSize, autoCommitSends, autoCommitAcks, preAcknowledge, getConfiguration().isPersistDeliveryCountBeforeDelivery(), xa, connection, getStorageManager(), getPostOffice(), getResourceManager(), getSecurityStore(), getManagementService(), this, getConfiguration().getManagementAddress(), defaultAddress == null ? null : new SimpleString(defaultAddress), new MyCallback(callback), context, null);
+                                                        boolean autoCreateQueue,
+                                                        Map<SimpleString, RoutingType> prefixes,
+                                                        String securityDomain) throws Exception {
+         return new ServerSessionImpl(name, username, password, validatedUser, minLargeMessageSize, autoCommitSends, autoCommitAcks, preAcknowledge, getConfiguration().isPersistDeliveryCountBeforeDelivery(), xa, connection, getStorageManager(), getPostOffice(), getResourceManager(), getSecurityStore(), getManagementService(), this, getConfiguration().getManagementAddress(), defaultAddress == null ? null : new SimpleString(defaultAddress), new MyCallback(callback), context, getPagingManager(), prefixes, securityDomain);
       }
    }
 
@@ -611,14 +614,13 @@ public class HangConsumerTest extends ActiveMQTestBase {
       @Override
       public boolean intercept(final Packet packet, final RemotingConnection connection) throws ActiveMQException {
          if (packet instanceof SessionReceiveMessage) {
-            System.out.println("Receiving message");
+            instanceLog.debug("Receiving message");
             try {
                reusableLatch.countDown();
                semaphore.acquire();
                semaphore.release();
                reusableLatch.countUp();
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                e.printStackTrace();
             }
          }

@@ -16,17 +16,25 @@
  */
 package org.apache.activemq.artemis.core.security;
 
-import javax.security.cert.X509Certificate;
-
+import javax.security.auth.Subject;
 import org.apache.activemq.artemis.api.core.SimpleString;
+import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 
 public interface SecurityStore {
 
-   String authenticate(String user, String password, X509Certificate[] certificates) throws Exception;
+   String authenticate(String user, String password, RemotingConnection remotingConnection) throws Exception;
+
+   String authenticate(String user, String password, RemotingConnection remotingConnection, String securityDomain) throws Exception;
 
    void check(SimpleString address, CheckType checkType, SecurityAuth session) throws Exception;
 
+   void check(SimpleString address, SimpleString queue, CheckType checkType, SecurityAuth session) throws Exception;
+
    boolean isSecurityEnabled();
 
+   void setSecurityEnabled(boolean securityEnabled);
+
    void stop();
+
+   Subject getSessionSubject(SecurityAuth session);
 }

@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.tests.stress.journal;
 import java.util.ArrayList;
 import java.util.Random;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
@@ -66,9 +67,8 @@ public class JournalRestartStressTest extends ActiveMQTestBase {
          ClientSession session = sf.createSession(true, true);
 
          try {
-            session.createQueue("slow-queue", "slow-queue");
-         }
-         catch (Exception ignored) {
+            session.createQueue(new QueueConfiguration("slow-queue"));
+         } catch (Exception ignored) {
          }
 
          session.start();
@@ -112,9 +112,8 @@ public class JournalRestartStressTest extends ActiveMQTestBase {
       ClientProducer prod2 = sessionSend.createProducer("slow-queue");
 
       try {
-         sessionSend.createQueue("Queue", "Queue", true);
-      }
-      catch (Exception ignored) {
+         sessionSend.createQueue(new QueueConfiguration("Queue"));
+      } catch (Exception ignored) {
       }
 
       final ClientSession sessionReceive = sf.createSession(true, true);
@@ -142,8 +141,7 @@ public class JournalRestartStressTest extends ActiveMQTestBase {
                   }
                   msg.acknowledge();
                }
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                errors.add(e);
             }
          }

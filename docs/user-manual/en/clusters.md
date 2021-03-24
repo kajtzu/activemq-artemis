@@ -1,6 +1,6 @@
 # Clusters
 
-## Clusters Overview
+## Overview
 
 Apache ActiveMQ Artemis clusters allow groups of Apache ActiveMQ Artemis servers to be grouped
 together in order to share message processing load. Each active node in
@@ -29,7 +29,7 @@ Another important part of clustering is *server discovery* where servers
 can broadcast their connection details so clients or other servers can
 connect to them with the minimum of configuration.
 
-> **Warning**
+> <a id="copy-warning"></a>**Warning**
 >
 > Once a cluster node has been configured it is common to simply copy
 > that configuration to other nodes to produce a symmetric cluster.
@@ -46,27 +46,27 @@ connect to them with the minimum of configuration.
 Server discovery is a mechanism by which servers can propagate their
 connection details to:
 
--   Messaging clients. A messaging client wants to be able to connect to
-    the servers of the cluster without having specific knowledge of
-    which servers in the cluster are up at any one time.
+- Messaging clients. A messaging client wants to be able to connect to
+  the servers of the cluster without having specific knowledge of
+  which servers in the cluster are up at any one time.
 
--   Other servers. Servers in a cluster want to be able to create
-    cluster connections to each other without having prior knowledge of
-    all the other servers in the cluster.
+- Other servers. Servers in a cluster want to be able to create
+  cluster connections to each other without having prior knowledge of
+  all the other servers in the cluster.
 
 This information, let's call it the Cluster Topology, is actually sent
 around normal Apache ActiveMQ Artemis connections to clients and to other servers over
 cluster connections. This being the case we need a way of establishing
 the initial first connection. This can be done using dynamic discovery
 techniques like
-[UDP](http://en.wikipedia.org/wiki/User_Datagram_Protocol) and
+[UDP](https://en.wikipedia.org/wiki/User_Datagram_Protocol) and
 [JGroups](http://www.jgroups.org/), or by providing a list of initial
 connectors.
 
 ### Dynamic Discovery
 
 Server discovery uses
-[UDP](http://en.wikipedia.org/wiki/User_Datagram_Protocol) multicast or
+[UDP](https://en.wikipedia.org/wiki/User_Datagram_Protocol) multicast or
 [JGroups](http://www.jgroups.org/) to broadcast server connection
 settings.
 
@@ -91,79 +91,83 @@ Apache ActiveMQ Artemis server. All broadcast groups must be defined in a
 Let's take a look at an example broadcast group from
 `broker.xml` that defines a UDP broadcast group:
 
-    <broadcast-groups>
-       <broadcast-group name="my-broadcast-group">
-          <local-bind-address>172.16.9.3</local-bind-address>
-          <local-bind-port>5432</local-bind-port>
-          <group-address>231.7.7.7</group-address>
-          <group-port>9876</group-port>
-          <broadcast-period>2000</broadcast-period>
-          <connector-ref>netty-connector</connector-ref>
-       </broadcast-group>
-    </broadcast-groups>
+```xml
+<broadcast-groups>
+   <broadcast-group name="my-broadcast-group">
+    <local-bind-address>172.16.9.3</local-bind-address>
+    <local-bind-port>5432</local-bind-port>
+    <group-address>231.7.7.7</group-address>
+    <group-port>9876</group-port>
+    <broadcast-period>2000</broadcast-period>
+    <connector-ref>netty-connector</connector-ref>
+   </broadcast-group>
+</broadcast-groups>
+```
 
 Some of the broadcast group parameters are optional and you'll normally
 use the defaults, but we specify them all in the above example for
 clarity. Let's discuss each one in turn:
 
--   `name` attribute. Each broadcast group in the server must have a
-    unique name.
+- `name` attribute. Each broadcast group in the server must have a
+  unique name.
 
--   `local-bind-address`. This is the local bind address that the
-    datagram socket is bound to. If you have multiple network interfaces
-    on your server, you would specify which one you wish to use for
-    broadcasts by setting this property. If this property is not
-    specified then the socket will be bound to the wildcard address, an
-    IP address chosen by the kernel. This is a UDP specific attribute.
+- `local-bind-address`. This is the local bind address that the
+  datagram socket is bound to. If you have multiple network interfaces
+  on your server, you would specify which one you wish to use for
+  broadcasts by setting this property. If this property is not
+  specified then the socket will be bound to the wildcard address, an
+  IP address chosen by the kernel. This is a UDP specific attribute.
 
--   `local-bind-port`. If you want to specify a local port to which the
-    datagram socket is bound you can specify it here. Normally you would
-    just use the default value of `-1` which signifies that an anonymous
-    port should be used. This parameter is always specified in
-    conjunction with `local-bind-address`. This is a UDP specific
-    attribute.
+- `local-bind-port`. If you want to specify a local port to which the
+  datagram socket is bound you can specify it here. Normally you would
+  just use the default value of `-1` which signifies that an anonymous
+  port should be used. This parameter is always specified in
+  conjunction with `local-bind-address`. This is a UDP specific
+  attribute.
 
--   `group-address`. This is the multicast address to which the data
-    will be broadcast. It is a class D IP address in the range
-    `224.0.0.0` to `239.255.255.255`, inclusive. The address `224.0.0.0`
-    is reserved and is not available for use. This parameter is
-    mandatory. This is a UDP specific attribute.
+- `group-address`. This is the multicast address to which the data
+  will be broadcast. It is a class D IP address in the range
+  `224.0.0.0` to `239.255.255.255`, inclusive. The address `224.0.0.0`
+  is reserved and is not available for use. This parameter is
+  mandatory. This is a UDP specific attribute.
 
--   `group-port`. This is the UDP port number used for broadcasting.
-    This parameter is mandatory. This is a UDP specific attribute.
+- `group-port`. This is the UDP port number used for broadcasting.
+  This parameter is mandatory. This is a UDP specific attribute.
 
--   `broadcast-period`. This is the period in milliseconds between
-    consecutive broadcasts. This parameter is optional, the default
-    value is `2000` milliseconds.
+- `broadcast-period`. This is the period in milliseconds between
+  consecutive broadcasts. This parameter is optional, the default
+  value is `2000` milliseconds.
 
--   `connector-ref`. This specifies the connector and optional backup
-    connector that will be broadcasted (see [Configuring the Transport](configuring-transports.md) for more information on
-    connectors). 
+- `connector-ref`. This specifies the connector and optional backup
+  connector that will be broadcasted (see [Configuring the Transport](configuring-transports.md) for more information on
+  connectors). 
 
 Here is another example broadcast group that defines a JGroups broadcast
 group:
 
-    <broadcast-groups>
-       <broadcast-group name="my-broadcast-group">
-          <jgroups-file>test-jgroups-file_ping.xml</jgroups-file>
-          <jgroups-channel>activemq_broadcast_channel</jgroups-channel>
-          <broadcast-period>2000</broadcast-period>
-        <connector-ref connector-name="netty-connector"/>
-       </broadcast-group>
-    </broadcast-groups>
+```xml
+<broadcast-groups>
+   <broadcast-group name="my-broadcast-group">
+      <jgroups-file>test-jgroups-file_ping.xml</jgroups-file>
+      <jgroups-channel>activemq_broadcast_channel</jgroups-channel>
+      <broadcast-period>2000</broadcast-period>
+      <connector-ref>netty-connector</connector-ref>
+   </broadcast-group>
+</broadcast-groups>
+```
 
 To be able to use JGroups to broadcast, one must specify two attributes,
 i.e. `jgroups-file` and `jgroups-channel`, as discussed in details as
 following:
 
--   `jgroups-file` attribute. This is the name of JGroups configuration
-    file. It will be used to initialize JGroups channels. Make sure the
-    file is in the java resource path so that Apache ActiveMQ Artemis can load it.
+- `jgroups-file` attribute. This is the name of JGroups configuration
+  file. It will be used to initialize JGroups channels. Make sure the
+  file is in the java resource path so that Apache ActiveMQ Artemis can load it.
 
--   `jgroups-channel` attribute. The name that JGroups channels connect
-    to for broadcasting.
+- `jgroups-channel` attribute. The name that JGroups channels connect
+  to for broadcasting.
 
-> **Note**
+> **Note:**
 >
 > The JGroups attributes (`jgroups-file` and `jgroups-channel`) and UDP
 > specific attributes described above are exclusive of each other. Only
@@ -172,57 +176,59 @@ following:
 
 The following is an example of a JGroups file
 
-    <config xmlns="urn:org:jgroups"
-       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-       xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/JGroups-3.0.xsd">
-       <TCP loopback="true"
-          recv_buf_size="20000000"
-          send_buf_size="640000"
-          discard_incompatible_packets="true"
-          max_bundle_size="64000"
-          max_bundle_timeout="30"
-          enable_bundling="true"
-          use_send_queues="false"
-          sock_conn_timeout="300"
+```xml
+<config xmlns="urn:org:jgroups"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="urn:org:jgroups http://www.jgroups.org/schema/JGroups-3.0.xsd">
+   <TCP loopback="true"
+      recv_buf_size="20000000"
+      send_buf_size="640000"
+      discard_incompatible_packets="true"
+      max_bundle_size="64000"
+      max_bundle_timeout="30"
+      enable_bundling="true"
+      use_send_queues="false"
+      sock_conn_timeout="300"
 
-          thread_pool.enabled="true"
-          thread_pool.min_threads="1"
-          thread_pool.max_threads="10"
-          thread_pool.keep_alive_time="5000"
-          thread_pool.queue_enabled="false"
-          thread_pool.queue_max_size="100"
-          thread_pool.rejection_policy="run"
+      thread_pool.enabled="true"
+      thread_pool.min_threads="1"
+      thread_pool.max_threads="10"
+      thread_pool.keep_alive_time="5000"
+      thread_pool.queue_enabled="false"
+      thread_pool.queue_max_size="100"
+      thread_pool.rejection_policy="run"
 
-          oob_thread_pool.enabled="true"
-          oob_thread_pool.min_threads="1"
-          oob_thread_pool.max_threads="8"
-          oob_thread_pool.keep_alive_time="5000"
-          oob_thread_pool.queue_enabled="false"
-          oob_thread_pool.queue_max_size="100"
-          oob_thread_pool.rejection_policy="run"/>
+      oob_thread_pool.enabled="true"
+      oob_thread_pool.min_threads="1"
+      oob_thread_pool.max_threads="8"
+      oob_thread_pool.keep_alive_time="5000"
+      oob_thread_pool.queue_enabled="false"
+      oob_thread_pool.queue_max_size="100"
+      oob_thread_pool.rejection_policy="run"/>
 
-       <FILE_PING location="../file.ping.dir"/>
-       <MERGE2 max_interval="30000"
-          min_interval="10000"/>
-       <FD_SOCK/>
-       <FD timeout="10000" max_tries="5" />
-       <VERIFY_SUSPECT timeout="1500"  />
-       <BARRIER />
-       <pbcast.NAKACK
-          use_mcast_xmit="false"
-          retransmit_timeout="300,600,1200,2400,4800"
-          discard_delivered_msgs="true"/>
-       <UNICAST timeout="300,600,1200" />
-       <pbcast.STABLE stability_delay="1000" desired_avg_gossip="50000"
-          max_bytes="400000"/>
-       <pbcast.GMS print_local_addr="true" join_timeout="3000"
-          view_bundling="true"/>
-       <FC max_credits="2000000"
-          min_threshold="0.10"/>
-       <FRAG2 frag_size="60000"  />
-       <pbcast.STATE_TRANSFER/>
-       <pbcast.FLUSH timeout="0"/>
-    </config>
+   <FILE_PING location="../file.ping.dir"/>
+   <MERGE2 max_interval="30000"
+      min_interval="10000"/>
+   <FD_SOCK/>
+   <FD timeout="10000" max_tries="5" />
+   <VERIFY_SUSPECT timeout="1500"  />
+   <BARRIER />
+   <pbcast.NAKACK
+      use_mcast_xmit="false"
+      retransmit_timeout="300,600,1200,2400,4800"
+      discard_delivered_msgs="true"/>
+   <UNICAST timeout="300,600,1200" />
+   <pbcast.STABLE stability_delay="1000" desired_avg_gossip="50000"
+      max_bytes="400000"/>
+   <pbcast.GMS print_local_addr="true" join_timeout="3000"
+      view_bundling="true"/>
+   <FC max_credits="2000000"
+      min_threshold="0.10"/>
+   <FRAG2 frag_size="60000"  />
+   <pbcast.STATE_TRANSFER/>
+   <pbcast.FLUSH timeout="0"/>
+</config>
+```
 
 As it shows, the file content defines a jgroups protocol stacks. If you
 want Apache ActiveMQ Artemis to use this stacks for channel creation, you have to make
@@ -231,7 +237,9 @@ configuration to be the name of this jgroups configuration file. For
 example if the above stacks configuration is stored in a file named
 "jgroups-stacks.xml" then your `jgroups-file` should be like
 
-    <jgroups-file>jgroups-stacks.xml</jgroups-file>
+```xml
+<jgroups-file>jgroups-stacks.xml</jgroups-file>
+```
 
 #### Discovery Groups
 
@@ -250,18 +258,18 @@ of time it will remove that server's entry from its list.
 
 Discovery groups are used in two places in Apache ActiveMQ Artemis:
 
--   By cluster connections so they know how to obtain an initial
-    connection to download the topology
+- By cluster connections so they know how to obtain an initial
+  connection to download the topology
 
--   By messaging clients so they know how to obtain an initial
-    connection to download the topology
+- By messaging clients so they know how to obtain an initial
+  connection to download the topology
 
 Although a discovery group will always accept broadcasts, its current
 list of available live and backup servers is only ever used when an
 initial connection is made, from then server discovery is done over the
 normal Apache ActiveMQ Artemis connections.
 
-> **Note**
+> **Note:**
 >
 > Each discovery group must be configured with broadcast endpoint (UDP
 > or JGroups) that matches its broadcast group counterpart. For example,
@@ -275,67 +283,71 @@ configuration file `broker.xml`. All discovery groups
 must be defined inside a `discovery-groups` element. There can be many
 discovery groups defined by Apache ActiveMQ Artemis server. Let's look at an example:
 
-    <discovery-groups>
-       <discovery-group name="my-discovery-group">
-          <local-bind-address>172.16.9.7</local-bind-address>
-          <group-address>231.7.7.7</group-address>
-          <group-port>9876</group-port>
-          <refresh-timeout>10000</refresh-timeout>
-       </discovery-group>
-    </discovery-groups>
+```xml
+<discovery-groups>
+   <discovery-group name="my-discovery-group">
+      <local-bind-address>172.16.9.7</local-bind-address>
+      <group-address>231.7.7.7</group-address>
+      <group-port>9876</group-port>
+      <refresh-timeout>10000</refresh-timeout>
+   </discovery-group>
+</discovery-groups>
+```
 
 We'll consider each parameter of the discovery group:
 
--   `name` attribute. Each discovery group must have a unique name per
-    server.
+- `name` attribute. Each discovery group must have a unique name per
+  server.
 
--   `local-bind-address`. If you are running with multiple network
-    interfaces on the same machine, you may want to specify that the
-    discovery group listens only only a specific interface. To do this
-    you can specify the interface address with this parameter. This
-    parameter is optional. This is a UDP specific attribute.
+- `local-bind-address`. If you are running with multiple network
+  interfaces on the same machine, you may want to specify that the
+  discovery group listens only a specific interface. To do this
+  you can specify the interface address with this parameter. This
+  parameter is optional. This is a UDP specific attribute.
 
--   `group-address`. This is the multicast IP address of the group to
-    listen on. It should match the `group-address` in the broadcast
-    group that you wish to listen from. This parameter is mandatory.
-    This is a UDP specific attribute.
+- `group-address`. This is the multicast IP address of the group to
+  listen on. It should match the `group-address` in the broadcast
+  group that you wish to listen from. This parameter is mandatory.
+  This is a UDP specific attribute.
 
--   `group-port`. This is the UDP port of the multicast group. It should
-    match the `group-port` in the broadcast group that you wish to
-    listen from. This parameter is mandatory. This is a UDP specific
-    attribute.
+- `group-port`. This is the UDP port of the multicast group. It should
+  match the `group-port` in the broadcast group that you wish to
+  listen from. This parameter is mandatory. This is a UDP specific
+  attribute.
 
--   `refresh-timeout`. This is the period the discovery group waits
-    after receiving the last broadcast from a particular server before
-    removing that servers connector pair entry from its list. You would
-    normally set this to a value significantly higher than the
-    `broadcast-period` on the broadcast group otherwise servers might
-    intermittently disappear from the list even though they are still
-    broadcasting due to slight differences in timing. This parameter is
-    optional, the default value is `10000` milliseconds (10 seconds).
+- `refresh-timeout`. This is the period the discovery group waits
+  after receiving the last broadcast from a particular server before
+  removing that servers connector pair entry from its list. You would
+  normally set this to a value significantly higher than the
+  `broadcast-period` on the broadcast group otherwise servers might
+  intermittently disappear from the list even though they are still
+  broadcasting due to slight differences in timing. This parameter is
+  optional, the default value is `10000` milliseconds (10 seconds).
 
 Here is another example that defines a JGroups discovery group:
 
-    <discovery-groups>
-       <discovery-group name="my-broadcast-group">
-          <jgroups-file>test-jgroups-file_ping.xml</jgroups-file>
-          <jgroups-channel>activemq_broadcast_channel</jgroups-channel>
-          <refresh-timeout>10000</refresh-timeout>
-       </discovery-group>
-    </discovery-groups>
+```xml
+<discovery-groups>
+   <discovery-group name="my-broadcast-group">
+      <jgroups-file>test-jgroups-file_ping.xml</jgroups-file>
+      <jgroups-channel>activemq_broadcast_channel</jgroups-channel>
+      <refresh-timeout>10000</refresh-timeout>
+   </discovery-group>
+</discovery-groups>
+```
 
 To receive broadcast from JGroups channels, one must specify two
 attributes, `jgroups-file` and `jgroups-channel`, as discussed in
 details as following:
 
--   `jgroups-file` attribute. This is the name of JGroups configuration
-    file. It will be used to initialize JGroups channels. Make sure the
-    file is in the java resource path so that Apache ActiveMQ Artemis can load it.
+- `jgroups-file` attribute. This is the name of JGroups configuration
+  file. It will be used to initialize JGroups channels. Make sure the
+  file is in the java resource path so that Apache ActiveMQ Artemis can load it.
 
--   `jgroups-channel` attribute. The name that JGroups channels connect
-    to for receiving broadcasts.
+- `jgroups-channel` attribute. The name that JGroups channels connect
+  to for receiving broadcasts.
 
-> **Note**
+> **Note:**
 >
 > The JGroups attributes (`jgroups-file` and `jgroups-channel`) and UDP
 > specific attributes described above are exclusive of each other. Only
@@ -348,100 +360,42 @@ Let's discuss how to configure an Apache ActiveMQ Artemis client to use discover
 discover a list of servers to which it can connect. The way to do this
 differs depending on whether you're using JMS or the core API.
 
-##### Configuring client discovery using JMS
+##### Configuring client discovery
 
-If you're using JMS and you're using JNDI on the client to look up your
-JMS connection factory instances then you can specify these parameters
-in the JNDI context environment. e.g. in `jndi.properties`. Simply
-ensure the host:port combination matches the group-address and
-group-port from the corresponding `broadcast-group` on the server. Let's
-take a look at an example:
+Use the `udp` URL scheme and a host:port combination matches the group-address and
+group-port from the corresponding `broadcast-group` on the server:
 
-    java.naming.factory.initial = ActiveMQInitialContextFactory
-    connectionFactory.myConnectionFactory=udp://231.7.7.7:9876
+```
+udp://231.7.7.7:9876
+```
 
 The element `discovery-group-ref` specifies the name of a discovery
 group defined in `broker.xml`.
 
-When this connection factory is downloaded from JNDI by a client
-application and JMS connections are created from it, those connections
-will be load-balanced across the list of servers that the discovery
-group maintains by listening on the multicast address specified in the
-discovery group configuration.
+Connections created using this URI will be load-balanced across the
+list of servers that the discovery group maintains by listening on
+the multicast address specified in the discovery group configuration.
 
-If you're using JMS, but you're not using JNDI to lookup a connection
-factory - you're instantiating the JMS connection factory directly then
-you can specify the discovery group parameters directly when creating
-the JMS connection factory. Here's an example:
+The aforementioned `refreshTimeout` parameter can be set directly in the URI.
 
-``` java
-final String groupAddress = "231.7.7.7";
-
-final int groupPort = 9876;
-
-ConnectionFactory jmsConnectionFactory =
-ActiveMQJMSClient.createConnectionFactory(new DiscoveryGroupConfiguration(groupAddress, groupPort,
-                       new UDPBroadcastGroupConfiguration(groupAddress, groupPort, null, -1)), JMSFactoryType.CF);
-
-Connection jmsConnection1 = jmsConnectionFactory.createConnection();
-
-Connection jmsConnection2 = jmsConnectionFactory.createConnection();
-```
-
-The `refresh-timeout` can be set directly on the
-DiscoveryGroupConfiguration by using the setter method
-`setDiscoveryRefreshTimeout()` if you want to change the default value.
-
-There is also a further parameter settable on the
-DiscoveryGroupConfiguration using the setter method
-`setDiscoveryInitialWaitTimeout()`. If the connection factory is used
-immediately after creation then it may not have had enough time to
-received broadcasts from all the nodes in the cluster. On first usage,
-the connection factory will make sure it waits this long since creation
-before creating the first connection. The default value for this
-parameter is `10000` milliseconds.
-
-##### Configuring client discovery using Core
-
-If you're using the core API to directly instantiate
-`ClientSessionFactory` instances, then you can specify the discovery
-group parameters directly when creating the session factory. Here's an
-example:
-
-``` java
-final String groupAddress = "231.7.7.7";
-final int groupPort = 9876;
-ServerLocator factory = ActiveMQClient.createServerLocatorWithHA(new DiscoveryGroupConfiguration(groupAddress, groupPort,
-                           new UDPBroadcastGroupConfiguration(groupAddress, groupPort, null, -1))));
-ClientSessionFactory factory = locator.createSessionFactory();
-ClientSession session1 = factory.createSession();
-ClientSession session2 = factory.createSession();
-```
-
-The `refresh-timeout` can be set directly on the
-DiscoveryGroupConfiguration by using the setter method
-`setDiscoveryRefreshTimeout()` if you want to change the default value.
-
-There is also a further parameter settable on the
-DiscoveryGroupConfiguration using the setter method
-`setDiscoveryInitialWaitTimeout()`. If the session factory is used
-immediately after creation then it may not have had enough time to
-received broadcasts from all the nodes in the cluster. On first usage,
-the session factory will make sure it waits this long since creation
-before creating the first session. The default value for this parameter
-is `10000` milliseconds.
+There is also a URL parameter named `initialWaitTimeout`. If the corresponding
+JMS connection factory or core session factory is used immediately after
+creation then it may not have had enough time to received broadcasts from
+all the nodes in the cluster. On first usage, the connection factory will
+make sure it waits this long since creation before creating the first
+connection. The default value for this parameter is `10000` milliseconds.
 
 ### Discovery using static Connectors
 
 Sometimes it may be impossible to use UDP on the network you are using.
 In this case its possible to configure a connection with an initial list
-if possible servers. This could be just one server that you know will
+of possible servers. This could be just one server that you know will
 always be available or a list of servers where at least one will be
 available.
 
 This doesn't mean that you have to know where all your servers are going
 to be hosted, you can configure these servers to use the reliable
-servers to connect to. Once they are connected there connection details
+servers to connect to. Once they are connected their connection details
 will be propagated via the server it connects to
 
 #### Configuring a Cluster Connection
@@ -455,57 +409,17 @@ the cluster connection configuration.
 
 A static list of possible servers can also be used by a normal client.
 
-##### Configuring client discovery using JMS
+##### Configuring client discovery
 
-If you're using JMS and you're using JNDI on the client to look up your
-JMS connection factory instances then you can specify these parameters
-in the JNDI context environment in, e.g. `jndi.properties`:
+A list of servers to be used for the initial connection attempt can be
+specified in the connection URI using a syntax with `()`, e.g.:
 
-    java.naming.factory.initial=org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
-    connectionFactory.myConnectionFactory=(tcp://myhost:61616,tcp://myhost2:61616)
-
-The `connectionFactory.myConnectionFactory` contains a list of servers to use for the
-connection factory. When this connection factory used client application
-and JMS connections are created from it, those connections will be
-load-balanced across the list of servers defined within the brackets `()`.
-The brackets are expanded so the same query cab be appended after the last bracket for ease.
-
-If you're using JMS, but you're not using JNDI to lookup a connection
-factory - you're instantiating the JMS connection factory directly then
-you can specify the connector list directly when creating the JMS
-connection factory. Here's an example:
-
-``` java
-HashMap<String, Object> map = new HashMap<String, Object>();
-map.put("host", "myhost");
-map.put("port", "61616");
-TransportConfiguration server1 = new TransportConfiguration(NettyConnectorFactory.class.getName(), map);
-HashMap<String, Object> map2 = new HashMap<String, Object>();
-map2.put("host", "myhost2");
-map2.put("port", "61617");
-TransportConfiguration server2 = new TransportConfiguration(NettyConnectorFactory.class.getName(), map2);
-
-ActiveMQConnectionFactory cf = ActiveMQJMSClient.createConnectionFactoryWithHA(JMSFactoryType.CF, server1, server2);
+```
+(tcp://myhost:61616,tcp://myhost2:61616)?reconnectAttempts=5
 ```
 
-##### Configuring client discovery using Core
-
-If you are using the core API then the same can be done as follows:
-
-``` java
-HashMap<String, Object> map = new HashMap<String, Object>();
-map.put("host", "myhost");
-map.put("port", "61616");
-TransportConfiguration server1 = new TransportConfiguration(NettyConnectorFactory.class.getName(), map);
-HashMap<String, Object> map2 = new HashMap<String, Object>();
-map2.put("host", "myhost2");
-map2.put("port", "61617");
-TransportConfiguration server2 = new TransportConfiguration(NettyConnectorFactory.class.getName(), map2);
-
-ServerLocator locator = ActiveMQClient.createServerLocatorWithHA(server1, server2);
-ClientSessionFactory factory = locator.createSessionFactory();
-ClientSession session = factory.createSession();
-```
+The brackets are expanded so the same query can be appended after the last
+bracket for ease.
 
 ## Server-Side Message Load Balancing
 
@@ -553,223 +467,229 @@ typical cluster connection. Cluster connections are always defined in
 There can be zero or more cluster connections defined per Apache ActiveMQ Artemis
 server.
 
-    <cluster-connections>
-       <cluster-connection name="my-cluster">
-          <address>jms</address>
-          <connector-ref>netty-connector</connector-ref>
-          <check-period>1000</check-period>
-          <connection-ttl>5000</connection-ttl>
-          <min-large-message-size>50000</min-large-message-size>
-          <call-timeout>5000</call-timeout>
-          <retry-interval>500</retry-interval>
-          <retry-interval-multiplier>1.0</retry-interval-multiplier>
-          <max-retry-interval>5000</max-retry-interval>
-          <initial-connect-attempts>-1</initial-connect-attempts>
-          <reconnect-attempts>-1</reconnect-attempts>
-          <use-duplicate-detection>true</use-duplicate-detection>
-          <message-load-balancing>ON_DEMAND</message-load-balancing>
-          <max-hops>1</max-hops>
-          <confirmation-window-size>32000</confirmation-window-size>
-          <call-failover-timeout>30000</call-failover-timeout>
-          <notification-interval>1000</notification-interval>
-          <notification-attempts>2</notification-attempts>
-          <discovery-group-ref discovery-group-name="my-discovery-group"/>
-       </cluster-connection>
-    </cluster-connections>
+```xml
+<cluster-connections>
+   <cluster-connection name="my-cluster">
+      <address></address>
+      <connector-ref>netty-connector</connector-ref>
+      <check-period>1000</check-period>
+      <connection-ttl>5000</connection-ttl>
+      <min-large-message-size>50000</min-large-message-size>
+      <call-timeout>5000</call-timeout>
+      <retry-interval>500</retry-interval>
+      <retry-interval-multiplier>1.0</retry-interval-multiplier>
+      <max-retry-interval>5000</max-retry-interval>
+      <initial-connect-attempts>-1</initial-connect-attempts>
+      <reconnect-attempts>-1</reconnect-attempts>
+      <use-duplicate-detection>true</use-duplicate-detection>
+      <message-load-balancing>ON_DEMAND</message-load-balancing>
+      <max-hops>1</max-hops>
+      <confirmation-window-size>32000</confirmation-window-size>
+      <call-failover-timeout>30000</call-failover-timeout>
+      <notification-interval>1000</notification-interval>
+      <notification-attempts>2</notification-attempts>
+      <discovery-group-ref discovery-group-name="my-discovery-group"/>
+   </cluster-connection>
+</cluster-connections>
+```
 
 In the above cluster connection all parameters have been explicitly
 specified. The following shows all the available configuration options
 
--   `address` Each cluster connection only applies to addresses that
-    match the specified address field. An address is matched on the
-    cluster connection when it begins with the string specified in this
-    field. The address field on a cluster connection also supports comma
-    separated lists and an exclude syntax '!'. To prevent an address
-    from being matched on this cluster connection, prepend a cluster
-    connection address string with '!'.
+- `address` Each cluster connection only applies to addresses that
+  match the specified `address` field. An address is matched on the
+  cluster connection when it begins with the string specified in this
+  field. The `address` field on a cluster connection also supports comma
+  separated lists and an exclude syntax `!`. To prevent an address
+  from being matched on this cluster connection, prepend a cluster
+  connection address string with `!`.
 
-    In the case shown above the cluster connection will load balance
-    messages sent to addresses that start with `jms`. This cluster
-    connection, will, in effect apply to all JMS queues and topics since
-    they map to core queues that start with the substring "jms".
+  In the case shown above the cluster connection will load balance
+  messages sent to all addresses (since it's empty).
 
-    The address can be any value and you can have many cluster
-    connections with different values of `address`, simultaneously
-    balancing messages for those addresses, potentially to different
-    clusters of servers. By having multiple cluster connections on
-    different addresses a single Apache ActiveMQ Artemis Server can effectively take
-    part in multiple clusters simultaneously.
+  The address can be any value and you can have many cluster
+  connections with different values of `address`, simultaneously
+  balancing messages for those addresses, potentially to different
+  clusters of servers. By having multiple cluster connections on
+  different addresses a single Apache ActiveMQ Artemis Server can effectively take
+  part in multiple clusters simultaneously.
 
-    Be careful not to have multiple cluster connections with overlapping
-    values of `address`, e.g. "europe" and "europe.news" since this
-    could result in the same messages being distributed between more
-    than one cluster connection, possibly resulting in duplicate
-    deliveries.
+  Be careful not to have multiple cluster connections with overlapping
+  values of `address`, e.g. "europe" and "europe.news" since this
+  could result in the same messages being distributed between more
+  than one cluster connection, possibly resulting in duplicate
+  deliveries.
 
-    Examples:
+  Examples:
 
-    -   'jms.eu'
-        matches all addresses starting with 'jms.eu'
-    -   '!jms.eu'
-        matches all address except for those starting with 'jms.eu'
-    -   'jms.eu.uk,jms.eu.de'
-        matches all addresses starting with either 'jms.eu.uk' or
-        'jms.eu.de'
-    -   'jms.eu,!jms.eu.uk'
-        matches all addresses starting with 'jms.eu' but not those
-        starting with 'jms.eu.uk'
+  - 'eu'
+    matches all addresses starting with 'eu'
+  - '!eu'
+    matches all address except for those starting with 'eu'
+  - 'eu.uk,eu.de'
+    matches all addresses starting with either 'eu.uk' or
+    'eu.de'
+  - 'eu,!eu.uk'
+    matches all addresses starting with 'eu' but not those
+    starting with 'eu.uk'
 
-    Notes:
+  **Note:**:
 
-    -   Address exclusion will always takes precedence over address
-        inclusion.
-    -   Address matching on cluster connections does not support
-        wild-card matching.
+  - Address exclusion will always takes precedence over address
+    inclusion.
+  - Address matching on cluster connections does not support
+    wild-card matching.
 
-    This parameter is mandatory.
+- `connector-ref`. This is the connector which will be sent to other
+  nodes in the cluster so they have the correct cluster topology.
 
--   `connector-ref`. This is the connector which will be sent to other
-    nodes in the cluster so they have the correct cluster topology.
+  This parameter is mandatory.
 
-    This parameter is mandatory.
+- `check-period`. The period (in milliseconds) used to check if the
+  cluster connection has failed to receive pings from another server.
+  Default is 30000.
 
--   `check-period`. The period (in milliseconds) used to check if the
-    cluster connection has failed to receive pings from another server.
-    Default is 30000.
+- `connection-ttl`. This is how long a cluster connection should stay
+  alive if it stops receiving messages from a specific node in the
+  cluster. Default is 60000.
 
--   `connection-ttl`. This is how long a cluster connection should stay
-    alive if it stops receiving messages from a specific node in the
-    cluster. Default is 60000.
+- `min-large-message-size`. If the message size (in bytes) is larger
+  than this value then it will be split into multiple segments when
+  sent over the network to other cluster members. Default is 102400.
 
--   `min-large-message-size`. If the message size (in bytes) is larger
-    than this value then it will be split into multiple segments when
-    sent over the network to other cluster members. Default is 102400.
+- `call-timeout`. When a packet is sent via a cluster connection and
+  is a blocking call, i.e. for acknowledgements, this is how long it
+  will wait (in milliseconds) for the reply before throwing an
+  exception. Default is 30000.
 
--   `call-timeout`. When a packet is sent via a cluster connection and
-    is a blocking call, i.e. for acknowledgements, this is how long it
-    will wait (in milliseconds) for the reply before throwing an
-    exception. Default is 30000.
+- `retry-interval`. We mentioned before that, internally, cluster
+  connections cause bridges to be created between the nodes of the
+  cluster. If the cluster connection is created and the target node
+  has not been started, or say, is being rebooted, then the cluster
+  connections from other nodes will retry connecting to the target
+  until it comes back up, in the same way as a bridge does.
 
--   `retry-interval`. We mentioned before that, internally, cluster
-    connections cause bridges to be created between the nodes of the
-    cluster. If the cluster connection is created and the target node
-    has not been started, or say, is being rebooted, then the cluster
-    connections from other nodes will retry connecting to the target
-    until it comes back up, in the same way as a bridge does.
+  This parameter determines the interval in milliseconds between retry
+  attempts. It has the same meaning as the `retry-interval` on a
+  bridge (as described in [Core Bridges](core-bridges.md)).
 
-    This parameter determines the interval in milliseconds between retry
-    attempts. It has the same meaning as the `retry-interval` on a
-    bridge (as described in [Core Bridges](core-bridges.md)).
+  This parameter is optional and its default value is `500`
+  milliseconds.
 
-    This parameter is optional and its default value is `500`
-    milliseconds.
+- `retry-interval-multiplier`. This is a multiplier used to increase
+  the `retry-interval` after each reconnect attempt, default is 1.
 
--   `retry-interval-multiplier`. This is a multiplier used to increase
-    the `retry-interval` after each reconnect attempt, default is 1.
+- `max-retry-interval`. The maximum delay (in milliseconds) for
+  retries. Default is 2000.
 
--   `max-retry-interval`. The maximum delay (in milliseconds) for
-    retries. Default is 2000.
+- `initial-connect-attempts`. The number of times the system will try
+  to connect a node in the cluster initially. If the max-retry is
+  achieved this node will be considered permanently down and the
+  system will not route messages to this node. Default is -1 (infinite
+  retries).
 
--   `initial-connect-attempts`. The number of times the system will try
-    to connect a node in the cluster initially. If the max-retry is
-    achieved this node will be considered permanently down and the
-    system will not route messages to this node. Default is -1 (infinite
-    retries).
+- `reconnect-attempts`. The number of times the system will try to
+  reconnect to a node in the cluster. If the max-retry is achieved
+  this node will be considered permanently down and the system will
+  stop routing messages to this node. Default is -1 (infinite
+  retries).
 
--   `reconnect-attempts`. The number of times the system will try to
-    reconnect to a node in the cluster. If the max-retry is achieved
-    this node will be considered permanently down and the system will
-    stop routing messages to this node. Default is -1 (infinite
-    retries).
+- `use-duplicate-detection`. Internally cluster connections use
+  bridges to link the nodes, and bridges can be configured to add a
+  duplicate id property in each message that is forwarded. If the
+  target node of the bridge crashes and then recovers, messages might
+  be resent from the source node. By enabling duplicate detection any
+  duplicate messages will be filtered out and ignored on receipt at
+  the target node.
 
--   `use-duplicate-detection`. Internally cluster connections use
-    bridges to link the nodes, and bridges can be configured to add a
-    duplicate id property in each message that is forwarded. If the
-    target node of the bridge crashes and then recovers, messages might
-    be resent from the source node. By enabling duplicate detection any
-    duplicate messages will be filtered out and ignored on receipt at
-    the target node.
+  This parameter has the same meaning as `use-duplicate-detection` on
+  a bridge. For more information on duplicate detection, please see [Duplicate Detection](duplicate-detection.md).
+  Default is true.
 
-    This parameter has the same meaning as `use-duplicate-detection` on
-    a bridge. For more information on duplicate detection, please see [Duplicate Detection](duplicate-detection.md).
-    Default is true.
+- `message-load-balancing`. This parameter determines if/how
+  messages will be distributed between other nodes of the cluster.
+  It can be one of three values - `OFF`, `STRICT`, or `ON_DEMAND` 
+  (default). This parameter replaces the deprecated
+  `forward-when-no-consumers` parameter.
+  
+  If this is set to `OFF` then messages will never be forwarded to
+  another node in the cluster
 
--   `message-load-balancing`. This parameter determines if/how
-    messages will be distributed between other nodes of the cluster.
-    It can be one of three values - `OFF`, `STRICT`, or `ON_DEMAND` 
-    (default). This parameter replaces the deprecated
-    `forward-when-no-consumers` parameter.
-    
-    If this is set to `OFF` then messages will never be forwarded to
-    another node in the cluster
+  If this is set to `STRICT` then each incoming message will be round
+  robin'd even though the same queues on the other nodes of the
+  cluster may have no consumers at all, or they may have consumers
+  that have non matching message filters (selectors). Note that
+  Apache ActiveMQ Artemis will *not* forward messages to other nodes
+  if there are no *queues* of the same name on the other nodes, even
+  if this parameter is set to `STRICT`. Using `STRICT` is like setting
+  the legacy `forward-when-no-consumers` parameter to `true`.
 
-    If this is set to `STRICT` then each incoming message will be round
-    robin'd even though the same queues on the other nodes of the
-    cluster may have no consumers at all, or they may have consumers
-    that have non matching message filters (selectors). Note that
-    Apache ActiveMQ Artemis will *not* forward messages to other nodes
-    if there are no *queues* of the same name on the other nodes, even
-    if this parameter is set to `STRICT`. Using `STRICT` is like setting
-    the legacy `forward-when-no-consumers` parameter to `true`.
+  If this is set to `ON_DEMAND` then Apache ActiveMQ Artemis will only
+  forward messages to other nodes of the cluster if the address to which
+  they are being forwarded has queues which have consumers, and if those
+  consumers have message filters (selectors) at least one of those
+  selectors must match the message. Using `ON_DEMAND` is like setting
+  the legacy `forward-when-no-consumers` parameter to `false`.
+  
+  Keep in mind that this message forwarding/balancing is what we call
+  "initial distribution." It is different than *redistribution* which
+  is [discussed below](#message-redistribution). This distinction is 
+  important because redistribution is configured differently and has 
+  unique semantics (e.g. it *does not* support filters (selectors)).
 
-    If this is set to `ON_DEMAND` then Apache ActiveMQ Artemis will only
-    forward messages to other nodes of the cluster if the address to which
-    they are being forwarded has queues which have consumers, and if those
-    consumers have message filters (selectors) at least one of those
-    selectors must match the message. Using `ON_DEMAND` is like setting
-    the legacy `forward-when-no-consumers` parameter to `false`.
+  Default is `ON_DEMAND`.
 
-    Default is `ON_DEMAND`.
+- `max-hops`. When a cluster connection decides the set of nodes to
+  which it might load balance a message, those nodes do not have to be
+  directly connected to it via a cluster connection. Apache ActiveMQ Artemis can be
+  configured to also load balance messages to nodes which might be
+  connected to it only indirectly with other Apache ActiveMQ Artemis servers as
+  intermediates in a chain.
 
--   `max-hops`. When a cluster connection decides the set of nodes to
-    which it might load balance a message, those nodes do not have to be
-    directly connected to it via a cluster connection. Apache ActiveMQ Artemis can be
-    configured to also load balance messages to nodes which might be
-    connected to it only indirectly with other Apache ActiveMQ Artemis servers as
-    intermediates in a chain.
+  This allows Apache ActiveMQ Artemis to be configured in more complex topologies and
+  still provide message load balancing. We'll discuss this more later
+  in this chapter.
 
-    This allows Apache ActiveMQ Artemis to be configured in more complex topologies and
-    still provide message load balancing. We'll discuss this more later
-    in this chapter.
+  The default value for this parameter is `1`, which means messages
+  are only load balanced to other Apache ActiveMQ Artemis serves which are directly
+  connected to this server. This parameter is optional.
 
-    The default value for this parameter is `1`, which means messages
-    are only load balanced to other Apache ActiveMQ Artemis serves which are directly
-    connected to this server. This parameter is optional.
+- `confirmation-window-size`. The size (in bytes) of the window used
+  for sending confirmations from the server connected to. So once the
+  server has received `confirmation-window-size` bytes it notifies its
+  client, default is 1048576. A value of -1 means no window.
 
--   `confirmation-window-size`. The size (in bytes) of the window used
-    for sending confirmations from the server connected to. So once the
-    server has received `confirmation-window-size` bytes it notifies its
-    client, default is 1048576. A value of -1 means no window.
+- `producer-window-size`. The size for producer flow control over cluster connection.
+   it's by default disabled through the cluster connection bridge but you may want
+   to set a value if you are using really large messages in cluster. A value of -1 means no window.
 
--   `producer-window-size`. The size for producer flow control over cluster connection.
-     it's by default disabled through the cluster connection bridge but you may want
-     to set a value if you are using really large messages in cluster. A value of -1 means no window.
+- `call-failover-timeout`. Similar to `call-timeout` but used when a
+  call is made during a failover attempt. Default is -1 (no timeout).
 
--   `call-failover-timeout`. Similar to `call-timeout` but used when a
-    call is made during a failover attempt. Default is -1 (no timeout).
+- `notification-interval`. How often (in milliseconds) the cluster
+  connection should broadcast itself when attaching to the cluster.
+  Default is 1000.
 
--   `notification-interval`. How often (in milliseconds) the cluster
-    connection should broadcast itself when attaching to the cluster.
-    Default is 1000.
+- `notification-attempts`. How many times the cluster connection
+  should broadcast itself when connecting to the cluster. Default is
+  2.
 
--   `notification-attempts`. How many times the cluster connection
-    should broadcast itself when connecting to the cluster. Default is
-    2.
-
--   `discovery-group-ref`. This parameter determines which discovery
-    group is used to obtain the list of other servers in the cluster
-    that this cluster connection will make connections to.
+- `discovery-group-ref`. This parameter determines which discovery
+  group is used to obtain the list of other servers in the cluster
+  that this cluster connection will make connections to.
 
 Alternatively if you would like your cluster connections to use a static
 list of servers for discovery then you can do it like this.
 
-    <cluster-connection name="my-cluster">
-       ...
-       <static-connectors>
-          <connector-ref>server0-connector</connector-ref>
-          <connector-ref>server1-connector</connector-ref>
-       </static-connectors>
-    </cluster-connection>
+```xml
+<cluster-connection name="my-cluster">
+   ...
+   <static-connectors>
+      <connector-ref>server0-connector</connector-ref>
+      <connector-ref>server1-connector</connector-ref>
+   </static-connectors>
+</cluster-connection>
+```
 
 Here we have defined 2 servers that we know for sure will that at least
 one will be available. There may be many more servers in the cluster but
@@ -782,8 +702,10 @@ When creating connections between nodes of a cluster to form a cluster
 connection, Apache ActiveMQ Artemis uses a cluster user and cluster password which is
 defined in `broker.xml`:
 
-    <cluster-user>ACTIVEMQ.CLUSTER.ADMIN.USER</cluster-user>
-    <cluster-password>CHANGE ME!!</cluster-password>
+```xml
+<cluster-user>ACTIVEMQ.CLUSTER.ADMIN.USER</cluster-user>
+<cluster-password>CHANGE ME!!</cluster-password>
+```
 
 > **Warning**
 >
@@ -805,35 +727,35 @@ policies, and you can also implement your own and use that.
 
 The out-of-the-box policies are
 
--   Round Robin. With this policy the first node is chosen randomly then
-    each subsequent node is chosen sequentially in the same order.
+- Round Robin. With this policy the first node is chosen randomly then
+  each subsequent node is chosen sequentially in the same order.
 
-    For example nodes might be chosen in the order B, C, D, A, B, C, D,
-    A, B or D, A, B, C, D, A, B, C, D or C, D, A, B, C, D, A, B, C.
+  For example nodes might be chosen in the order B, C, D, A, B, C, D,
+  A, B or D, A, B, C, D, A, B, C, D or C, D, A, B, C, D, A, B, C.
 
-    Use
-    `org.apache.activemq.artemis.api.core.client.loadbalance.RoundRobinConnectionLoadBalancingPolicy`
-    as the `<connection-load-balancing-policy-class-name>`.
+  Use
+  `org.apache.activemq.artemis.api.core.client.loadbalance.RoundRobinConnectionLoadBalancingPolicy`
+  as the `<connection-load-balancing-policy-class-name>`.
 
--   Random. With this policy each node is chosen randomly.
+- Random. With this policy each node is chosen randomly.
 
-    Use
-    `org.apache.activemq.artemis.api.core.client.loadbalance.RandomConnectionLoadBalancingPolicy`
-    as the `<connection-load-balancing-policy-class-name>`.
+  Use
+  `org.apache.activemq.artemis.api.core.client.loadbalance.RandomConnectionLoadBalancingPolicy`
+  as the `<connection-load-balancing-policy-class-name>`.
 
--   Random Sticky. With this policy the first node is chosen randomly
-    and then re-used for subsequent connections.
+- Random Sticky. With this policy the first node is chosen randomly
+  and then re-used for subsequent connections.
 
-    Use
-    `org.apache.activemq.artemis.api.core.client.loadbalance.RandomStickyConnectionLoadBalancingPolicy`
-    as the `<connection-load-balancing-policy-class-name>`.
+  Use
+  `org.apache.activemq.artemis.api.core.client.loadbalance.RandomStickyConnectionLoadBalancingPolicy`
+  as the `<connection-load-balancing-policy-class-name>`.
 
--   First Element. With this policy the "first" (i.e. 0th) node is
-    always returned.
+- First Element. With this policy the "first" (i.e. 0th) node is
+  always returned.
 
-    Use
-    `org.apache.activemq.artemis.api.core.client.loadbalance.FirstElementConnectionLoadBalancingPolicy`
-    as the `<connection-load-balancing-policy-class-name>`.
+  Use
+  `org.apache.activemq.artemis.api.core.client.loadbalance.FirstElementConnectionLoadBalancingPolicy`
+  as the `<connection-load-balancing-policy-class-name>`.
 
 You can also implement your own policy by implementing the interface
 `org.apache.activemq.artemis.api.core.client.loadbalance.ConnectionLoadBalancingPolicy`
@@ -843,40 +765,20 @@ using JMS or the core API. If you don't specify a policy then the
 default will be used which is
 `org.apache.activemq.artemis.api.core.client.loadbalance.RoundRobinConnectionLoadBalancingPolicy`.
 
-If you're using JMS and you're using JNDI on the client to look up your
-JMS connection factory instances then you can specify these parameters
-in the JNDI context environment in, e.g. `jndi.properties`, to specify
-the load balancing policy directly:
+The parameter `connectionLoadBalancingPolicyClassName` can be set on the URI to
+configure what load balancing policy to use:
 
-    java.naming.factory.initial=org.apache.activemq.artemis.jndi.ActiveMQInitialContextFactory
-    connection.myConnectionFactory=tcp://localhost:61616?loadBalancingPolicyClassName=org.apache.activemq.artemis.api.core.client.loadbalance.RandomConnectionLoadBalancingPolicy
-
-The above example would instantiate a JMS connection factory that uses
-the random connection load balancing policy.
-
-If you're using JMS but you're instantiating your connection factory
-directly on the client side then you can set the load balancing policy
-using the setter on the `ActiveMQConnectionFactory` before using it:
-
-``` java
-ConnectionFactory jmsConnectionFactory = ActiveMQJMSClient.createConnectionFactory(...);
-jmsConnectionFactory.setLoadBalancingPolicyClassName("com.acme.MyLoadBalancingPolicy");
 ```
-
-If you're using the core API, you can set the load balancing policy
-directly on the `ServerLocator` instance you are using:
-
-``` java
-ServerLocator locator = ActiveMQClient.createServerLocatorWithHA(server1, server2);
-locator.setLoadBalancingPolicyClassName("com.acme.MyLoadBalancingPolicy");
+tcp://localhost:61616?connectionLoadBalancingPolicyClassName=org.apache.activemq.artemis.api.core.client.loadbalance.RandomConnectionLoadBalancingPolicy
 ```
 
 The set of servers over which the factory load balances can be
 determined in one of two ways:
 
--   Specifying servers explicitly
+- Specifying servers explicitly in the URL. This also requires setting
+  the `useTopologyForLoadBalancing` parameter to `false` on the URL.
 
--   Using discovery.
+- Using discovery. This is the default behavior.
 
 ## Specifying Members of a Cluster Explicitly
 
@@ -886,17 +788,19 @@ typically used to form non symmetrical clusters such as chain cluster or
 ring clusters. This can only be done using a static list of connectors
 and is configured as follows:
 
-    <cluster-connection name="my-cluster">
-       <address>jms</address>
-       <connector-ref>netty-connector</connector-ref>
-       <retry-interval>500</retry-interval>
-       <use-duplicate-detection>true</use-duplicate-detection>
-       <message-load-balancing>STRICT</message-load-balancing>
-       <max-hops>1</max-hops>
-       <static-connectors allow-direct-connections-only="true">
-          <connector-ref>server1-connector</connector-ref>
-       </static-connectors>
-    </cluster-connection>
+```xml
+<cluster-connection name="my-cluster">
+   <address/>
+   <connector-ref>netty-connector</connector-ref>
+   <retry-interval>500</retry-interval>
+   <use-duplicate-detection>true</use-duplicate-detection>
+   <message-load-balancing>STRICT</message-load-balancing>
+   <max-hops>1</max-hops>
+   <static-connectors allow-direct-connections-only="true">
+      <connector-ref>server1-connector</connector-ref>
+   </static-connectors>
+</cluster-connection>
+```
 
 In this example we have set the attribute
 `allow-direct-connections-only` which means that the only server that
@@ -928,23 +832,23 @@ after the last consumer on a queue is closed before redistributing. By
 default message redistribution is disabled.
 
 Message redistribution can be configured on a per address basis, by
-specifying the redistribution delay in the address settings, for more
-information on configuring address settings, please see [Queue Attributes](queue-attributes.md).
+specifying the redistribution delay in the address settings. For more
+information on configuring address settings, please see [Configuring Addresses and Queues via Address Settings](address-model.md#configuring-addresses-and-queues-via-address-settings).
 
 Here's an address settings snippet from `broker.xml`
 showing how message redistribution is enabled for a set of queues:
 
-    <address-settings>
-       <address-setting match="jms.#">
-          <redistribution-delay>0</redistribution-delay>
-       </address-setting>
-    </address-settings>
+```xml
+<address-settings>
+   <address-setting match="#">
+      <redistribution-delay>0</redistribution-delay>
+   </address-setting>
+</address-settings>
+```
 
 The above `address-settings` block would set a `redistribution-delay` of
-`0` for any queue which is bound to an address that starts with "jms.".
-All JMS queues and topic subscriptions are bound to addresses that start
-with "jms.", so the above would enable instant (no delay) redistribution
-for all JMS queues and topic subscriptions.
+`0` for any queue which is bound to any address. So the above would enable
+instant (no delay) redistribution for all addresses.
 
 The attribute `match` can be an exact match or it can be a string that
 conforms to the Apache ActiveMQ Artemis wildcard syntax (described in [Wildcard Syntax](wildcard-syntax.md)).
@@ -960,6 +864,58 @@ It often makes sense to introduce a delay before redistributing as it's
 a common case that a consumer closes but another one quickly is created
 on the same queue, in such a case you probably don't want to
 redistribute immediately since the new consumer will arrive shortly.
+
+#### Redistribution and filters (selectors) 
+
+Although "initial distribution" (described above) does support filters
+(selectors), redistribution does *not* support filters. Consider this
+scenario:
+
+ 1. A cluster of 2 nodes - `A` and `B` - using a `redistribution-delay` of
+   `0` and a `message-load-balancing` of `ON_DEMAND`.
+ 1. `A` and `B` each has the queue `foo`.
+ 1. A producer sends a message which is routed to queue `foo` on node `A`. 
+   The message has property named `myProperty` with a value of `10`.
+ 1. A consumer connects to queue `foo` on node `A` with the filter 
+   `myProperty=5`. This filter doesn't match the message.
+ 1. A consumer connects to queue `foo` on node `B` with the filter 
+   `myProperty=10`. This filter *does* match the message .
+
+Despite the fact that the filter of the consumer on queue `foo` on node `B`
+matches the message, the message will *not* be redistributed from node `A` to
+node `B` because a consumer for the queue exists on node `A`.
+
+Not supporting redistribution based on filters was an explicit design decision
+in order to avoid two main problems - queue scanning and unnecessary 
+redistribution.
+
+From a performance perspective a consumer with a filter on a queue is already
+costly due to the scanning that the broker must do on the queue to find 
+matching messages. In general, this is a bit of an anti-pattern as it turns
+the broker into something akin to a database where you can "select" the data 
+you want using a filter. If brokers are configured in a cluster and a consumer 
+with a filter connects and no matches are found after scanning the local queue
+then potentially every instance of that queue in the cluster would need to be 
+scanned. This turns into a bit of a scalability nightmare with lots of consumers 
+(especially short-lived consumers) with filters connecting & disconnecting 
+frequently. The time & computing resources used for queue scanning would go 
+through the roof.
+
+It is also possible to get into a pathological situation where short-lived 
+consumers with filters connect to nodes around the cluster and messages get 
+redistributed back and forth between nodes without ever actually being consumed.
+
+One common use-case for consumers with filters (selectors) on queues is
+request/reply using a correlation ID. Following the standard pattern can be
+problematic in a cluster due to the lack of redistribution based on filters
+already described. However, there is a simple way to ensure an application
+using this request/reply pattern gets its reply even when using a correlation
+ID filter in a cluster - create the consumer before the request is sent. This
+will ensure that when the reply is sent it will be routed the proper cluster
+node since "*initial* distribution" (described above) does support filters.
+For example, in the scenario outlined above if steps 3 and 5 were switched
+(i.e. if the consumers were created before the message was sent) then the 
+consumer on node `B` would in fact receive the message.
 
 ## Cluster topologies
 

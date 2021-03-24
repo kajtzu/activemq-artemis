@@ -16,9 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import java.util.List;
-import java.util.Vector;
-
 import javax.jms.Connection;
 import javax.jms.Destination;
 import javax.jms.JMSException;
@@ -30,9 +27,11 @@ import javax.jms.Session;
 import javax.jms.TemporaryQueue;
 import javax.jms.TemporaryTopic;
 import javax.jms.TextMessage;
+import java.util.List;
+import java.util.Vector;
 
-import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
+import org.apache.activemq.command.ActiveMQDestination;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -57,15 +56,12 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
       clientConnection = createConnection();
       clientConnection.setClientID("ClientConnection:" + name.getMethodName());
 
-      System.out.println("Creating session.");
       Session session = clientConnection.createSession(false, Session.AUTO_ACKNOWLEDGE);
 
       clientConnection.start();
 
       Destination replyDestination = createTemporaryDestination(session);
-      System.out.println("Created temporary topic " + replyDestination);
 
-      System.out.println("Creating consumer on: " + replyDestination);
       MessageConsumer replyConsumer = session.createConsumer(replyDestination);
 
       // lets test the destination
@@ -76,7 +72,6 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
       // replyDestination);
       // assertEquals("clientID from the temporary destination must be the
       // same", clientSideClientID, value);
-      System.out.println("Both the clientID and destination clientID match properly: " + clientSideClientID);
 
       /* build queues */
 
@@ -84,24 +79,17 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
       TextMessage requestMessage = session.createTextMessage("Olivier");
       requestMessage.setJMSReplyTo(replyDestination);
 
-      System.out.println("Creating producer on " + requestDestination);
       MessageProducer requestProducer = session.createProducer(requestDestination);
 
-      System.out.println("Sending message to " + requestDestination);
       requestProducer.send(requestMessage);
 
-      System.out.println("Sent request.");
-      System.out.println(requestMessage.toString());
 
       Message msg = replyConsumer.receive(5000);
 
       if (msg instanceof TextMessage) {
          TextMessage replyMessage = (TextMessage) msg;
-         System.out.println("Received reply.");
-         System.out.println(replyMessage.toString());
          assertEquals("Wrong message content", "Hello: Olivier", replyMessage.getText());
-      }
-      else {
+      } else {
          fail("Should have received a reply by now");
       }
       replyConsumer.close();
@@ -124,8 +112,6 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
       try {
          TextMessage requestMessage = (TextMessage) message;
 
-         System.out.println("Received request from " + requestDestination);
-         System.out.println(requestMessage.toString());
 
          Destination replyDestination = requestMessage.getJMSReplyTo();
 
@@ -143,15 +129,11 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
          if (dynamicallyCreateProducer) {
             replyProducer = serverSession.createProducer(replyDestination);
             replyProducer.send(replyMessage);
-         }
-         else {
+         } else {
             replyProducer.send(replyDestination, replyMessage);
          }
 
-         System.out.println("Sent reply to " + replyDestination);
-         System.out.println(replyMessage.toString());
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          onException(e);
       }
    }
@@ -164,12 +146,10 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
          Message message = requestConsumer.receive(5000);
          if (message != null) {
             onMessage(message);
-         }
-         else {
+         } else {
             System.err.println("No message received");
          }
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
          onException(e);
       }
    }
@@ -188,12 +168,10 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
       requestDestination = createDestination(serverSession);
 
       /* build queues */
-      System.out.println("Creating consumer on: " + requestDestination);
       final MessageConsumer requestConsumer = serverSession.createConsumer(requestDestination);
       if (useAsyncConsume) {
          requestConsumer.setMessageListener(this);
-      }
-      else {
+      } else {
          Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
@@ -239,9 +217,7 @@ public class JmsTopicRequestReplyTest extends BasicOpenWireTest implements Messa
    protected void deleteTemporaryDestination(Destination dest) throws JMSException {
       if (topic) {
          ((TemporaryTopic) dest).delete();
-      }
-      else {
-         System.out.println("Deleting: " + dest);
+      } else {
          ((TemporaryQueue) dest).delete();
       }
    }

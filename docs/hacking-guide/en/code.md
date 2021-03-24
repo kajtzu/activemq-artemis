@@ -1,18 +1,18 @@
 # Working with the Code
 
-While the canonical Apache ActiveMQ Artemis git repository is hosted on Apache hardware at https://git-wip-us.apache.org/repos/asf?p=activemq-artemis.git
+While the canonical Apache ActiveMQ Artemis git repository is hosted on Apache hardware at https://gitbox.apache.org/repos/asf/activemq-artemis.git
 contributors are encouraged (but not required) to use a mirror on GitHub for collaboration and pull-request review
 functionality. Follow the steps below to get set up with GitHub, etc.
 
 If you do not wish to use GitHub for whatever reason you can follow the overall process outlined in the "Typical
-development cycle" section below but instead attach [a patch file](http://git-scm.com/docs/git-format-patch) to the
+development cycle" section below but instead attach [a patch file](https://git-scm.com/docs/git-format-patch) to the
 related JIRA or an email to the [dev list](http://activemq.apache.org/mailing-lists.html).
 
 ## Initial Steps
 
 1. Create a GitHub account if you don't have one already
 
-   http://github.com
+   https://github.com
    
 1. Fork the apache-artemis repository into your account
 
@@ -37,7 +37,7 @@ related JIRA or an email to the [dev list](http://activemq.apache.org/mailing-li
 
 1. Build with Maven
 
-   Typically developers will want to build using the `dev` profile which disables license and code style checks. For
+   Typically developers will want to build using the `dev` profile which enables license and code style checks. For
    example:
    
         $ mvn -Pdev install
@@ -76,9 +76,11 @@ related JIRA or an email to the [dev list](http://activemq.apache.org/mailing-li
 
    <a name="commitMessageDetails"></a> When you commit your changes you will need to supply a commit message. We follow the
     50/72 git commit message format. An ActiveMQ Artemis commit message should be formatted in the following manner:
-                                                                        
-   1. Add the ARTEMIS JIRA (if one exists) followed by a brief description of the change in the first line. This line
-      should be limited to 50 characters.
+    
+   1. Add the first line with the summary, using maximum 50 characters. Start the summary with the jira key (ARTEMIS-XXX)
+      followed by a brief description of the change. Use the prefix `NO-JIRA` only for a very small insignificant change,
+      like a typo or a small doc fix. Bug fixes, features or any code change, really should be accompanied by a jira,
+      so they can clearly be reported in the release notes.
    1. Insert a single blank line after the first line.
    1. Provide a detailed description of the change in the following lines, breaking paragraphs where needed. These lines
       should be wrapped at 72 characters.
@@ -159,7 +161,7 @@ related JIRA or an email to the [dev list](http://activemq.apache.org/mailing-li
 
 Due to incompatibilities between some open source licenses and the Apache v2.0 license (that this project is licensed under)
 care must be taken when adding new dependencies to the project.  The Apache Software Foundation 3rd party licensing 
-policy has more information here: http://www.apache.org/legal/3party.html
+policy has more information here: https://www.apache.org/legal/3party.html
 
 To keep track of all licenses in ActiveMQ Artemis, new dependencies must be added in either the top level pom.xml or in test/pom.xml
 (depending on whether this is a test only dependency or if it is used in the main code base).  The dependency should be

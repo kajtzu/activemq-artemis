@@ -33,7 +33,7 @@ public interface ClientSessionInternal extends ClientSession {
 
    void acknowledge(ClientConsumer consumer, Message message) throws ActiveMQException;
 
-   void individualAcknowledge(final ClientConsumer consumer, final Message message) throws ActiveMQException;
+   void individualAcknowledge(ClientConsumer consumer, Message message) throws ActiveMQException;
 
    boolean isCacheLargeMessageClient();
 
@@ -66,7 +66,7 @@ public interface ClientSessionInternal extends ClientSession {
 
    void preHandleFailover(RemotingConnection connection);
 
-   void handleFailover(RemotingConnection backupConnection, ActiveMQException cause);
+   boolean handleFailover(RemotingConnection backupConnection, ActiveMQException cause);
 
    RemotingConnection getConnection();
 
@@ -88,10 +88,10 @@ public interface ClientSessionInternal extends ClientSession {
 
    ClientProducerCreditManager getProducerCreditManager();
 
-   /** This will set the address at the message */
+   /**
+    * This will set the address at the message
+    */
    void setAddress(Message message, SimpleString address);
-
-   void checkDefaultAddress(SimpleString address);
 
    void setPacketSize(int packetSize);
 

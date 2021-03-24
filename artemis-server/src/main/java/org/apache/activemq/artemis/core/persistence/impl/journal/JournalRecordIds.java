@@ -33,6 +33,8 @@ public final class JournalRecordIds {
 
    public static final byte QUEUE_BINDING_RECORD = 21;
 
+   public static final byte QUEUE_STATUS_RECORD = 22;
+
    /**
     * Records storing the current recordID number.
     *
@@ -43,7 +45,9 @@ public final class JournalRecordIds {
 
    public static final byte ADDRESS_SETTING_RECORD = 25;
 
-   public static final byte SECURITY_RECORD = 26;
+   public static final byte SECURITY_SETTING_RECORD = 26;
+
+   public static final byte DIVERT_RECORD = 27;
 
    // Message journal record types
 
@@ -81,4 +85,15 @@ public final class JournalRecordIds {
    public static final byte PAGE_CURSOR_COMPLETE = 42;
 
    public static final byte PAGE_CURSOR_PENDING_COUNTER = 43;
+
+   public static final byte ADDRESS_BINDING_RECORD = 44;
+
+   public static final byte ADD_MESSAGE_PROTOCOL = 45;
+
+   public static final byte ADDRESS_STATUS_RECORD = 46;
+
+   public static final byte USER_RECORD = 47;
+
+   public static final byte ROLE_RECORD = 48;
+
 }

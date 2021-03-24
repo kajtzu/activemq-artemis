@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
@@ -32,6 +34,8 @@ import org.apache.activemq.artemis.spi.core.remoting.Connection;
 import org.apache.activemq.artemis.spi.core.remoting.ReadyListener;
 import org.jboss.logging.Logger;
 
+import javax.security.auth.Subject;
+
 public abstract class AbstractRemotingConnection implements RemotingConnection {
 
    private static final Logger logger = Logger.getLogger(AbstractRemotingConnection.class);
@@ -42,11 +46,18 @@ public abstract class AbstractRemotingConnection implements RemotingConnection {
    protected final Executor executor;
    protected final long creationTime;
    protected volatile boolean dataReceived;
+   private String clientId;
+   private Subject subject;
 
    public AbstractRemotingConnection(final Connection transportConnection, final Executor executor) {
       this.transportConnection = transportConnection;
       this.executor = executor;
       this.creationTime = System.currentTimeMillis();
+   }
+
+   @Override
+   public void scheduledFlush() {
+      flush();
    }
 
    @Override
@@ -65,12 +76,10 @@ public abstract class AbstractRemotingConnection implements RemotingConnection {
       for (final FailureListener listener : listenersClone) {
          try {
             listener.connectionFailed(me, false, scaleDownTargetNodeID);
-         }
-         catch (ActiveMQInterruptedException interrupted) {
+         } catch (ActiveMQInterruptedException interrupted) {
             // this is an expected behaviour.. no warn or error here
             logger.debug("thread interrupted", interrupted);
-         }
-         catch (final Throwable t) {
+         } catch (final Throwable t) {
             // Failure of one listener to execute shouldn't prevent others
             // from
             // executing
@@ -85,8 +94,7 @@ public abstract class AbstractRemotingConnection implements RemotingConnection {
       for (final CloseListener listener : listenersClone) {
          try {
             listener.connectionClosed();
-         }
-         catch (final Throwable t) {
+         } catch (final Throwable t) {
             // Failure of one listener to execute shouldn't prevent others
             // from
             // executing
@@ -106,7 +114,6 @@ public abstract class AbstractRemotingConnection implements RemotingConnection {
    public Object getID() {
       return transportConnection.getID();
    }
-
 
    public String getLocalAddress() {
       return transportConnection.getLocalAddress();
@@ -215,8 +222,54 @@ public abstract class AbstractRemotingConnection implements RemotingConnection {
    }
 
    @Override
+   public Future asyncFail(final ActiveMQException me) {
+
+      FutureTask<Void> task = new FutureTask(() -> {
+         fail(me);
+         return null;
+      });
+
+      if (executor == null) {
+         // only tests cases can do this
+         task.run();
+      } else {
+         executor.execute(task);
+      }
+      return task;
+   }
+
+   @Override
    public void bufferReceived(final Object connectionID, final ActiveMQBuffer buffer) {
       dataReceived = true;
    }
 
+   @Override
+   public boolean isSupportsFlowControl() {
+      return true;
+   }
+
+   @Override
+   public void setAuditSubject(Subject subject) {
+      this.subject = subject;
+   }
+
+   @Override
+   public Subject getAuditSubject() {
+      return subject;
+   }
+
+   @Override
+   public Subject getSubject() {
+      return null;
+   }
+
+   @Override
+   public void setClientID(String clientId) {
+      this.clientId = clientId;
+   }
+
+   @Override
+   public String getClientID() {
+      return clientId;
+   }
 }

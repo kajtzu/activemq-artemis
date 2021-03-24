@@ -19,19 +19,22 @@ package org.apache.activemq.artemis.core.replication;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.IOCompletion;
 import org.apache.activemq.artemis.core.journal.Journal;
 import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
 import org.apache.activemq.artemis.core.journal.LoaderCallback;
+import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
-import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.TransactionFailureCallback;
 import org.apache.activemq.artemis.core.journal.impl.JournalFile;
 import org.apache.activemq.artemis.core.journal.impl.dataformat.ByteArrayEncoding;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
 import org.apache.activemq.artemis.core.replication.ReplicationManager.ADD_OPERATION_TYPE;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
+import org.jboss.logging.Logger;
 
 /**
  * Used by the {@link org.apache.activemq.artemis.core.persistence.impl.journal.JournalStorageManager} to replicate journal calls.
@@ -43,11 +46,7 @@ import org.apache.activemq.artemis.core.replication.ReplicationManager.ADD_OPERA
  */
 public class ReplicatedJournal implements Journal {
 
-   private static final boolean trace = false;
-
-   private static void trace(final String message) {
-      System.out.println("ReplicatedJournal::" + message);
-   }
+   private static final Logger log = Logger.getLogger(ReplicatedJournal.class);
 
    private final ReplicationManager replicationManager;
 
@@ -62,6 +61,11 @@ public class ReplicatedJournal implements Journal {
       this.journalID = journalID;
       this.localJournal = localJournal;
       this.replicationManager = replicationManager;
+   }
+
+   @Override
+   public void flush() throws Exception {
+
    }
 
    /**
@@ -83,13 +87,14 @@ public class ReplicatedJournal implements Journal {
    @Override
    public void appendAddRecord(final long id,
                                final byte recordType,
-                               final EncodingSupport record,
+                               Persister persister,
+                               final Object record,
                                final boolean sync) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("Append record id = " + id + " recordType = " + recordType);
+      if (log.isTraceEnabled()) {
+         log.trace("Append record id = " + id + " recordType = " + recordType);
       }
-      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.ADD, id, recordType, record);
-      localJournal.appendAddRecord(id, recordType, record, sync);
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.ADD, id, recordType, persister, record);
+      localJournal.appendAddRecord(id, recordType, persister, record, sync);
    }
 
    /**
@@ -103,14 +108,15 @@ public class ReplicatedJournal implements Journal {
    @Override
    public void appendAddRecord(final long id,
                                final byte recordType,
-                               final EncodingSupport record,
+                               Persister persister,
+                               final Object record,
                                final boolean sync,
                                final IOCompletion completionCallback) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("Append record id = " + id + " recordType = " + recordType);
+      if (log.isTraceEnabled()) {
+         log.trace("Append record id = " + id + " recordType = " + recordType);
       }
-      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.ADD, id, recordType, record);
-      localJournal.appendAddRecord(id, recordType, record, sync, completionCallback);
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.ADD, id, recordType, persister, record);
+      localJournal.appendAddRecord(id, recordType, persister, record, sync, completionCallback);
    }
 
    /**
@@ -141,12 +147,13 @@ public class ReplicatedJournal implements Journal {
    public void appendAddRecordTransactional(final long txID,
                                             final long id,
                                             final byte recordType,
-                                            final EncodingSupport record) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("Append record TXid = " + id + " recordType = " + recordType);
+                                            final Persister persister,
+                                            final Object record) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("Append record txID=" + id + " recordType = " + recordType);
       }
-      replicationManager.appendAddRecordTransactional(journalID, ADD_OPERATION_TYPE.ADD, txID, id, recordType, record);
-      localJournal.appendAddRecordTransactional(txID, id, recordType, record);
+      replicationManager.appendAddRecordTransactional(journalID, ADD_OPERATION_TYPE.ADD, txID, id, recordType, persister, record);
+      localJournal.appendAddRecordTransactional(txID, id, recordType, persister, record);
    }
 
    /**
@@ -157,8 +164,8 @@ public class ReplicatedJournal implements Journal {
     */
    @Override
    public void appendCommitRecord(final long txID, final boolean sync) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendCommit " + txID);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendCommit txID=" + txID);
       }
       replicationManager.appendCommitRecord(journalID, txID, sync, true);
       localJournal.appendCommitRecord(txID, sync);
@@ -166,8 +173,8 @@ public class ReplicatedJournal implements Journal {
 
    @Override
    public void appendCommitRecord(final long txID, final boolean sync, final IOCompletion callback) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendCommit " + txID);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendCommit " + txID);
       }
       replicationManager.appendCommitRecord(journalID, txID, sync, true);
       localJournal.appendCommitRecord(txID, sync, callback);
@@ -178,8 +185,8 @@ public class ReplicatedJournal implements Journal {
                                   boolean sync,
                                   IOCompletion callback,
                                   boolean lineUpContext) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendCommit " + txID);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendCommit " + txID);
       }
       replicationManager.appendCommitRecord(journalID, txID, sync, lineUpContext);
       localJournal.appendCommitRecord(txID, sync, callback, lineUpContext);
@@ -193,24 +200,49 @@ public class ReplicatedJournal implements Journal {
     */
    @Override
    public void appendDeleteRecord(final long id, final boolean sync) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendDelete " + id);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete " + id);
       }
       replicationManager.appendDeleteRecord(journalID, id);
       localJournal.appendDeleteRecord(id, sync);
+   }
+
+   /**
+    * @param id
+    * @param sync
+    * @throws Exception
+    * @see org.apache.activemq.artemis.core.journal.Journal#appendDeleteRecord(long, boolean)
+    */
+   @Override
+   public boolean tryAppendDeleteRecord(final long id, final boolean sync) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete " + id);
+      }
+      replicationManager.appendDeleteRecord(journalID, id);
+      return localJournal.tryAppendDeleteRecord(id, sync);
    }
 
    @Override
    public void appendDeleteRecord(final long id,
                                   final boolean sync,
                                   final IOCompletion completionCallback) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendDelete " + id);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete " + id);
       }
       replicationManager.appendDeleteRecord(journalID, id);
       localJournal.appendDeleteRecord(id, sync, completionCallback);
    }
 
+   @Override
+   public boolean tryAppendDeleteRecord(final long id,
+                                  final boolean sync,
+                                  final IOCompletion completionCallback) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete " + id);
+      }
+      replicationManager.appendDeleteRecord(journalID, id);
+      return localJournal.tryAppendDeleteRecord(id, sync, completionCallback);
+   }
    /**
     * @param txID
     * @param id
@@ -234,8 +266,8 @@ public class ReplicatedJournal implements Journal {
    public void appendDeleteRecordTransactional(final long txID,
                                                final long id,
                                                final EncodingSupport record) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendDelete txID=" + txID + " id=" + id);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete txID=" + txID + " id=" + id);
       }
       replicationManager.appendDeleteRecordTransactional(journalID, txID, id, record);
       localJournal.appendDeleteRecordTransactional(txID, id, record);
@@ -249,8 +281,8 @@ public class ReplicatedJournal implements Journal {
     */
    @Override
    public void appendDeleteRecordTransactional(final long txID, final long id) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendDelete (noencoding) txID=" + txID + " id=" + id);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendDelete (noencoding) txID=" + txID + " id=" + id);
       }
       replicationManager.appendDeleteRecordTransactional(journalID, txID, id);
       localJournal.appendDeleteRecordTransactional(txID, id);
@@ -279,8 +311,8 @@ public class ReplicatedJournal implements Journal {
    public void appendPrepareRecord(final long txID,
                                    final EncodingSupport transactionData,
                                    final boolean sync) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendPrepare txID=" + txID);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendPrepare txID=" + txID);
       }
       replicationManager.appendPrepareRecord(journalID, txID, transactionData);
       localJournal.appendPrepareRecord(txID, transactionData, sync);
@@ -291,8 +323,8 @@ public class ReplicatedJournal implements Journal {
                                    final EncodingSupport transactionData,
                                    final boolean sync,
                                    final IOCompletion callback) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendPrepare txID=" + txID);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendPrepare txID=" + txID);
       }
       replicationManager.appendPrepareRecord(journalID, txID, transactionData);
       localJournal.appendPrepareRecord(txID, transactionData, sync, callback);
@@ -306,8 +338,8 @@ public class ReplicatedJournal implements Journal {
     */
    @Override
    public void appendRollbackRecord(final long txID, final boolean sync) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendRollback " + txID);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendRollback " + txID);
       }
       replicationManager.appendRollbackRecord(journalID, txID);
       localJournal.appendRollbackRecord(txID, sync);
@@ -315,8 +347,8 @@ public class ReplicatedJournal implements Journal {
 
    @Override
    public void appendRollbackRecord(final long txID, final boolean sync, final IOCompletion callback) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendRollback " + txID);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendRollback " + txID);
       }
       replicationManager.appendRollbackRecord(journalID, txID);
       localJournal.appendRollbackRecord(txID, sync, callback);
@@ -338,6 +370,15 @@ public class ReplicatedJournal implements Journal {
       this.appendUpdateRecord(id, recordType, new ByteArrayEncoding(record), sync);
    }
 
+   @Override
+   public boolean tryAppendUpdateRecord(final long id,
+                                     final byte recordType,
+                                     final byte[] record,
+                                     final boolean sync) throws Exception {
+
+      return this.tryAppendUpdateRecord(id, recordType, new ByteArrayEncoding(record), sync);
+   }
+
    /**
     * @param id
     * @param recordType
@@ -349,26 +390,55 @@ public class ReplicatedJournal implements Journal {
    @Override
    public void appendUpdateRecord(final long id,
                                   final byte recordType,
-                                  final EncodingSupport record,
+                                  final Persister persister,
+                                  final Object record,
                                   final boolean sync) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendUpdateRecord id = " + id + " , recordType = " + recordType);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendUpdateRecord id = " + id + " , recordType = " + recordType);
       }
-      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, recordType, record);
-      localJournal.appendUpdateRecord(id, recordType, record, sync);
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, recordType, persister, record);
+      localJournal.appendUpdateRecord(id, recordType, persister, record, sync);
+   }
+
+   @Override
+   public boolean tryAppendUpdateRecord(final long id,
+                                  final byte recordType,
+                                  final Persister persister,
+                                  final Object record,
+                                  final boolean sync) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendUpdateRecord id = " + id + " , recordType = " + recordType);
+      }
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, recordType, persister, record);
+      return localJournal.tryAppendUpdateRecord(id, recordType, persister, record, sync);
    }
 
    @Override
    public void appendUpdateRecord(final long id,
                                   final byte journalRecordType,
-                                  final EncodingSupport record,
+                                  final Persister persister,
+                                  final Object record,
                                   final boolean sync,
                                   final IOCompletion completionCallback) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendUpdateRecord id = " + id + " , recordType = " + journalRecordType);
+      if (log.isTraceEnabled()) {
+         log.trace("AppendUpdateRecord id = " + id + " , recordType = " + journalRecordType);
       }
-      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, journalRecordType, record);
-      localJournal.appendUpdateRecord(id, journalRecordType, record, sync, completionCallback);
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, journalRecordType, persister, record);
+      localJournal.appendUpdateRecord(id, journalRecordType, persister, record, sync, completionCallback);
+   }
+
+   @Override
+   public boolean tryAppendUpdateRecord(final long id,
+                                  final byte journalRecordType,
+                                  final Persister persister,
+                                  final Object record,
+                                  final boolean sync,
+                                  final IOCompletion completionCallback) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendUpdateRecord id = " + id + " , recordType = " + journalRecordType);
+      }
+      replicationManager.appendUpdateRecord(journalID, ADD_OPERATION_TYPE.UPDATE, id, journalRecordType, persister, record);
+      return localJournal.tryAppendUpdateRecord(id, journalRecordType, persister, record, sync, completionCallback);
    }
 
    /**
@@ -399,12 +469,13 @@ public class ReplicatedJournal implements Journal {
    public void appendUpdateRecordTransactional(final long txID,
                                                final long id,
                                                final byte recordType,
-                                               final EncodingSupport record) throws Exception {
-      if (ReplicatedJournal.trace) {
-         ReplicatedJournal.trace("AppendUpdateRecord txid=" + txID + " id = " + id + " , recordType = " + recordType);
+                                               final Persister persister,
+                                               final Object record) throws Exception {
+      if (log.isTraceEnabled()) {
+         log.trace("AppendUpdateRecord txid=" + txID + " id = " + id + " , recordType = " + recordType);
       }
-      replicationManager.appendAddRecordTransactional(journalID, ADD_OPERATION_TYPE.UPDATE, txID, id, recordType, record);
-      localJournal.appendUpdateRecordTransactional(txID, id, recordType, record);
+      replicationManager.appendAddRecordTransactional(journalID, ADD_OPERATION_TYPE.UPDATE, txID, id, recordType, persister, record);
+      localJournal.appendUpdateRecordTransactional(txID, id, recordType, persister, record);
    }
 
    /**
@@ -417,8 +488,24 @@ public class ReplicatedJournal implements Journal {
    @Override
    public JournalLoadInformation load(final List<RecordInfo> committedRecords,
                                       final List<PreparedTransactionInfo> preparedTransactions,
-                                      final TransactionFailureCallback transactionFailure) throws Exception {
-      return localJournal.load(committedRecords, preparedTransactions, transactionFailure);
+                                      final TransactionFailureCallback transactionFailure,
+                                      final boolean fixbadTX) throws Exception {
+      return localJournal.load(committedRecords, preparedTransactions, transactionFailure, fixbadTX);
+   }
+
+   /**
+    * @param committedRecords
+    * @param preparedTransactions
+    * @param transactionFailure
+    * @throws Exception
+    * @see org.apache.activemq.artemis.core.journal.Journal#load(java.util.List, java.util.List, org.apache.activemq.artemis.core.journal.TransactionFailureCallback)
+    */
+   @Override
+   public JournalLoadInformation load(final SparseArrayLinkedList<RecordInfo> committedRecords,
+                                      final List<PreparedTransactionInfo> preparedTransactions,
+                                      final TransactionFailureCallback transactionFailure,
+                                      final boolean fixbadTX) throws Exception {
+      return localJournal.load(committedRecords, preparedTransactions, transactionFailure, fixbadTX);
    }
 
    /**
@@ -429,15 +516,6 @@ public class ReplicatedJournal implements Journal {
    @Override
    public JournalLoadInformation load(final LoaderCallback reloadManager) throws Exception {
       return localJournal.load(reloadManager);
-   }
-
-   /**
-    * @param pages
-    * @see org.apache.activemq.artemis.core.journal.Journal#perfBlast(int)
-    */
-   @Override
-   public void perfBlast(final int pages) {
-      localJournal.perfBlast(pages);
    }
 
    /**
@@ -515,8 +593,8 @@ public class ReplicatedJournal implements Journal {
    }
 
    @Override
-   public void forceMoveNextFile() {
-      throw new UnsupportedOperationException();
+   public void forceMoveNextFile() throws Exception {
+      localJournal.forceMoveNextFile();
    }
 
    @Override
@@ -547,5 +625,10 @@ public class ReplicatedJournal implements Journal {
    @Override
    public void replicationSyncFinished() {
       throw new UnsupportedOperationException("should never get called");
+   }
+
+   @Override
+   public long getMaxRecordSize() {
+      return localJournal.getMaxRecordSize();
    }
 }

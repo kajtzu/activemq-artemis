@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -37,12 +37,15 @@ import io.netty.handler.codec.mqtt.MqttSubAckPayload;
 import io.netty.handler.codec.mqtt.MqttSubscribeMessage;
 import io.netty.handler.codec.mqtt.MqttUnsubAckMessage;
 import io.netty.handler.codec.mqtt.MqttUnsubscribeMessage;
+import io.netty.util.ReferenceCountUtil;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
+import org.apache.activemq.artemis.logs.AuditLogger;
 import org.apache.activemq.artemis.spi.core.protocol.ConnectionEntry;
+import org.apache.activemq.artemis.utils.actors.Actor;
 
 /**
  * This class is responsible for receiving and sending MQTT packets, delegating behaviour to one of the
- * MQTTConnectionManager, MQTTPublishMananger, MQTTSubscriptionManager classes.
+ * MQTTConnectionManager, MQTTPublishManager, MQTTSubscriptionManager classes.
  */
 public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
 
@@ -53,6 +56,7 @@ public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
    private MQTTSession session;
 
    private ActiveMQServer server;
+
    private MQTTProtocolManager protocolManager;
 
    // This Channel Handler is not sharable, therefore it can only ever be associated with a single ctx.
@@ -62,48 +66,70 @@ public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
 
    private boolean stopped = false;
 
+   private final Actor<MqttMessage> mqttMessageActor;
+
    public MQTTProtocolHandler(ActiveMQServer server, MQTTProtocolManager protocolManager) {
       this.server = server;
       this.protocolManager = protocolManager;
+      this.mqttMessageActor = new Actor<>(server.getThreadPool(), this::act);
    }
 
    void setConnection(MQTTConnection connection, ConnectionEntry entry) throws Exception {
       this.connectionEntry = entry;
       this.connection = connection;
-      this.session = new MQTTSession(this, connection);
+      this.session = new MQTTSession(this, connection, protocolManager, server.getConfiguration().getWildcardConfiguration());
    }
 
-   void stop(boolean error) {
+   void stop() {
       stopped = true;
    }
 
    @Override
    public void channelRead(ChannelHandlerContext ctx, Object msg) {
+      connection.dataReceived();
+      MqttMessage message = (MqttMessage) msg;
+
+      // Disconnect if Netty codec failed to decode the stream.
+      if (message.decoderResult().isFailure()) {
+         log.debug("Bad Message Disconnecting Client.");
+         disconnect(true);
+         return;
+      }
+
+      if (this.ctx == null) {
+         this.ctx = ctx;
+      }
+
+      // let netty handle keepalive response
+      if (MqttMessageType.PINGREQ == message.fixedHeader().messageType()) {
+         handlePingreq();
+      } else {
+         mqttMessageActor.act(message);
+      }
+   }
+
+   public void act(MqttMessage message) {
       try {
          if (stopped) {
-            disconnect();
+            disconnect(true);
             return;
          }
 
-         MqttMessage message = (MqttMessage) msg;
-
-         // Disconnect if Netty codec failed to decode the stream.
-         if (message.decoderResult().isFailure()) {
-            log.debug("Bad Message Disconnecting Client.");
-            disconnect();
-            return;
+         if (AuditLogger.isAnyLoggingEnabled()) {
+            AuditLogger.setRemoteAddress(connection.getRemoteAddress());
          }
 
-         connection.dataReceived();
+         MQTTUtil.logMessage(session.getState(), message, true);
 
-         MQTTUtil.logMessage(log, message, true);
+         if (this.protocolManager.invokeIncoming(message, this.connection) != null) {
+            log.debugf("Interceptor rejected MQTT message: %s", message);
+            disconnect(true);
+            return;
+         }
 
          switch (message.fixedHeader().messageType()) {
             case CONNECT:
-               handleConnect((MqttConnectMessage) message, ctx);
-               break;
-            case CONNACK:
-               handleConnack((MqttConnAckMessage) message);
+               handleConnect((MqttConnectMessage) message);
                break;
             case PUBLISH:
                handlePublish((MqttPublishMessage) message);
@@ -121,33 +147,26 @@ public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
                handlePubcomp(message);
                break;
             case SUBSCRIBE:
-               handleSubscribe((MqttSubscribeMessage) message, ctx);
-               break;
-            case SUBACK:
-               handleSuback((MqttSubAckMessage) message);
+               handleSubscribe((MqttSubscribeMessage) message);
                break;
             case UNSUBSCRIBE:
                handleUnsubscribe((MqttUnsubscribeMessage) message);
                break;
-            case UNSUBACK:
-               handleUnsuback((MqttUnsubAckMessage) message);
-               break;
-            case PINGREQ:
-               handlePingreq(message, ctx);
-               break;
-            case PINGRESP:
-               handlePingresp(message);
-               break;
             case DISCONNECT:
-               handleDisconnect(message);
+               disconnect(false);
                break;
+            case UNSUBACK:
+            case SUBACK:
+            case PINGRESP:
+            case CONNACK: // The server does not instantiate connections therefore any CONNACK received over a connection is an invalid control message.
             default:
-               disconnect();
+               disconnect(true);
          }
-      }
-      catch (Exception e) {
-         log.warn("Error processing Control Packet, Disconnecting Client" + e.getMessage());
-         disconnect();
+      } catch (Exception e) {
+         log.warn("Error processing Control Packet, Disconnecting Client", e);
+         disconnect(true);
+      } finally {
+         ReferenceCountUtil.release(message);
       }
    }
 
@@ -156,42 +175,26 @@ public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
     *
     * @param connect
     */
-   void handleConnect(MqttConnectMessage connect, ChannelHandlerContext ctx) throws Exception {
-      this.ctx = ctx;
-      connectionEntry.ttl = connect.variableHeader().keepAliveTimeSeconds() * 1500;
+   void handleConnect(MqttConnectMessage connect) throws Exception {
+      connectionEntry.ttl = connect.variableHeader().keepAliveTimeSeconds() * 1500L;
 
       String clientId = connect.payload().clientIdentifier();
-      session.getConnectionManager().connect(clientId, connect.payload().userName(), connect.payload().password(), connect.variableHeader().isWillFlag(), connect.payload().willMessage(), connect.payload().willTopic(), connect.variableHeader().isWillRetain(), connect.variableHeader().willQos(), connect.variableHeader().isCleanSession());
+      session.getConnectionManager().connect(clientId, connect.payload().userName(), connect.payload().passwordInBytes(), connect.variableHeader().isWillFlag(), connect.payload().willMessageInBytes(), connect.payload().willTopic(), connect.variableHeader().isWillRetain(), connect.variableHeader().willQos(), connect.variableHeader().isCleanSession());
    }
 
-   void disconnect() {
-      session.getConnectionManager().disconnect();
+   void disconnect(boolean error) {
+      session.getConnectionManager().disconnect(error);
    }
 
    void sendConnack(MqttConnectReturnCode returnCode) {
       MqttFixedHeader fixedHeader = new MqttFixedHeader(MqttMessageType.CONNACK, false, MqttQoS.AT_MOST_ONCE, false, 0);
-      MqttConnAckVariableHeader varHeader = new MqttConnAckVariableHeader(returnCode);
+      MqttConnAckVariableHeader varHeader = new MqttConnAckVariableHeader(returnCode, true);
       MqttConnAckMessage message = new MqttConnAckMessage(fixedHeader, varHeader);
-
-      ctx.write(message);
-      ctx.flush();
-   }
-
-   /**
-    * The server does not instantiate connections therefore any CONNACK received over a connection is an invalid
-    * control message.
-    *
-    * @param message
-    */
-   void handleConnack(MqttConnAckMessage message) {
-      log.debug("Received invalid CONNACK from client: " + session.getSessionState().getClientId());
-      log.debug("Disconnecting client: " + session.getSessionState().getClientId());
-      disconnect();
+      sendToClient(message);
    }
 
    void handlePublish(MqttPublishMessage message) throws Exception {
-      this.protocolManager.invokeIncoming(message, this.connection);
-      session.getMqttPublishManager().handleMessage(message.variableHeader().messageId(), message.variableHeader().topicName(), message.fixedHeader().qosLevel().value(), message.payload(), message.fixedHeader().isRetain());
+      session.getMqttPublishManager().handleMessage(message.variableHeader().packetId(), message.variableHeader().topicName(), message.fixedHeader().qosLevel().value(), message.payload(), message.fixedHeader().isRetain());
    }
 
    void sendPubAck(int messageId) {
@@ -215,81 +218,64 @@ public class MQTTProtocolHandler extends ChannelInboundHandlerAdapter {
       MqttFixedHeader fixedHeader = new MqttFixedHeader(messageType, false, qos, // Spec requires 01 in header for rel
                                                         false, 0);
       MqttPubAckMessage rel = new MqttPubAckMessage(fixedHeader, MqttMessageIdVariableHeader.from(messageId));
-      ctx.write(rel);
-      ctx.flush();
+      sendToClient(rel);
    }
 
    void handlePuback(MqttPubAckMessage message) throws Exception {
-      session.getMqttPublishManager().handlePubAck(message.variableHeader().messageId());
+      session.getMqttPublishManager().handlePubAck(getMessageId(message));
    }
 
    void handlePubrec(MqttMessage message) throws Exception {
-      int messageId = ((MqttMessageIdVariableHeader) message.variableHeader()).messageId();
-      session.getMqttPublishManager().handlePubRec(messageId);
+      session.getMqttPublishManager().handlePubRec(getMessageId(message));
    }
 
    void handlePubrel(MqttMessage message) {
-      int messageId = ((MqttMessageIdVariableHeader) message.variableHeader()).messageId();
-      session.getMqttPublishManager().handlePubRel(messageId);
+      session.getMqttPublishManager().handlePubRel(getMessageId(message));
    }
 
    void handlePubcomp(MqttMessage message) throws Exception {
-      int messageId = ((MqttMessageIdVariableHeader) message.variableHeader()).messageId();
-      session.getMqttPublishManager().handlePubComp(messageId);
+      session.getMqttPublishManager().handlePubComp(getMessageId(message));
    }
 
-   void handleSubscribe(MqttSubscribeMessage message, ChannelHandlerContext ctx) throws Exception {
+   void handleSubscribe(MqttSubscribeMessage message) throws Exception {
       MQTTSubscriptionManager subscriptionManager = session.getSubscriptionManager();
       int[] qos = subscriptionManager.addSubscriptions(message.payload().topicSubscriptions());
 
       MqttFixedHeader header = new MqttFixedHeader(MqttMessageType.SUBACK, false, MqttQoS.AT_MOST_ONCE, false, 0);
       MqttSubAckMessage ack = new MqttSubAckMessage(header, message.variableHeader(), new MqttSubAckPayload(qos));
-      ctx.write(ack);
-      ctx.flush();
-   }
-
-   void handleSuback(MqttSubAckMessage message) {
-      disconnect();
+      sendToClient(ack);
    }
 
    void handleUnsubscribe(MqttUnsubscribeMessage message) throws Exception {
       session.getSubscriptionManager().removeSubscriptions(message.payload().topics());
       MqttFixedHeader header = new MqttFixedHeader(MqttMessageType.UNSUBACK, false, MqttQoS.AT_MOST_ONCE, false, 0);
       MqttUnsubAckMessage m = new MqttUnsubAckMessage(header, message.variableHeader());
-      ctx.write(m);
-      ctx.flush();
+      sendToClient(m);
    }
 
-   void handleUnsuback(MqttUnsubAckMessage message) {
-      disconnect();
+   void handlePingreq() {
+      MqttMessage pingResp = new MqttMessage(new MqttFixedHeader(MqttMessageType.PINGRESP, false, MqttQoS.AT_MOST_ONCE, false, 0));
+      sendToClient(pingResp);
    }
 
-   void handlePingreq(MqttMessage message, ChannelHandlerContext ctx) {
-      ctx.write(new MqttMessage(new MqttFixedHeader(MqttMessageType.PINGRESP, false, MqttQoS.AT_MOST_ONCE, false, 0)));
-      ctx.flush();
-   }
-
-   void handlePingresp(MqttMessage message) {
-      disconnect();
-   }
-
-   void handleDisconnect(MqttMessage message) {
-      if (session.getSessionState() != null)
-         session.getState().deleteWillMessage();
-      disconnect();
-   }
-
-   protected int send(int messageId, String topicName, int qosLevel, ByteBuf payload, int deliveryCount) {
+   protected void send(int messageId, String topicName, int qosLevel, boolean isRetain, ByteBuf payload, int deliveryCount) {
       boolean redelivery = qosLevel == 0 ? false : (deliveryCount > 0);
-      MqttFixedHeader header = new MqttFixedHeader(MqttMessageType.PUBLISH, redelivery, MqttQoS.valueOf(qosLevel), false, 0);
+      MqttFixedHeader header = new MqttFixedHeader(MqttMessageType.PUBLISH, redelivery, MqttQoS.valueOf(qosLevel), isRetain, 0);
       MqttPublishVariableHeader varHeader = new MqttPublishVariableHeader(topicName, messageId);
       MqttMessage publish = new MqttPublishMessage(header, varHeader, payload);
-      this.protocolManager.invokeOutgoing(publish, connection);
+      sendToClient(publish);
+   }
 
-      ctx.write(publish);
-      ctx.flush();
+   private void sendToClient(MqttMessage message) {
+      if (this.protocolManager.invokeOutgoing(message, connection) != null) {
+         return;
+      }
+      MQTTUtil.logMessage(session.getSessionState(), message, false);
+      ctx.writeAndFlush(message, ctx.voidPromise());
+   }
 
-      return 1;
+   private int getMessageId(MqttMessage message) {
+      return ((MqttMessageIdVariableHeader) message.variableHeader()).messageId();
    }
 
    ActiveMQServer getServer() {

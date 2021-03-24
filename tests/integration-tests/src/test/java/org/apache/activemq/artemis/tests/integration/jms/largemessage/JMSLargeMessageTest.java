@@ -16,13 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.jms.largemessage;
 
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.tests.util.JMSTestBase;
-import org.apache.activemq.artemis.utils.UUIDGenerator;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
-
 import javax.jms.BytesMessage;
 import javax.jms.JMSException;
 import javax.jms.MessageConsumer;
@@ -36,6 +29,13 @@ import java.io.OutputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.tests.util.JMSTestBase;
+import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 public class JMSLargeMessageTest extends JMSTestBase {
    // Constants -----------------------------------------------------
@@ -91,8 +91,6 @@ public class JMSLargeMessageTest extends JMSTestBase {
 
       byte[] data = new byte[1024];
 
-      System.out.println("Message = " + rm);
-
       for (int i = 0; i < 1024 * 1024; i += 1024) {
          int numberOfBytes = rm.readBytes(data);
          Assert.assertEquals(1024, numberOfBytes);
@@ -132,8 +130,6 @@ public class JMSLargeMessageTest extends JMSTestBase {
 
       byte[] data = new byte[1024];
 
-      System.out.println("Message = " + rm);
-
       int numberOfBytes = rm.readBytes(data);
       Assert.assertEquals(10, numberOfBytes);
       for (int j = 0; j < numberOfBytes; j++) {
@@ -154,8 +150,7 @@ public class JMSLargeMessageTest extends JMSTestBase {
       try {
          msg.setObjectProperty("JMS_AMQ_InputStream", ActiveMQTestBase.createFakeLargeStream(10));
          Assert.fail("Exception was expected");
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
       }
 
       msg.setText("hello");
@@ -180,13 +175,12 @@ public class JMSLargeMessageTest extends JMSTestBase {
          rm.setObjectProperty("JMS_AMQ_OutputStream", new OutputStream() {
             @Override
             public void write(final int b) throws IOException {
-               System.out.println("b = " + b);
+               instanceLog.debug("b = " + b);
             }
 
          });
          Assert.fail("Exception was expected");
-      }
-      catch (JMSException e) {
+      } catch (JMSException e) {
       }
 
       Assert.assertEquals("hello", rm.getText());
@@ -236,7 +230,7 @@ public class JMSLargeMessageTest extends JMSTestBase {
          public void write(final int b) throws IOException {
             numberOfBytes.incrementAndGet();
             if (ActiveMQTestBase.getSamplebyte(position++) != b) {
-               System.out.println("Wrong byte at position " + position);
+               instanceLog.warn("Wrong byte at position " + position);
                numberOfErrors.incrementAndGet();
             }
          }
@@ -246,8 +240,7 @@ public class JMSLargeMessageTest extends JMSTestBase {
       try {
          rm.setObjectProperty("JMS_AMQ_InputStream", ActiveMQTestBase.createFakeLargeStream(100));
          Assert.fail("Exception expected!");
-      }
-      catch (MessageNotWriteableException expected) {
+      } catch (MessageNotWriteableException expected) {
       }
 
       rm.setObjectProperty("JMS_AMQ_SaveStream", out);

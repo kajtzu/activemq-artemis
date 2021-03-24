@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.core.server.cluster.ha;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import org.apache.activemq.artemis.api.core.Pair;
@@ -26,11 +27,13 @@ import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.TopologyMember;
 import org.apache.activemq.artemis.core.config.Configuration;
+import org.apache.activemq.artemis.core.remoting.impl.netty.TransportConstants;
 import org.apache.activemq.artemis.core.server.ActivationParams;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.cluster.ClusterControl;
 import org.apache.activemq.artemis.core.server.cluster.ClusterController;
+import org.apache.activemq.artemis.utils.ConfigurationHelper;
 
 public class ColocatedHAManager implements HAManager {
 
@@ -38,7 +41,7 @@ public class ColocatedHAManager implements HAManager {
 
    private final ActiveMQServer server;
 
-   private Map<String, ActiveMQServer> backupServers = new HashMap<>();
+   private final Map<String, ActiveMQServer> backupServers = new HashMap<>();
 
    private boolean started;
 
@@ -68,9 +71,8 @@ public class ColocatedHAManager implements HAManager {
       for (ActiveMQServer activeMQServer : backupServers.values()) {
          try {
             activeMQServer.stop();
-         }
-         catch (Exception e) {
-            ActiveMQServerLogger.LOGGER.warn(e.getMessage(), e);
+         } catch (Exception e) {
+            ActiveMQServerLogger.LOGGER.errorStoppingServer(e);
          }
       }
       backupServers.clear();
@@ -93,8 +95,7 @@ public class ColocatedHAManager implements HAManager {
       }
       if (haPolicy.getBackupPolicy().isSharedStore()) {
          return activateSharedStoreBackup(journalDirectory, bindingsDirectory, largeMessagesDirectory, pagingDirectory);
-      }
-      else {
+      } else {
          return activateReplicatedBackup(nodeID);
       }
    }
@@ -129,8 +130,7 @@ public class ColocatedHAManager implements HAManager {
          clusterControl.authorize();
          if (replicated) {
             return clusterControl.requestReplicatedBackup(backupSize, server.getNodeID());
-         }
-         else {
+         } else {
             return clusterControl.requestSharedStoreBackup(backupSize, server.getConfiguration().getJournalLocation().getAbsolutePath(), server.getConfiguration().getBindingsLocation().getAbsolutePath(), server.getConfiguration().getLargeMessagesLocation().getAbsolutePath(), server.getConfiguration().getPagingLocation().getAbsolutePath());
 
          }
@@ -154,8 +154,7 @@ public class ColocatedHAManager implements HAManager {
 
          backupServers.put(configuration.getName(), backup);
          backup.start();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          backup.stop();
          ActiveMQServerLogger.LOGGER.activateSharedStoreSlaveFailed(e);
          return false;
@@ -174,10 +173,19 @@ public class ColocatedHAManager implements HAManager {
     * @throws Exception
     */
    private synchronized boolean activateReplicatedBackup(SimpleString nodeID) throws Exception {
+      final TopologyMember member;
+      try {
+         member = server.getClusterManager().getDefaultConnection(null).getTopology().getMember(nodeID.toString());
+         if (!Objects.equals(member.getBackupGroupName(), haPolicy.getBackupPolicy().getBackupGroupName())) {
+            return false;
+         }
+      } catch (Exception e) {
+         ActiveMQServerLogger.LOGGER.activateReplicatedBackupFailed(e);
+         return false;
+      }
       Configuration configuration = server.getConfiguration().copy();
       ActiveMQServer backup = server.createBackupServer(configuration);
       try {
-         TopologyMember member = server.getClusterManager().getDefaultConnection(null).getTopology().getMember(nodeID.toString());
          int portOffset = haPolicy.getBackupPortOffset() * (backupServers.size() + 1);
          String name = "colocated_backup_" + backupServers.size() + 1;
          //make sure we don't restart as we are colocated
@@ -188,8 +196,7 @@ public class ColocatedHAManager implements HAManager {
          backup.addActivationParam(ActivationParams.REPLICATION_ENDPOINT, member);
          backupServers.put(configuration.getName(), backup);
          backup.start();
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          backup.stop();
          ActiveMQServerLogger.LOGGER.activateReplicatedBackupFailed(e);
          return false;
@@ -267,26 +274,37 @@ public class ColocatedHAManager implements HAManager {
                updatebackupParams(backupConfiguration.getName(), portOffset, entry.getValue().getParams());
             }
          }
-      }
-      else {
+      } else {
          //if we are scaling down then we wont need any acceptors but clear anyway for belts and braces
          backupConfiguration.getAcceptorConfigurations().clear();
       }
    }
 
+   /**
+    * Offset the port for Netty connector/acceptor (unless HTTP upgrade is enabled) and the server ID for invm connector/acceptor.
+    *
+    * The port is not offset for Netty connector/acceptor when HTTP upgrade is enabled. In this case, the app server that
+    * embed ActiveMQ is "owning" the port and is charge to delegate the HTTP upgrade to the correct broker (that can be
+    * the main one or any colocated backup hosted on the main broker). Delegation to the correct broker is done by looking at the
+    * {@link TransportConstants#ACTIVEMQ_SERVER_NAME} property [ARTEMIS-803]
+    */
    private static void updatebackupParams(String name, int portOffset, Map<String, Object> params) {
       if (params != null) {
-         Object port = params.get("port");
+         Object port = params.get(TransportConstants.PORT_PROP_NAME);
          if (port != null) {
-            Integer integer = Integer.valueOf(port.toString());
-            integer += portOffset;
-            params.put("port", integer.toString());
+            boolean httpUpgradeEnabled = ConfigurationHelper.getBooleanProperty(TransportConstants.HTTP_UPGRADE_ENABLED_PROP_NAME, TransportConstants.DEFAULT_HTTP_UPGRADE_ENABLED, params);
+            if (!httpUpgradeEnabled) {
+               Integer integer = Integer.valueOf(port.toString());
+               integer += portOffset;
+               params.put(TransportConstants.PORT_PROP_NAME, integer.toString());
+            }
          }
-         Object serverId = params.get("serverId");
+         Object serverId = params.get(org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants.SERVER_ID_PROP_NAME);
          if (serverId != null) {
-            Integer newid = Integer.parseInt(serverId.toString()) + portOffset;
-            params.put("serverId", newid.toString());
+            int newid = Integer.parseInt(serverId.toString()) + portOffset;
+            params.put(org.apache.activemq.artemis.core.remoting.impl.invm.TransportConstants.SERVER_ID_PROP_NAME, newid);
          }
+         params.put(TransportConstants.ACTIVEMQ_SERVER_NAME, name);
       }
    }
 }

@@ -16,12 +16,14 @@
  */
 package org.apache.activemq.artemis.core.server.cluster.ha;
 
+import java.util.Map;
+
 import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
+import org.apache.activemq.artemis.core.io.IOCriticalErrorListener;
+import org.apache.activemq.artemis.core.server.NetworkHealthCheck;
 import org.apache.activemq.artemis.core.server.impl.Activation;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.core.server.impl.SharedNothingBackupActivation;
-
-import java.util.Map;
 
 public class ReplicaPolicy extends BackupPolicy {
 
@@ -38,9 +40,39 @@ public class ReplicaPolicy extends BackupPolicy {
 
    private long initialReplicationSyncTimeout = ActiveMQDefaultConfiguration.getDefaultInitialReplicationSyncTimeout();
 
+   /*
+   * what quorum size to use for voting
+   * */
+   private int quorumSize;
+
+   /*
+   * whether or not this live broker should vote to remain live
+   * */
+   private boolean voteOnReplicationFailure;
+
    private ReplicatedPolicy replicatedPolicy;
 
-   public ReplicaPolicy() {
+   private final NetworkHealthCheck networkHealthCheck;
+
+   private int voteRetries;
+
+   private long voteRetryWait;
+
+   private final int quorumVoteWait;
+
+   private long retryReplicationWait;
+
+   public ReplicaPolicy(final NetworkHealthCheck networkHealthCheck, int quorumVoteWait) {
+      this.networkHealthCheck = networkHealthCheck;
+      this.quorumVoteWait = quorumVoteWait;
+   }
+
+   public ReplicaPolicy(final NetworkHealthCheck networkHealthCheck,
+                        ReplicatedPolicy replicatedPolicy,
+                        int quorumVoteWait) {
+      this.networkHealthCheck = networkHealthCheck;
+      this.replicatedPolicy = replicatedPolicy;
+      this.quorumVoteWait = quorumVoteWait;
    }
 
    public ReplicaPolicy(String clusterName,
@@ -49,24 +81,43 @@ public class ReplicaPolicy extends BackupPolicy {
                         boolean restartBackup,
                         boolean allowFailback,
                         long initialReplicationSyncTimeout,
-                        ScaleDownPolicy scaleDownPolicy) {
+                        ScaleDownPolicy scaleDownPolicy,
+                        NetworkHealthCheck networkHealthCheck,
+                        boolean voteOnReplicationFailure,
+                        int quorumSize,
+                        int voteRetries,
+                        long voteRetryWait,
+                        int quorumVoteWait,
+                        long retryReplicationWait) {
       this.clusterName = clusterName;
       this.maxSavedReplicatedJournalsSize = maxSavedReplicatedJournalsSize;
       this.groupName = groupName;
       this.restartBackup = restartBackup;
       this.allowFailback = allowFailback;
       this.initialReplicationSyncTimeout = initialReplicationSyncTimeout;
+      this.quorumSize = quorumSize;
+      this.voteRetries = voteRetries;
+      this.voteRetryWait = voteRetryWait;
+      this.retryReplicationWait = retryReplicationWait;
       this.scaleDownPolicy = scaleDownPolicy;
+      this.networkHealthCheck = networkHealthCheck;
+      this.voteOnReplicationFailure = voteOnReplicationFailure;
+      this.quorumVoteWait = quorumVoteWait;
+      this.retryReplicationWait = retryReplicationWait;
    }
 
    public ReplicaPolicy(String clusterName,
                         int maxSavedReplicatedJournalsSize,
                         String groupName,
-                        ReplicatedPolicy replicatedPolicy) {
+                        ReplicatedPolicy replicatedPolicy,
+                        NetworkHealthCheck networkHealthCheck,
+                        int quorumVoteWait) {
       this.clusterName = clusterName;
       this.maxSavedReplicatedJournalsSize = maxSavedReplicatedJournalsSize;
       this.groupName = groupName;
       this.replicatedPolicy = replicatedPolicy;
+      this.networkHealthCheck = networkHealthCheck;
+      this.quorumVoteWait = quorumVoteWait;
    }
 
    public String getClusterName() {
@@ -87,7 +138,7 @@ public class ReplicaPolicy extends BackupPolicy {
 
    public ReplicatedPolicy getReplicatedPolicy() {
       if (replicatedPolicy == null) {
-         replicatedPolicy = new ReplicatedPolicy(false, allowFailback, initialReplicationSyncTimeout, groupName, clusterName, this);
+         replicatedPolicy = new ReplicatedPolicy(false, allowFailback, initialReplicationSyncTimeout, groupName, clusterName, this, networkHealthCheck, voteOnReplicationFailure, quorumSize, voteRetries, voteRetryWait, quorumVoteWait);
       }
       return replicatedPolicy;
    }
@@ -161,9 +212,53 @@ public class ReplicaPolicy extends BackupPolicy {
    public Activation createActivation(ActiveMQServerImpl server,
                                       boolean wasLive,
                                       Map<String, Object> activationParams,
-                                      ActiveMQServerImpl.ShutdownOnCriticalErrorListener shutdownOnCriticalIO) throws Exception {
-      SharedNothingBackupActivation backupActivation = new SharedNothingBackupActivation(server, wasLive, activationParams, shutdownOnCriticalIO, this);
+                                      IOCriticalErrorListener ioCriticalErrorListener) throws Exception {
+      SharedNothingBackupActivation backupActivation = new SharedNothingBackupActivation(server, wasLive, activationParams, ioCriticalErrorListener, this, networkHealthCheck);
       backupActivation.init();
       return backupActivation;
+   }
+
+   public void setQuorumSize(int quorumSize) {
+      this.quorumSize = quorumSize;
+   }
+
+   public int getQuorumSize() {
+      return quorumSize;
+   }
+
+   public void setVoteOnReplicationFailure(boolean voteOnReplicationFailure) {
+      this.voteOnReplicationFailure = voteOnReplicationFailure;
+   }
+
+   public boolean isVoteOnReplicationFailure() {
+      return voteOnReplicationFailure;
+   }
+
+   public void setVoteRetries(int voteRetries) {
+      this.voteRetries = voteRetries;
+   }
+
+   public void setVoteRetryWait(long voteRetryWait) {
+      this.voteRetryWait = voteRetryWait;
+   }
+
+   public int getVoteRetries() {
+      return voteRetries;
+   }
+
+   public long getVoteRetryWait() {
+      return voteRetryWait;
+   }
+
+   public int getQuorumVoteWait() {
+      return quorumVoteWait;
+   }
+
+   public long getRetryReplicationWait() {
+      return retryReplicationWait;
+   }
+
+   public void setretryReplicationWait(long retryReplicationWait) {
+      this.retryReplicationWait = retryReplicationWait;
    }
 }

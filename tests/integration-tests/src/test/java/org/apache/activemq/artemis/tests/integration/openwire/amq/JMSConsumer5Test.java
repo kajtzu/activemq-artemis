@@ -16,12 +16,6 @@
  */
 package org.apache.activemq.artemis.tests.integration.openwire.amq;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-
 import javax.jms.BytesMessage;
 import javax.jms.DeliveryMode;
 import javax.jms.Message;
@@ -29,9 +23,14 @@ import javax.jms.MessageConsumer;
 import javax.jms.MessageListener;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.activemq.command.ActiveMQDestination;
 import org.apache.activemq.artemis.tests.integration.openwire.BasicOpenWireTest;
+import org.apache.activemq.command.ActiveMQDestination;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -98,19 +97,16 @@ public class JMSConsumer5Test extends BasicOpenWireTest {
          public void onMessage(Message m) {
             counter.incrementAndGet();
             if (counter.get() == 4) {
-               System.out.println("ok finished all 4, done sleep");
                done.countDown();
             }
          }
       });
 
       assertTrue(done.await(1000, TimeUnit.MILLISECONDS));
-      System.out.println("ok await ok");
       Thread.sleep(200);
 
       // Make sure only 4 messages were delivered.
       assertEquals(4, counter.get());
-      System.out.println("test done ok " + counter.get());
    }
 
 }

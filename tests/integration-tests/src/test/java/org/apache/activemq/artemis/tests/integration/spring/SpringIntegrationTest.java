@@ -18,10 +18,9 @@ package org.apache.activemq.artemis.tests.integration.spring;
 
 import java.util.concurrent.TimeUnit;
 
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.jms.server.embedded.EmbeddedJMS;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -30,8 +29,6 @@ import org.springframework.context.support.ClassPathXmlApplicationContext;
 import org.springframework.jms.listener.DefaultMessageListenerContainer;
 
 public class SpringIntegrationTest extends ActiveMQTestBase {
-
-   IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    @Override
    @Before
@@ -44,36 +41,31 @@ public class SpringIntegrationTest extends ActiveMQTestBase {
 
    @Test
    public void testSpring() throws Exception {
-      System.out.println("Creating bean factory...");
       ApplicationContext context = null;
       try {
          context = new ClassPathXmlApplicationContext(new String[]{"spring-jms-beans.xml"});
          MessageSender sender = (MessageSender) context.getBean("MessageSender");
-         System.out.println("Sending message...");
          ExampleListener.latch.countUp();
          sender.send("Hello world");
          ExampleListener.latch.await(10, TimeUnit.SECONDS);
          Thread.sleep(500);
          Assert.assertEquals(ExampleListener.lastMessage, "Hello world");
          ((ActiveMQConnectionFactory) sender.getConnectionFactory()).close();
-      }
-      finally {
+      } finally {
          try {
             if (context != null) {
                DefaultMessageListenerContainer container = (DefaultMessageListenerContainer) context.getBean("listenerContainer");
                container.stop();
             }
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
             ignored.printStackTrace();
          }
          try {
             if (context != null) {
-               EmbeddedJMS jms = (EmbeddedJMS) context.getBean("EmbeddedJms");
+               EmbeddedActiveMQ jms = (EmbeddedActiveMQ) context.getBean("EmbeddedActiveMQ");
                jms.stop();
             }
-         }
-         catch (Throwable ignored) {
+         } catch (Throwable ignored) {
             ignored.printStackTrace();
          }
       }

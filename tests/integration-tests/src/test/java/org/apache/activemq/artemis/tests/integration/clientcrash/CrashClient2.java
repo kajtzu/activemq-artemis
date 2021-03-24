@@ -16,33 +16,30 @@
  */
 package org.apache.activemq.artemis.tests.integration.clientcrash;
 
-import java.util.Arrays;
-
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
+import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
-import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.remoting.impl.netty.NettyConnectorFactory;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
+import org.jboss.logging.Logger;
 
 /**
  * Code to be run in an external VM, via main()
  */
 public class CrashClient2 {
-   // Constants ------------------------------------------------------------------------------------
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(CrashClient2.class);
+   public static final int OK = 9;
+   // Constants ------------------------------------------------------------------------------------
 
    // Static ---------------------------------------------------------------------------------------
 
    public static void main(final String[] args) throws Exception {
       try {
-         log.debug("args = " + Arrays.asList(args));
-
          ServerLocator locator = ActiveMQClient.createServerLocatorWithoutHA(new TransportConfiguration(NettyConnectorFactory.class.getName()));
          locator.setClientFailureCheckPeriod(ClientCrashTest.PING_PERIOD);
          locator.setConnectionTTL(ClientCrashTest.CONNECTION_TTL);
@@ -72,9 +69,8 @@ public class CrashClient2 {
          }
 
          // exit without closing the session properly
-         System.exit(9);
-      }
-      catch (Throwable t) {
+         System.exit(OK);
+      } catch (Throwable t) {
          log.error(t.getMessage(), t);
          System.exit(1);
       }

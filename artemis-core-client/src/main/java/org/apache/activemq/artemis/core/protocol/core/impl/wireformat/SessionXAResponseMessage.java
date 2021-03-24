@@ -21,11 +21,11 @@ import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 
 public class SessionXAResponseMessage extends PacketImpl {
 
-   private boolean error;
+   protected boolean error;
 
-   private int responseCode;
+   protected int responseCode;
 
-   private String message;
+   protected String message;
 
    public SessionXAResponseMessage(final boolean isError, final int responseCode, final String message) {
       super(SESS_XA_RESP);
@@ -108,8 +108,7 @@ public class SessionXAResponseMessage extends PacketImpl {
       if (message == null) {
          if (other.message != null)
             return false;
-      }
-      else if (!message.equals(other.message))
+      } else if (!message.equals(other.message))
          return false;
       if (responseCode != other.responseCode)
          return false;

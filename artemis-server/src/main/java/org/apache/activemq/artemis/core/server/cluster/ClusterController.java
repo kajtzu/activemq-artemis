@@ -45,15 +45,11 @@ import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ClusterConnectMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ClusterConnectReplyMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.NodeAnnounceMessage;
-import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.QuorumVoteMessage;
-import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.QuorumVoteReplyMessage;
 import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.ScaleDownAnnounceMessage;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.cluster.qourum.QuorumManager;
-import org.apache.activemq.artemis.core.server.cluster.qourum.QuorumVoteHandler;
-import org.apache.activemq.artemis.core.server.cluster.qourum.Vote;
 import org.apache.activemq.artemis.core.server.impl.Activation;
 import org.apache.activemq.artemis.spi.core.remoting.Acceptor;
 import org.jboss.logging.Logger;
@@ -69,7 +65,7 @@ public class ClusterController implements ActiveMQComponent {
 
    private final ActiveMQServer server;
 
-   private Map<SimpleString, ServerLocatorInternal> locators = new HashMap<>();
+   private final Map<SimpleString, ServerLocatorInternal> locators = new HashMap<>();
 
    private SimpleString defaultClusterConnectionName;
 
@@ -92,6 +88,9 @@ public class ClusterController implements ActiveMQComponent {
 
    @Override
    public void start() throws Exception {
+      if (logger.isDebugEnabled()) {
+         logger.debug("Starting Cluster Controller " + System.identityHashCode(this) + " for server " + server);
+      }
       if (started)
          return;
       //set the default locator that will be used to connecting to the default cluster.
@@ -103,16 +102,21 @@ public class ClusterController implements ActiveMQComponent {
             ActiveMQServerLogger.LOGGER.noClusterConnectionForReplicationCluster();
             replicationLocator = defaultLocator;
          }
-      }
-      else {
+      } else {
          replicationLocator = defaultLocator;
       }
       //latch so we know once we are connected
       replicationClusterConnectedLatch = new CountDownLatch(1);
       //and add the quorum manager as a topology listener
-      defaultLocator.addClusterTopologyListener(quorumManager);
-      //start the quorum manager
-      quorumManager.start();
+      if (defaultLocator != null) {
+         defaultLocator.addClusterTopologyListener(quorumManager);
+      }
+
+      if (quorumManager != null) {
+         //start the quorum manager
+         quorumManager.start();
+      }
+
       started = true;
       //connect all the locators in a separate thread
       for (ServerLocatorInternal serverLocatorInternal : locators.values()) {
@@ -124,13 +128,17 @@ public class ClusterController implements ActiveMQComponent {
 
    @Override
    public void stop() throws Exception {
+      if (logger.isDebugEnabled()) {
+
+         logger.debug("Stopping Cluster Controller " + System.identityHashCode(this) + " for server " + this.server);
+      }
+      started = false;
       //close all the locators
       for (ServerLocatorInternal serverLocatorInternal : locators.values()) {
          serverLocatorInternal.close();
       }
       //stop the quorum manager
       quorumManager.stop();
-      started = false;
    }
 
    @Override
@@ -150,15 +158,17 @@ public class ClusterController implements ActiveMQComponent {
    /**
     * add a locator for a cluster connection.
     *
-    * @param name   the cluster connection name
-    * @param dg     the discovery group to use
-    * @param config the cluster connection config
+    * @param name                the cluster connection name
+    * @param dg                  the discovery group to use
+    * @param config              the cluster connection config
+    * @param connector           the cluster connector configuration
     */
    public void addClusterConnection(SimpleString name,
                                     DiscoveryGroupConfiguration dg,
-                                    ClusterConnectionConfiguration config) {
+                                    ClusterConnectionConfiguration config,
+                                    TransportConfiguration connector) {
       ServerLocatorImpl serverLocator = (ServerLocatorImpl) ActiveMQClient.createServerLocatorWithHA(dg);
-      configAndAdd(name, serverLocator, config);
+      configAndAdd(name, serverLocator, config, connector);
    }
 
    /**
@@ -171,19 +181,34 @@ public class ClusterController implements ActiveMQComponent {
                                     TransportConfiguration[] tcConfigs,
                                     ClusterConnectionConfiguration config) {
       ServerLocatorImpl serverLocator = (ServerLocatorImpl) ActiveMQClient.createServerLocatorWithHA(tcConfigs);
-      configAndAdd(name, serverLocator, config);
+      configAndAdd(name, serverLocator, config, null);
    }
 
    private void configAndAdd(SimpleString name,
                              ServerLocatorInternal serverLocator,
-                             ClusterConnectionConfiguration config) {
+                             ClusterConnectionConfiguration config,
+                             TransportConfiguration connector) {
       serverLocator.setConnectionTTL(config.getConnectionTTL());
       serverLocator.setClientFailureCheckPeriod(config.getClientFailureCheckPeriod());
       //if the cluster isn't available we want to hang around until it is
-      serverLocator.setReconnectAttempts(-1);
-      serverLocator.setInitialConnectAttempts(-1);
+      serverLocator.setReconnectAttempts(config.getReconnectAttempts());
+      serverLocator.setInitialConnectAttempts(config.getInitialConnectAttempts());
+      serverLocator.setCallTimeout(config.getCallTimeout());
+      serverLocator.setCallFailoverTimeout(config.getCallFailoverTimeout());
+      serverLocator.setRetryInterval(config.getRetryInterval());
+      serverLocator.setRetryIntervalMultiplier(config.getRetryIntervalMultiplier());
+      serverLocator.setMaxRetryInterval(config.getMaxRetryInterval());
       //this is used for replication so need to use the server packet decoder
-      serverLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(serverLocator));
+      serverLocator.setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(serverLocator, server.getStorageManager()));
+      serverLocator.setThreadPools(server.getThreadPool(), server.getScheduledPool());
+      if (connector != null) {
+         serverLocator.setClusterTransportConfiguration(connector);
+      }
+      try {
+         serverLocator.initialize();
+      } catch (Exception e) {
+         throw new IllegalStateException(e.getMessage(), e);
+      }
       locators.put(name, serverLocator);
    }
 
@@ -193,7 +218,9 @@ public class ClusterController implements ActiveMQComponent {
     * @param listener
     */
    public void addClusterTopologyListenerForReplication(ClusterTopologyListener listener) {
-      replicationLocator.addClusterTopologyListener(listener);
+      if (replicationLocator != null) {
+         replicationLocator.addClusterTopologyListener(listener);
+      }
    }
 
    /**
@@ -238,7 +265,7 @@ public class ClusterController implements ActiveMQComponent {
     * @return the Cluster Control
     */
    public ClusterControl connectToNodeInCluster(ClientSessionFactoryInternal sf) {
-      sf.getServerLocator().setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(sf.getServerLocator()));
+      sf.getServerLocator().setProtocolManagerFactory(ActiveMQServerSideProtocolManagerFactory.getInstance(sf.getServerLocator(), server.getStorageManager()));
       return new ClusterControl(sf, server);
    }
 
@@ -295,6 +322,10 @@ public class ClusterController implements ActiveMQComponent {
       this.replicatedClusterName = new SimpleString(replicatedClusterName);
    }
 
+   public Map<SimpleString, ServerLocatorInternal> getLocators() {
+      return this.locators;
+   }
+
    /**
     * a handler for handling packets sent between the cluster.
     */
@@ -318,6 +349,13 @@ public class ClusterController implements ActiveMQComponent {
 
       @Override
       public void handlePacket(Packet packet) {
+         if (!isStarted()) {
+            if (channelHandler != null) {
+               channelHandler.handlePacket(packet);
+            }
+            return;
+         }
+
          if (!authorized) {
             if (packet.getType() == PacketImpl.CLUSTER_CONNECT) {
                ClusterConnection clusterConnection = acceptorUsed.getClusterConnection();
@@ -327,26 +365,29 @@ public class ClusterController implements ActiveMQComponent {
                   clusterConnection = server.getClusterManager().getDefaultConnection(null);
                }
 
+               //if there is no default cluster connection and security is enabled then just ignore the packet with a log message
+               if (clusterConnection == null && server.getConfiguration().isSecurityEnabled()) {
+                  ActiveMQServerLogger.LOGGER.failedToFindClusterConnection(packet.toString());
+                  return;
+               }
+
                ClusterConnectMessage msg = (ClusterConnectMessage) packet;
 
                if (server.getConfiguration().isSecurityEnabled() && !clusterConnection.verify(msg.getClusterUser(), msg.getClusterPassword())) {
                   clusterChannel.send(new ClusterConnectReplyMessage(false));
-               }
-               else {
+               } else {
                   authorized = true;
                   clusterChannel.send(new ClusterConnectReplyMessage(true));
                }
             }
-         }
-         else {
+         } else {
             if (packet.getType() == PacketImpl.NODE_ANNOUNCE) {
                NodeAnnounceMessage msg = (NodeAnnounceMessage) packet;
 
                Pair<TransportConfiguration, TransportConfiguration> pair;
                if (msg.isBackup()) {
                   pair = new Pair<>(null, msg.getConnector());
-               }
-               else {
+               } else {
                   pair = new Pair<>(msg.getConnector(), msg.getBackupConnector());
                }
                if (logger.isTraceEnabled()) {
@@ -358,30 +399,21 @@ public class ClusterController implements ActiveMQComponent {
                   if (clusterConn != null) {
                      String scaleDownGroupName = msg.getScaleDownGroupName();
                      clusterConn.nodeAnnounced(msg.getCurrentEventID(), msg.getNodeID(), msg.getBackupGroupName(), scaleDownGroupName, pair, msg.isBackup());
-                  }
-                  else {
+                  } else {
                      logger.debug("Cluster connection is null on acceptor = " + acceptorUsed);
                   }
-               }
-               else {
+               } else {
                   logger.debug("there is no acceptor used configured at the CoreProtocolManager " + this);
                }
-            }
-            else if (packet.getType() == PacketImpl.QUORUM_VOTE) {
-               QuorumVoteMessage quorumVoteMessage = (QuorumVoteMessage) packet;
-               QuorumVoteHandler voteHandler = quorumManager.getVoteHandler(quorumVoteMessage.getHandler());
-               quorumVoteMessage.decode(voteHandler);
-               Vote vote = quorumManager.vote(quorumVoteMessage.getHandler(), quorumVoteMessage.getVote());
-               clusterChannel.send(new QuorumVoteReplyMessage(quorumVoteMessage.getHandler(), vote));
-            }
-            else if (packet.getType() == PacketImpl.SCALEDOWN_ANNOUNCEMENT) {
+            } else if (packet.getType() == PacketImpl.QUORUM_VOTE) {
+               quorumManager.handleQuorumVote(clusterChannel, packet);
+            } else if (packet.getType() == PacketImpl.SCALEDOWN_ANNOUNCEMENT) {
                ScaleDownAnnounceMessage message = (ScaleDownAnnounceMessage) packet;
                //we don't really need to check as it should always be true
                if (server.getNodeID().equals(message.getTargetNodeId())) {
                   server.addScaledDownNode(message.getScaledDownNodeId());
                }
-            }
-            else if (channelHandler != null) {
+            } else if (channelHandler != null) {
                channelHandler.handlePacket(packet);
             }
          }
@@ -394,7 +426,7 @@ public class ClusterController implements ActiveMQComponent {
     */
    private final class ConnectRunnable implements Runnable {
 
-      private ServerLocatorInternal serverLocator;
+      private final ServerLocatorInternal serverLocator;
 
       private ConnectRunnable(ServerLocatorInternal serverLocator) {
          this.serverLocator = serverLocator;
@@ -403,14 +435,19 @@ public class ClusterController implements ActiveMQComponent {
       @Override
       public void run() {
          try {
-            serverLocator.connect();
-            if (serverLocator == replicationLocator) {
-               replicationClusterConnectedLatch.countDown();
+            if (started) {
+               serverLocator.connect();
+               if (serverLocator == replicationLocator) {
+                  replicationClusterConnectedLatch.countDown();
+               }
             }
-         }
-         catch (ActiveMQException e) {
+         } catch (ActiveMQException e) {
             if (!started) {
                return;
+            }
+            if (logger.isDebugEnabled()) {
+
+               logger.debug("retry on Cluster Controller " + System.identityHashCode(ClusterController.this) + " server = " + server);
             }
             server.getScheduledPool().schedule(this, serverLocator.getRetryInterval(), TimeUnit.MILLISECONDS);
          }
@@ -419,6 +456,10 @@ public class ClusterController implements ActiveMQComponent {
 
    public ServerLocator getReplicationLocator() {
       return this.replicationLocator;
+   }
+
+   public ServerLocator getServerLocator(SimpleString name) {
+      return locators.get(name);
    }
 
 }

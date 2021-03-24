@@ -17,11 +17,12 @@
 package org.apache.activemq.artemis.tests.unit.util;
 
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.utils.SoftValueHashMap;
+import org.apache.activemq.artemis.utils.SoftValueLongObjectHashMap;
+import org.jboss.logging.Logger;
 import org.junit.Test;
 
 public class SoftValueMapTest extends ActiveMQTestBase {
-
+   private static final Logger log = Logger.getLogger(SoftValueMapTest.class);
    // Constants -----------------------------------------------------
 
    // Attributes ----------------------------------------------------
@@ -40,7 +41,7 @@ public class SoftValueMapTest extends ActiveMQTestBase {
       // each buffer will be 1/10th of the maxMemory
       int bufferSize = (int) (maxMemory / 100);
 
-      SoftValueHashMap<Long, Value> softCache = new SoftValueHashMap<>(100);
+      SoftValueLongObjectHashMap<Value> softCache = new SoftValueLongObjectHashMap<>(100);
 
       final int MAX_ELEMENTS = 1000;
 
@@ -50,16 +51,16 @@ public class SoftValueMapTest extends ActiveMQTestBase {
 
       assertTrue(softCache.size() < MAX_ELEMENTS);
 
-      System.out.println("SoftCache.size " + softCache.size());
+      log.debug("SoftCache.size " + softCache.size());
 
-      System.out.println("Soft cache has " + softCache.size() + " elements");
+      log.debug("Soft cache has " + softCache.size() + " elements");
    }
 
    @Test
    public void testEvictionsLeastUsed() {
       forceGC();
 
-      SoftValueHashMap<Long, Value> softCache = new SoftValueHashMap<>(200);
+      SoftValueLongObjectHashMap<Value> softCache = new SoftValueLongObjectHashMap<>(200);
 
       for (long i = 0; i < 100; i++) {
          Value v = new Value(new byte[1]);
@@ -88,9 +89,9 @@ public class SoftValueMapTest extends ActiveMQTestBase {
       // this is the next one, so it should go
       assertNull(softCache.get(101L));
 
-      System.out.println("SoftCache.size " + softCache.size());
+      log.debug("SoftCache.size " + softCache.size());
 
-      System.out.println("Soft cache has " + softCache.size() + " elements");
+      log.debug("Soft cache has " + softCache.size() + " elements");
    }
 
    @Test
@@ -99,7 +100,7 @@ public class SoftValueMapTest extends ActiveMQTestBase {
       Value two = new Value(new byte[100]);
       Value three = new Value(new byte[100]);
 
-      SoftValueHashMap<Integer, Value> softCache = new SoftValueHashMap<>(2);
+      SoftValueLongObjectHashMap<Value> softCache = new SoftValueLongObjectHashMap<>(2);
       softCache.put(3, three);
       softCache.put(2, two);
       softCache.put(1, one);
@@ -110,7 +111,7 @@ public class SoftValueMapTest extends ActiveMQTestBase {
 
    }
 
-   class Value implements SoftValueHashMap.ValueCache {
+   class Value implements SoftValueLongObjectHashMap.ValueCache {
 
       byte[] payload;
 
@@ -121,7 +122,7 @@ public class SoftValueMapTest extends ActiveMQTestBase {
       }
 
       /* (non-Javadoc)
-       * @see org.apache.activemq.artemis.utils.SoftValueHashMap.ValueCache#isLive()
+       * @see org.apache.activemq.artemis.utils.SoftValueLongObjectHashMap.ValueCache#isLive()
        */
       @Override
       public boolean isLive() {

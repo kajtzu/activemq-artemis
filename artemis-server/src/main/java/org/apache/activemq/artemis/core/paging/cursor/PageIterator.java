@@ -17,9 +17,12 @@
 
 package org.apache.activemq.artemis.core.paging.cursor;
 
-import org.apache.activemq.artemis.utils.LinkedListIterator;
+import org.apache.activemq.artemis.utils.collections.LinkedListIterator;
 
 public interface PageIterator extends LinkedListIterator<PagedReference> {
 
    void redeliver(PagePosition reference);
+
+   // return 0 if no elements, 1 if having more elements, 2 if taking too long to find
+   int tryNext();
 }

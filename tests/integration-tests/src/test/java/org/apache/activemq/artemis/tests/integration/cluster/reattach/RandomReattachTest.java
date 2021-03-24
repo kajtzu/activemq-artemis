@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -40,16 +41,21 @@ import org.apache.activemq.artemis.core.remoting.impl.invm.InVMRegistry;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
 import org.apache.activemq.artemis.jms.client.ActiveMQTextMessage;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.RetryRule;
+import org.jboss.logging.Logger;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 
 public class RandomReattachTest extends ActiveMQTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   @Rule
+   public RetryRule retryRule = new RetryRule(2);
+
+   private static final Logger log = Logger.getLogger(RandomReattachTest.class);
 
    // Constants -----------------------------------------------------
 
@@ -203,9 +209,9 @@ public class RandomReattachTest extends ActiveMQTestBase {
       final int numIts = getNumIterations();
 
       for (int its = 0; its < numIts; its++) {
-         RandomReattachTest.log.info("####" + getName() + " iteration #" + its);
+         log.debug("####" + getName() + " iteration #" + its);
          start();
-         ServerLocator locator = createInVMNonHALocator().setReconnectAttempts(-1).setConfirmationWindowSize(1024 * 1024);
+         ServerLocator locator = createInVMNonHALocator().setReconnectAttempts(15).setConfirmationWindowSize(1024 * 1024);
 
          ClientSessionFactory sf = createSessionFactory(locator);
 
@@ -215,7 +221,8 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          do {
             runnable.run(sf);
-         } while (!failer.isExecuted());
+         }
+         while (!failer.isExecuted());
       }
    }
 
@@ -242,7 +249,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          sessConsume.start();
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -279,8 +286,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
             try {
                message.acknowledge();
-            }
-            catch (ActiveMQException me) {
+            } catch (ActiveMQException me) {
                RandomReattachTest.log.error("Failed to process", me);
             }
 
@@ -323,7 +329,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestB(final ClientSessionFactory sf) throws Exception {
@@ -343,7 +349,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          ClientSession sessConsume = sf.createSession(false, true, true);
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -422,7 +428,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
 
    }
 
@@ -445,7 +451,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          sessConsume.start();
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -492,8 +498,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
             try {
                message.acknowledge();
-            }
-            catch (ActiveMQException e) {
+            } catch (ActiveMQException e) {
                e.printStackTrace();
                throw new RuntimeException(e.getMessage(), e);
             }
@@ -564,7 +569,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestD(final ClientSessionFactory sf) throws Exception {
@@ -584,7 +589,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          ClientSession sessConsume = sf.createSession(false, false, false);
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -699,7 +704,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    // Now with synchronous receive()
@@ -723,7 +728,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          sessConsume.start();
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -777,7 +782,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestF(final ClientSessionFactory sf) throws Exception {
@@ -797,7 +802,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          ClientSession sessConsume = sf.createSession(false, true, true);
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -861,7 +866,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestG(final ClientSessionFactory sf) throws Exception {
@@ -883,7 +888,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          sessConsume.start();
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -973,7 +978,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestH(final ClientSessionFactory sf) throws Exception {
@@ -993,7 +998,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
          ClientSession sessConsume = sf.createSession(false, false, false);
 
-         sessConsume.createQueue(RandomReattachTest.ADDRESS, subName, null, false);
+         sessConsume.createQueue(new QueueConfiguration(subName).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
          ClientConsumer consumer = sessConsume.createConsumer(subName);
 
@@ -1089,13 +1094,13 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       long end = System.currentTimeMillis();
 
-      RandomReattachTest.log.info("duration " + (end - start));
+      log.debug("duration " + (end - start));
    }
 
    protected void doTestI(final ClientSessionFactory sf) throws Exception {
       ClientSession sessCreate = sf.createSession(false, true, true);
 
-      sessCreate.createQueue(RandomReattachTest.ADDRESS, RandomReattachTest.ADDRESS, null, false);
+      sessCreate.createQueue(new QueueConfiguration(RandomReattachTest.ADDRESS).setDurable(false));
 
       ClientSession sess = sf.createSession(false, true, true);
 
@@ -1124,7 +1129,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
    protected void doTestJ(final ClientSessionFactory sf) throws Exception {
       ClientSession sessCreate = sf.createSession(false, true, true);
 
-      sessCreate.createQueue(RandomReattachTest.ADDRESS, RandomReattachTest.ADDRESS, null, false);
+      sessCreate.createQueue(new QueueConfiguration(RandomReattachTest.ADDRESS).setDurable(false));
 
       ClientSession sess = sf.createSession(false, true, true);
 
@@ -1153,7 +1158,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
    protected void doTestK(final ClientSessionFactory sf) throws Exception {
       ClientSession s = sf.createSession(false, false, false);
 
-      s.createQueue(RandomReattachTest.ADDRESS, RandomReattachTest.ADDRESS, null, false);
+      s.createQueue(new QueueConfiguration(RandomReattachTest.ADDRESS).setDurable(false));
 
       final int numConsumers = 100;
 
@@ -1181,7 +1186,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
    protected void doTestN(final ClientSessionFactory sf) throws Exception {
       ClientSession sessCreate = sf.createSession(false, true, true);
 
-      sessCreate.createQueue(RandomReattachTest.ADDRESS, new SimpleString(RandomReattachTest.ADDRESS.toString()), null, false);
+      sessCreate.createQueue(new QueueConfiguration(new SimpleString(RandomReattachTest.ADDRESS.toString())).setAddress(RandomReattachTest.ADDRESS).setDurable(false));
 
       ClientSession sess = sf.createSession(false, true, true);
 
@@ -1274,11 +1279,11 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
       @Override
       public synchronized void run() {
-         RandomReattachTest.log.info("** Failing connection");
+         log.debug("** Failing connection");
 
          session.getConnection().fail(new ActiveMQNotConnectedException("oops"));
 
-         RandomReattachTest.log.info("** Fail complete");
+         log.debug("** Fail complete");
 
          cancel();
 
@@ -1292,7 +1297,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
 
    public abstract class RunnableT {
 
-      abstract void run(final ClientSessionFactory sf) throws Exception;
+      abstract void run(ClientSessionFactory sf) throws Exception;
    }
 
    abstract static class AssertionCheckMessageHandler implements MessageHandler {
@@ -1313,8 +1318,7 @@ public class RandomReattachTest extends ActiveMQTestBase {
       public void onMessage(ClientMessage message) {
          try {
             onMessageAssert(message);
-         }
-         catch (AssertionError e) {
+         } catch (AssertionError e) {
             e.printStackTrace(); // System.out -> junit reports
             errors.add(e);
          }

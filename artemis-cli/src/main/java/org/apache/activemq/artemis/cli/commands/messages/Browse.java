@@ -17,18 +17,16 @@
 
 package org.apache.activemq.artemis.cli.commands.messages;
 
-import io.airlift.airline.Command;
-import io.airlift.airline.Option;
-import org.apache.activemq.artemis.cli.commands.ActionContext;
-import org.apache.activemq.artemis.cli.commands.util.ConsumerThread;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.apache.activemq.artemis.jms.client.ActiveMQDestination;
-
 import javax.jms.Connection;
+import javax.jms.ConnectionFactory;
 import javax.jms.Destination;
 import javax.jms.Session;
 
-@Command(name = "browser", description = "It will send consume messages from an instance")
+import io.airlift.airline.Command;
+import io.airlift.airline.Option;
+import org.apache.activemq.artemis.cli.commands.ActionContext;
+
+@Command(name = "browser", description = "It will browse messages on an instance")
 public class Browse extends DestAbstract {
 
    @Option(name = "--filter", description = "filter to be used with the consumer")
@@ -40,22 +38,26 @@ public class Browse extends DestAbstract {
 
       System.out.println("Consumer:: filter = " + filter);
 
-      ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory(brokerURL, user, password);
+      ConnectionFactory factory = createConnectionFactory();
 
-      Destination dest = ActiveMQDestination.createDestination(this.destination, ActiveMQDestination.QUEUE_TYPE);
       try (Connection connection = factory.createConnection()) {
          ConsumerThread[] threadsArray = new ConsumerThread[threads];
          for (int i = 0; i < threads; i++) {
             Session session;
             if (txBatchSize > 0) {
                session = connection.createSession(true, Session.SESSION_TRANSACTED);
-            }
-            else {
+            } else {
                session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
             }
+            Destination dest = getDestination(session);
             threadsArray[i] = new ConsumerThread(session, dest, i);
 
-            threadsArray[i].setVerbose(verbose).setSleep(sleep).setMessageCount(messageCount).setFilter(filter).setBrowse(true);
+            threadsArray[i]
+               .setVerbose(verbose)
+               .setSleep(sleep)
+               .setMessageCount(messageCount)
+               .setFilter(filter)
+               .setBrowse(true);
          }
 
          for (ConsumerThread thread : threadsArray) {
@@ -74,5 +76,4 @@ public class Browse extends DestAbstract {
          return received;
       }
    }
-
 }

@@ -16,27 +16,27 @@
  */
 package org.apache.activemq.artemis.tests.integration.persistence;
 
-import org.apache.activemq.artemis.core.persistence.GroupingInfo;
-import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
-import org.apache.activemq.artemis.core.persistence.impl.journal.JournalStorageManager;
-import org.apache.activemq.artemis.core.postoffice.PostOffice;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
-import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakeJournalLoader;
-import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakePostOffice;
-import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
-import org.apache.activemq.artemis.utils.ExecutorFactory;
-import org.junit.Before;
-import org.junit.Test;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 
+import org.apache.activemq.artemis.core.persistence.AddressBindingInfo;
+import org.apache.activemq.artemis.core.persistence.GroupingInfo;
+import org.apache.activemq.artemis.core.persistence.QueueBindingInfo;
+import org.apache.activemq.artemis.core.persistence.impl.journal.JournalStorageManager;
+import org.apache.activemq.artemis.core.postoffice.PostOffice;
+import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakeJournalLoader;
+import org.apache.activemq.artemis.tests.unit.core.server.impl.fakes.FakePostOffice;
+import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
+import org.apache.activemq.artemis.utils.ExecutorFactory;
+import org.apache.activemq.artemis.utils.critical.EmptyCriticalAnalyzer;
+import org.junit.Before;
+import org.junit.Test;
+
 public class RestartSMTest extends ActiveMQTestBase {
 
    // Constants -----------------------------------------------------
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
 
    // Attributes ----------------------------------------------------
 
@@ -65,7 +65,7 @@ public class RestartSMTest extends ActiveMQTestBase {
 
       PostOffice postOffice = new FakePostOffice();
 
-      final JournalStorageManager journal = new JournalStorageManager(createDefaultInVMConfig(), execFactory, null);
+      final JournalStorageManager journal = new JournalStorageManager(createDefaultInVMConfig(), EmptyCriticalAnalyzer.getInstance(), execFactory, execFactory);
 
       try {
 
@@ -73,7 +73,7 @@ public class RestartSMTest extends ActiveMQTestBase {
 
          List<QueueBindingInfo> queueBindingInfos = new ArrayList<>();
 
-         journal.loadBindingJournal(queueBindingInfos, new ArrayList<GroupingInfo>());
+         journal.loadBindingJournal(queueBindingInfos, new ArrayList<GroupingInfo>(), new ArrayList<AddressBindingInfo>());
 
          journal.loadMessageJournal(postOffice, null, null, null, null, null, null, new FakeJournalLoader());
 
@@ -87,17 +87,15 @@ public class RestartSMTest extends ActiveMQTestBase {
 
          queueBindingInfos = new ArrayList<>();
 
-         journal.loadBindingJournal(queueBindingInfos, new ArrayList<GroupingInfo>());
+         journal.loadBindingJournal(queueBindingInfos, new ArrayList<GroupingInfo>(), new ArrayList<AddressBindingInfo>());
 
          journal.start();
-      }
-      finally {
+      } finally {
 
          try {
             journal.stop();
-         }
-         catch (Exception ex) {
-            RestartSMTest.log.warn(ex.getMessage(), ex);
+         } catch (Exception ex) {
+            instanceLog.warn(ex.getMessage(), ex);
          }
       }
    }

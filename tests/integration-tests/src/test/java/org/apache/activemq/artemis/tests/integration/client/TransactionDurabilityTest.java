@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -39,7 +40,7 @@ public class TransactionDurabilityTest extends ActiveMQTestBase {
     * Ref R1 gets consumed and acknowledged by transacted session S1, this decrements the ref count and causes an acknowledge record to be written to storage,
     * transactionally, but it's not committed yet.
     * Ref R2 then gets consumed and acknowledged by non transacted session S2, this causes a delete record to be written to storage.
-    * R1 then rolls back, and the server is restarted - unfortunatelt since the delete record was written R1 is not ready to be consumed again.
+    * R1 then rolls back, and the server is restarted - unfortunately since the delete record was written R1 is not ready to be consumed again.
     *
     * It's therefore crucial the messages aren't deleted from storage until AFTER any ack records are committed to storage.
     *
@@ -65,9 +66,9 @@ public class TransactionDurabilityTest extends ActiveMQTestBase {
 
       ClientSession session2 = addClientSession(sf.createSession(false, false, false));
 
-      session1.createQueue(testAddress, queue1, null, true);
+      session1.createQueue(new QueueConfiguration(queue1).setAddress(testAddress));
 
-      session1.createQueue(testAddress, queue2, null, true);
+      session1.createQueue(new QueueConfiguration(queue2).setAddress(testAddress));
 
       ClientProducer producer = session1.createProducer(testAddress);
 

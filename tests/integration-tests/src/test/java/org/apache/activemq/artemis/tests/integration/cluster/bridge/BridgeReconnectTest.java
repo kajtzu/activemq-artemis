@@ -16,9 +16,15 @@
  */
 package org.apache.activemq.artemis.tests.integration.cluster.bridge;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
@@ -31,7 +37,6 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.api.core.management.QueueControl;
 import org.apache.activemq.artemis.api.core.management.ResourceNames;
 import org.apache.activemq.artemis.core.config.BridgeConfiguration;
-import org.apache.activemq.artemis.core.config.CoreQueueConfiguration;
 import org.apache.activemq.artemis.core.remoting.impl.invm.InVMConnector;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.NodeManager;
@@ -41,18 +46,14 @@ import org.apache.activemq.artemis.core.server.cluster.impl.BridgeImpl;
 import org.apache.activemq.artemis.core.server.impl.InVMNodeManager;
 import org.apache.activemq.artemis.core.server.management.ManagementService;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
+import org.apache.activemq.artemis.tests.util.Wait;
+import org.jboss.logging.Logger;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 public class BridgeReconnectTest extends BridgeTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(BridgeReconnectTest.class);
 
    private static final int NUM_MESSAGES = 100;
 
@@ -141,21 +142,21 @@ public class BridgeReconnectTest extends BridgeTestBase {
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
       server2.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server1.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs1);
-      server2.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server0.getConfiguration().setQueueConfigs(queueConfigs1);
+      server2.getConfiguration().setQueueConfigs(queueConfigs1);
 
       startServers();
 
       waitForServerStart(server0);
-      server0.stop(true);
+      server0.fail(true);
 
       waitForServerStart(server2);
 
@@ -191,22 +192,22 @@ public class BridgeReconnectTest extends BridgeTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
-      server2.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
+      server2.getConfiguration().setQueueConfigs(queueConfigs1);
 
       startServers();
 
-      BridgeReconnectTest.log.info("** failing connection");
+      BridgeReconnectTest.log.debug("** failing connection");
       // Now we will simulate a failure of the bridge connection between server0 and server1
-      server0.stop(true);
+      server0.fail(true);
 
       waitForServerStart(server2);
 
@@ -272,20 +273,20 @@ public class BridgeReconnectTest extends BridgeTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
-      server2.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
+      server2.getConfiguration().setQueueConfigs(queueConfigs1);
 
       startServers();
       // Now we will simulate a failure of the bridge connection between server0 and server1
-      server0.stop(true);
+      server0.fail(true);
 
       locator = addServerLocator(ActiveMQClient.createServerLocatorWithHA(server2tc)).setReconnectAttempts(100);
       ClientSessionFactory csf0 = addSessionFactory(locator.createSessionFactory(server2tc));
@@ -337,15 +338,15 @@ public class BridgeReconnectTest extends BridgeTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       startServers();
 
@@ -374,7 +375,7 @@ public class BridgeReconnectTest extends BridgeTestBase {
       forwardingConnection.fail(new ActiveMQNotConnectedException());
 
       final ManagementService managementService = server0.getManagementService();
-      QueueControl coreQueueControl = (QueueControl) managementService.getResource(ResourceNames.CORE_QUEUE + queueName);
+      QueueControl coreQueueControl = (QueueControl) managementService.getResource(ResourceNames.QUEUE + queueName);
       assertEquals(0, coreQueueControl.getDeliveringCount());
 
       final int numMessages = NUM_MESSAGES;
@@ -425,15 +426,15 @@ public class BridgeReconnectTest extends BridgeTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
       startServers();
 
       waitForServerStart(server0);
@@ -445,16 +446,16 @@ public class BridgeReconnectTest extends BridgeTestBase {
 
       ClientProducer prod0 = session0.createProducer(testAddress);
 
-      BridgeReconnectTest.log.info("stopping server1");
+      BridgeReconnectTest.log.debug("stopping server1");
       server1.stop();
 
       if (sleep) {
          Thread.sleep(2 * clientFailureCheckPeriod);
       }
 
-      BridgeReconnectTest.log.info("restarting server1");
+      BridgeReconnectTest.log.debug("restarting server1");
       server1.start();
-      BridgeReconnectTest.log.info("server 1 restarted");
+      BridgeReconnectTest.log.debug("server 1 restarted");
 
       ClientSessionFactory csf1 = locator.createSessionFactory(server1tc);
       session1 = csf1.createSession(false, true, true);
@@ -474,16 +475,15 @@ public class BridgeReconnectTest extends BridgeTestBase {
          prod0.send(message);
       }
 
-      BridgeReconnectTest.log.info("sent messages");
+      BridgeReconnectTest.log.debug("sent messages");
 
       for (int i = 0; i < numMessages; i++) {
          ClientMessage r1 = cons1.receive(30000);
          assertNotNull("received expected msg", r1);
          assertEquals("property value matches", i, r1.getObjectProperty(propKey));
-         BridgeReconnectTest.log.info("got message " + r1.getObjectProperty(propKey));
       }
 
-      BridgeReconnectTest.log.info("got messages");
+      BridgeReconnectTest.log.debug("got messages");
       closeServers();
       assertNoMoreConnections();
    }
@@ -530,15 +530,15 @@ public class BridgeReconnectTest extends BridgeTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       startServers();
 
@@ -586,7 +586,7 @@ public class BridgeReconnectTest extends BridgeTestBase {
          fail("Message " + outOfOrder + " was received out of order, it was supposed to be " + supposed);
       }
 
-      log.info("=========== second failure, sending message");
+      log.debug("=========== second failure, sending message");
 
       // Fail again - should reconnect
       forwardingConnection = ((BridgeImpl) bridge).getForwardingConnection();
@@ -632,15 +632,15 @@ public class BridgeReconnectTest extends BridgeTestBase {
       bridgeConfigs.add(bridgeConfiguration);
       server0.getConfiguration().setBridgeConfigurations(bridgeConfigs);
 
-      CoreQueueConfiguration queueConfig0 = new CoreQueueConfiguration().setAddress(testAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs0 = new ArrayList<>();
+      QueueConfiguration queueConfig0 = new QueueConfiguration(queueName).setAddress(testAddress);
+      List<QueueConfiguration> queueConfigs0 = new ArrayList<>();
       queueConfigs0.add(queueConfig0);
-      server0.getConfiguration().setQueueConfigurations(queueConfigs0);
+      server0.getConfiguration().setQueueConfigs(queueConfigs0);
 
-      CoreQueueConfiguration queueConfig1 = new CoreQueueConfiguration().setAddress(forwardAddress).setName(queueName);
-      List<CoreQueueConfiguration> queueConfigs1 = new ArrayList<>();
+      QueueConfiguration queueConfig1 = new QueueConfiguration(queueName).setAddress(forwardAddress);
+      List<QueueConfiguration> queueConfigs1 = new ArrayList<>();
       queueConfigs1.add(queueConfig1);
-      server1.getConfiguration().setQueueConfigurations(queueConfigs1);
+      server1.getConfiguration().setQueueConfigs(queueConfigs1);
 
       startServers();
 
@@ -667,8 +667,6 @@ public class BridgeReconnectTest extends BridgeTestBase {
 
       final Queue queue = (Queue) server0.getPostOffice().getBinding(new SimpleString(queueName)).getBindable();
 
-      System.out.println("DeliveringCount: " + queue.getDeliveringCount());
-
       for (int i = 0; i < numMessages; i++) {
          ClientMessage message = session0.createMessage(false);
          message.putIntProperty(propKey, i);
@@ -680,12 +678,7 @@ public class BridgeReconnectTest extends BridgeTestBase {
          }
       }
 
-      for (int i = 0; i < 100 && queue.getDeliveringCount() != 0; i++) {
-         Thread.sleep(10);
-      }
-
-      System.out.println("Check.. DeliveringCount: " + queue.getDeliveringCount());
-      assertEquals("Delivering count of a source queue should be zero on connection failure", 0, queue.getDeliveringCount());
+      Wait.assertEquals(0, queue::getDeliveringCount);
 
       closeServers();
 
@@ -710,7 +703,8 @@ public class BridgeReconnectTest extends BridgeTestBase {
          }
 
          Thread.sleep(10);
-      } while (System.currentTimeMillis() - start < 50000);
+      }
+      while (System.currentTimeMillis() - start < 50000);
 
       throw new IllegalStateException("Failed to get forwarding connection");
    }

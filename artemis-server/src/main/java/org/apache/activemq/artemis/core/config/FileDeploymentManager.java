@@ -17,14 +17,13 @@
 package org.apache.activemq.artemis.core.config;
 
 import javax.management.MBeanServer;
-import java.io.InputStreamReader;
-import java.io.Reader;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.apache.activemq.artemis.core.deployers.Deployable;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
 import org.apache.activemq.artemis.utils.XMLUtil;
@@ -68,12 +67,8 @@ public class FileDeploymentManager {
          // The URL is outside of the classloader. Trying a pure url now
          url = new URL(configurationUrl);
       }
-      // create a reader
-      Reader reader = new InputStreamReader(url.openStream());
-      String xml = XMLUtil.readerToString(reader);
-      //replace any system props
-      xml = XMLUtil.replaceSystemProps(xml);
-      Element e = XMLUtil.stringToElement(xml);
+
+      Element e = XMLUtil.urlToElement(url);
 
       //iterate around all the deployables
       for (Deployable deployable : deployables.values()) {
@@ -92,12 +87,12 @@ public class FileDeploymentManager {
    * Build a set of ActiveMQComponents from the Deployables configured
    */
    public Map<String, ActiveMQComponent> buildService(ActiveMQSecurityManager securityManager,
-                                                      MBeanServer mBeanServer) throws Exception {
+                                                      MBeanServer mBeanServer, ActivateCallback activateCallback) throws Exception {
       Map<String, ActiveMQComponent> components = new HashMap<>();
       for (Deployable deployable : deployables.values()) {
          // if the deployable was parsed then build the service
          if (deployable.isParsed()) {
-            deployable.buildService(securityManager, mBeanServer, deployables, components);
+            deployable.buildService(securityManager, mBeanServer, deployables, components, activateCallback);
          }
       }
       return components;

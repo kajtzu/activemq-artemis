@@ -24,7 +24,6 @@ import javax.security.auth.callback.PasswordCallback;
 import javax.security.auth.callback.UnsupportedCallbackException;
 import javax.security.auth.login.FailedLoginException;
 import javax.security.auth.login.LoginException;
-import javax.security.auth.spi.LoginModule;
 import java.io.IOException;
 import java.security.Principal;
 import java.util.HashSet;
@@ -35,7 +34,7 @@ import java.util.Set;
 import org.apache.activemq.artemis.core.config.impl.SecurityConfiguration;
 import org.jboss.logging.Logger;
 
-public class InVMLoginModule implements LoginModule {
+public class InVMLoginModule implements AuditLoginModule {
 
    private static final Logger logger = Logger.getLogger(InVMLoginModule.class);
 
@@ -44,12 +43,15 @@ public class InVMLoginModule implements LoginModule {
    private SecurityConfiguration configuration;
    private Subject subject;
    private String user;
-   private Set<Principal> principals = new HashSet<>();
+   private final Set<Principal> principals = new HashSet<>();
    private CallbackHandler callbackHandler;
    private boolean loginSucceeded;
 
    @Override
-   public void initialize(Subject subject, CallbackHandler callbackHandler, Map<String, ?> sharedState, Map<String, ?> options) {
+   public void initialize(Subject subject,
+                          CallbackHandler callbackHandler,
+                          Map<String, ?> sharedState,
+                          Map<String, ?> options) {
       this.subject = subject;
       this.callbackHandler = callbackHandler;
       this.configuration = (SecurityConfiguration) options.get(CONFIG_PROP_NAME);
@@ -63,11 +65,9 @@ public class InVMLoginModule implements LoginModule {
       callbacks[1] = new PasswordCallback("Password: ", false);
       try {
          callbackHandler.handle(callbacks);
-      }
-      catch (IOException ioe) {
+      } catch (IOException ioe) {
          throw new LoginException(ioe.getMessage());
-      }
-      catch (UnsupportedCallbackException uce) {
+      } catch (UnsupportedCallbackException uce) {
          throw new LoginException(uce.getMessage() + " not available to obtain information from user");
       }
       user = ((NameCallback) callbacks[0]).getName();
@@ -78,12 +78,10 @@ public class InVMLoginModule implements LoginModule {
       if (user == null) {
          if (configuration.getDefaultUser() == null) {
             throw new FailedLoginException("Both username and defaultUser are null");
-         }
-         else {
+         } else {
             user = configuration.getDefaultUser();
          }
-      }
-      else {
+      } else {
          String password = configuration.getUser(user) == null ? null : configuration.getUser(user).getPassword();
 
          if (password == null) {
@@ -127,6 +125,7 @@ public class InVMLoginModule implements LoginModule {
 
    @Override
    public boolean abort() throws LoginException {
+      registerFailureForAudit(user);
       clear();
 
       logger.debug("abort");

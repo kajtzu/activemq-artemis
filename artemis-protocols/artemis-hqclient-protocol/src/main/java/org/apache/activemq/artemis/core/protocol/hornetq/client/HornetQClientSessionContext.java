@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License. You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,6 +19,7 @@ package org.apache.activemq.artemis.core.protocol.hornetq.client;
 
 import java.util.concurrent.Executor;
 
+import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
@@ -48,7 +49,6 @@ public class HornetQClientSessionContext extends ActiveMQSessionContext {
       super(name, remotingConnection, sessionChannel, serverVersion, confirmationWindow);
    }
 
-
    @Override
    public ClientSession.QueueQuery queueQuery(final SimpleString queueName) throws ActiveMQException {
       SessionQueueQueryMessage request = new SessionQueueQueryMessage(queueName);
@@ -64,22 +64,21 @@ public class HornetQClientSessionContext extends ActiveMQSessionContext {
                                                    boolean xa,
                                                    boolean autoCommitSends,
                                                    boolean autoCommitAcks,
-                                                   boolean preAcknowledge,
-                                                   SimpleString defaultAddress) {
-      return new CreateSessionMessage(getName(), getSessionChannel().getID(), 123, username, password, minLargeMessageSize, xa, autoCommitSends, autoCommitAcks, preAcknowledge, getConfirmationWindow(), defaultAddress == null ? null : defaultAddress.toString());
+                                                   boolean preAcknowledge) {
+      return new CreateSessionMessage(getName(), getSessionChannel().getID(), 123, username, password, minLargeMessageSize, xa, autoCommitSends, autoCommitAcks, preAcknowledge, getConfirmationWindow(), null);
    }
-
 
    @Override
    public ClientSession.AddressQuery addressQuery(final SimpleString address) throws ActiveMQException {
       SessionBindingQueryResponseMessage response = (SessionBindingQueryResponseMessage) getSessionChannel().sendBlocking(new SessionBindingQueryMessage(address), PacketImpl.SESS_BINDINGQUERY_RESP);
 
-      return new AddressQueryImpl(response.isExists(), response.getQueueNames(), false, false);
+      return new AddressQueryImpl(response.isExists(), response.getQueueNames(), false, false, ActiveMQDefaultConfiguration.getDefaultPurgeOnNoConsumers(), ActiveMQDefaultConfiguration.getDefaultMaxQueueConsumers(), ActiveMQDefaultConfiguration.getDefaultExclusive(), ActiveMQDefaultConfiguration.getDefaultLastValue(), ActiveMQDefaultConfiguration.getDefaultLastValueKey(), ActiveMQDefaultConfiguration.getDefaultNonDestructive(), ActiveMQDefaultConfiguration.getDefaultConsumersBeforeDispatch(), ActiveMQDefaultConfiguration.getDefaultDelayBeforeDispatch());
    }
 
    @Override
    public ClientConsumerInternal createConsumer(SimpleString queueName,
                                                 SimpleString filterString,
+                                                int priority,
                                                 int windowSize,
                                                 int maxRate,
                                                 int ackBatchSize,
@@ -90,7 +89,7 @@ public class HornetQClientSessionContext extends ActiveMQSessionContext {
 
       ActiveMQConsumerContext consumerContext = new ActiveMQConsumerContext(consumerID);
 
-      SessionCreateConsumerMessage request = new SessionCreateConsumerMessage(consumerID, queueName, filterString, browseOnly, true);
+      SessionCreateConsumerMessage request = new SessionCreateConsumerMessage(consumerID, queueName, filterString, priority, browseOnly, true);
 
       SessionQueueQueryResponseMessage queueInfo = (SessionQueueQueryResponseMessage) getSessionChannel().sendBlocking(request, PacketImpl.SESS_QUEUEQUERY_RESP);
 
@@ -98,8 +97,7 @@ public class HornetQClientSessionContext extends ActiveMQSessionContext {
       // could be overridden on the queue settings
       // The value we send is just a hint
 
-      return new ClientConsumerImpl(session, consumerContext, queueName, filterString, browseOnly, calcWindowSize(windowSize), ackBatchSize, maxRate > 0 ? new TokenBucketLimiterImpl(maxRate, false) : null, executor, flowControlExecutor, this, queueInfo.toQueueQuery(), lookupTCCL());
+      return new ClientConsumerImpl(session, consumerContext, queueName, filterString, priority, browseOnly, windowSize, calcWindowSize(windowSize), ackBatchSize, maxRate > 0 ? new TokenBucketLimiterImpl(maxRate, false) : null, executor, flowControlExecutor, this, queueInfo.toQueueQuery(), lookupTCCL());
    }
-
 
 }

@@ -23,6 +23,7 @@ import java.util.Set;
 /**
  * allows objects to be mapped against a regex pattern and held in order in a list
  */
+//tmp comment: Can we use AddressInfo as the 'match' key?
 public interface HierarchicalRepository<T> {
 
    void disableListeners();
@@ -60,6 +61,12 @@ public interface HierarchicalRepository<T> {
     * @param defaultValue the value
     */
    void setDefault(T defaultValue);
+
+   /**
+    *
+    * @return the default match for this repo
+    */
+   T getDefault();
 
    /**
     * remove a match from the repository
@@ -100,4 +107,6 @@ public interface HierarchicalRepository<T> {
    void clearCache();
 
    int getCacheSize();
+
+   boolean containsExactMatch(String match);
 }

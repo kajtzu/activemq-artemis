@@ -16,17 +16,17 @@
  */
 package org.apache.activemq.artemis.core.config.impl;
 
+import javax.management.MBeanServer;
 import java.net.URL;
 import java.util.Map;
 
 import org.apache.activemq.artemis.core.deployers.Deployable;
 import org.apache.activemq.artemis.core.deployers.impl.FileConfigurationParser;
+import org.apache.activemq.artemis.core.server.ActivateCallback;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
 import org.apache.activemq.artemis.spi.core.security.ActiveMQSecurityManager;
 import org.w3c.dom.Element;
-
-import javax.management.MBeanServer;
 
 /**
  * A {@code FileConfiguration} reads configuration values from a file.
@@ -57,6 +57,8 @@ public final class FileConfiguration extends ConfigurationImpl implements Deploy
 
       setConfigurationUrl(url);
 
+      parseSystemProperties();
+
       parsed = true;
    }
 
@@ -74,8 +76,12 @@ public final class FileConfiguration extends ConfigurationImpl implements Deploy
    public void buildService(ActiveMQSecurityManager securityManager,
                             MBeanServer mBeanServer,
                             Map<String, Deployable> deployables,
-                            Map<String, ActiveMQComponent> components) {
-      components.put(getRootElement(), new ActiveMQServerImpl(this, mBeanServer, securityManager));
+                            Map<String, ActiveMQComponent> components, ActivateCallback activateCallback) {
+      ActiveMQServerImpl activeMQServer = new ActiveMQServerImpl(this, mBeanServer, securityManager);
+      if (activateCallback != null) {
+         activeMQServer.registerActivateCallback(activateCallback);
+      }
+      components.put(getRootElement(), activeMQServer);
    }
 
    @Override

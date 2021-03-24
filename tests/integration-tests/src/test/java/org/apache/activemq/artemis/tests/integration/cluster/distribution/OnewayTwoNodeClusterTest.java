@@ -18,17 +18,14 @@ package org.apache.activemq.artemis.tests.integration.cluster.distribution;
 
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.cluster.impl.MessageLoadBalancingType;
-import org.junit.Before;
-
-import org.junit.Test;
-
+import org.jboss.logging.Logger;
 import org.junit.Assert;
-
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
+import org.junit.Before;
+import org.junit.Test;
 
 public class OnewayTwoNodeClusterTest extends ClusterTestBase {
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(OnewayTwoNodeClusterTest.class);
 
    @Override
    @Before
@@ -146,19 +143,19 @@ public class OnewayTwoNodeClusterTest extends ClusterTestBase {
 
       long start = System.currentTimeMillis();
 
-      OnewayTwoNodeClusterTest.log.info("stopping server 1");
+      OnewayTwoNodeClusterTest.log.debug("stopping server 1");
 
       stopServers(1);
 
       waitForTopology(servers[0], 1);
 
-      OnewayTwoNodeClusterTest.log.info("restarting server 1(" + servers[1].getIdentity() + ")");
+      OnewayTwoNodeClusterTest.log.debug("restarting server 1(" + servers[1].getIdentity() + ")");
 
       startServers(1);
 
       waitForTopology(servers[0], 2);
 
-      log.info("Server 1 id=" + servers[1].getNodeID());
+      log.debug("Server 1 id=" + servers[1].getNodeID());
 
       long end = System.currentTimeMillis();
 
@@ -201,6 +198,15 @@ public class OnewayTwoNodeClusterTest extends ClusterTestBase {
 
       addConsumer(1, 0, "queue0", null);
       verifyNotReceive(1);
+
+      //Should be 0 as no messages were sent to the second broker
+      verifyClusterMetrics(0, "cluster1", 0, 0);
+
+      //Should be 0 as no messages were sent to the first broker
+      verifyClusterMetrics(1, "clusterX", 0, 0);
+
+      //0 messages were sent across the bridge to the second broker
+      verifyBridgeMetrics(0, "cluster1", servers[1].getClusterManager().getNodeId(), 0, 0);
    }
 
    @Test
@@ -227,6 +233,15 @@ public class OnewayTwoNodeClusterTest extends ClusterTestBase {
       send(0, "queues.testaddress", 10, false, null);
       verifyReceiveRoundRobin(10, 0, 1);
       verifyNotReceive(0, 1);
+
+      //half of the messages should be sent over bridge, other half was consumed by local consumer
+      verifyClusterMetrics(0, "cluster1", 5, 5);
+
+      //Should be 0 as no messages were sent to the first broker
+      verifyClusterMetrics(1, "clusterX", 0, 0);
+
+      //5 messages were sent across the bridge to the second broker
+      verifyBridgeMetrics(0, "cluster1", servers[1].getClusterManager().getNodeId(), 5, 5);
    }
 
    @Test

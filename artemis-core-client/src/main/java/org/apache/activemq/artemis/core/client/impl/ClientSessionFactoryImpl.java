@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.apache.activemq.artemis.api.config.ServerLocatorConfig;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQInterruptedException;
@@ -51,6 +52,7 @@ import org.apache.activemq.artemis.core.protocol.core.CoreRemotingConnection;
 import org.apache.activemq.artemis.core.protocol.core.impl.ActiveMQSessionContext;
 import org.apache.activemq.artemis.core.remoting.FailureListener;
 import org.apache.activemq.artemis.core.remoting.impl.TransportConfigurationUtil;
+import org.apache.activemq.artemis.core.remoting.impl.netty.NettyConnector;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
 import org.apache.activemq.artemis.spi.core.remoting.BufferHandler;
@@ -62,11 +64,11 @@ import org.apache.activemq.artemis.spi.core.remoting.ConnectorFactory;
 import org.apache.activemq.artemis.spi.core.remoting.SessionContext;
 import org.apache.activemq.artemis.spi.core.remoting.TopologyResponseHandler;
 import org.apache.activemq.artemis.utils.ClassloadingUtil;
-import org.apache.activemq.artemis.utils.ConcurrentHashSet;
 import org.apache.activemq.artemis.utils.ConfirmationWindowWarning;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
-import org.apache.activemq.artemis.utils.OrderedExecutorFactory;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
+import org.apache.activemq.artemis.utils.actors.OrderedExecutorFactory;
+import org.apache.activemq.artemis.utils.collections.ConcurrentHashSet;
 import org.jboss.logging.Logger;
 
 public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, ClientConnectionLifeCycleListener {
@@ -79,7 +81,9 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
    private TransportConfiguration connectorConfig;
 
-   private TransportConfiguration backupConfig;
+   private TransportConfiguration currentConnectorConfig;
+
+   private volatile TransportConfiguration backupConfig;
 
    private ConnectorFactory connectorFactory;
 
@@ -93,7 +97,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
    private final long connectionTTL;
 
-   private final Set<ClientSessionInternal> sessions = new HashSet<>();
+   private final Set<ClientSessionInternal> sessions = new ConcurrentHashSet<>();
 
    private final Object createSessionLock = new Object();
 
@@ -153,18 +157,25 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
    public ClientSessionFactoryImpl(final ServerLocatorInternal serverLocator,
                                    final TransportConfiguration connectorConfig,
-                                   final long callTimeout,
-                                   final long callFailoverTimeout,
-                                   final long clientFailureCheckPeriod,
-                                   final long connectionTTL,
-                                   final long retryInterval,
-                                   final double retryIntervalMultiplier,
-                                   final long maxRetryInterval,
+                                   final ServerLocatorConfig locatorConfig,
                                    final int reconnectAttempts,
                                    final Executor threadPool,
                                    final ScheduledExecutorService scheduledThreadPool,
                                    final List<Interceptor> incomingInterceptors,
                                    final List<Interceptor> outgoingInterceptors) {
+      this(serverLocator, new Pair<>(connectorConfig, null),
+               locatorConfig, reconnectAttempts, threadPool,
+               scheduledThreadPool, incomingInterceptors, outgoingInterceptors);
+   }
+
+   ClientSessionFactoryImpl(final ServerLocatorInternal serverLocator,
+                          final Pair<TransportConfiguration, TransportConfiguration> connectorConfig,
+                          final ServerLocatorConfig locatorConfig,
+                          final int reconnectAttempts,
+                          final Executor threadPool,
+                          final ScheduledExecutorService scheduledThreadPool,
+                          final List<Interceptor> incomingInterceptors,
+                          final List<Interceptor> outgoingInterceptors) {
       createTrace = new Exception();
 
       this.serverLocator = serverLocator;
@@ -173,34 +184,33 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
       this.clientProtocolManager.setSessionFactory(this);
 
-      this.connectorConfig = connectorConfig;
+      this.currentConnectorConfig = connectorConfig.getA();
 
-      connectorFactory = instantiateConnectorFactory(connectorConfig.getFactoryClassName());
+      connectorFactory = instantiateConnectorFactory(connectorConfig.getA().getFactoryClassName());
 
-      checkTransportKeys(connectorFactory, connectorConfig);
+      checkTransportKeys(connectorFactory, connectorConfig.getA());
 
-      this.callTimeout = callTimeout;
+      this.callTimeout = locatorConfig.callTimeout;
 
-      this.callFailoverTimeout = callFailoverTimeout;
+      this.callFailoverTimeout = locatorConfig.callFailoverTimeout;
 
       // HORNETQ-1314 - if this in an in-vm connection then disable connection monitoring
       if (connectorFactory.isReliable() &&
-         clientFailureCheckPeriod == ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD &&
-         connectionTTL == ActiveMQClient.DEFAULT_CONNECTION_TTL) {
+         locatorConfig.clientFailureCheckPeriod == ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD &&
+         locatorConfig.connectionTTL == ActiveMQClient.DEFAULT_CONNECTION_TTL) {
          this.clientFailureCheckPeriod = ActiveMQClient.DEFAULT_CLIENT_FAILURE_CHECK_PERIOD_INVM;
          this.connectionTTL = ActiveMQClient.DEFAULT_CONNECTION_TTL_INVM;
+      } else {
+         this.clientFailureCheckPeriod = locatorConfig.clientFailureCheckPeriod;
+
+         this.connectionTTL = locatorConfig.connectionTTL;
       }
-      else {
-         this.clientFailureCheckPeriod = clientFailureCheckPeriod;
 
-         this.connectionTTL = connectionTTL;
-      }
+      this.retryInterval = locatorConfig.retryInterval;
 
-      this.retryInterval = retryInterval;
+      this.retryIntervalMultiplier = locatorConfig.retryIntervalMultiplier;
 
-      this.retryIntervalMultiplier = retryIntervalMultiplier;
-
-      this.maxRetryInterval = maxRetryInterval;
+      this.maxRetryInterval = locatorConfig.maxRetryInterval;
 
       this.reconnectAttempts = reconnectAttempts;
 
@@ -219,6 +229,10 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       confirmationWindowWarning = new ConfirmationWindowWarning(serverLocator.getConfirmationWindowSize() < 0);
 
       connectionReadyForWrites = true;
+
+      if (connectorConfig.getB() != null) {
+         this.backupConfig = connectorConfig.getB();
+      }
    }
 
    @Override
@@ -233,13 +247,12 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
    }
 
    @Override
-   public void connect(final int initialConnectAttempts,
-                       final boolean failoverOnInitialConnection) throws ActiveMQException {
+   public void connect(final int initialConnectAttempts) throws ActiveMQException {
       // Get the connection
-      getConnectionWithRetry(initialConnectAttempts);
+      getConnectionWithRetry(initialConnectAttempts, null);
 
       if (connection == null) {
-         StringBuilder msg = new StringBuilder("Unable to connect to server using configuration ").append(connectorConfig);
+         StringBuilder msg = new StringBuilder("Unable to connect to server using configuration ").append(currentConnectorConfig);
          if (backupConfig != null) {
             msg.append(" and backup configuration ").append(backupConfig);
          }
@@ -248,9 +261,16 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
    }
 
+   @Deprecated
+   @Override
+   public void connect(final int initialConnectAttempts,
+                       final boolean failoverOnInitialConnection) throws ActiveMQException {
+      connect(initialConnectAttempts);
+   }
+
    @Override
    public TransportConfiguration getConnectorConfiguration() {
-      return connectorConfig;
+      return currentConnectorConfig;
    }
 
    @Override
@@ -261,7 +281,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       // to create a connector just to validate if the parameters are ok.
       // so this will create the instance to be used on the isEquivalent check
       if (localConnector == null) {
-         localConnector = connectorFactory.createConnector(connectorConfig.getParams(), new DelegatingBufferHandler(), this, closeExecutor, threadPool, scheduledThreadPool, clientProtocolManager);
+         localConnector = connectorFactory.createConnector(currentConnectorConfig.getParams(), new DelegatingBufferHandler(), this, closeExecutor, threadPool, scheduledThreadPool, clientProtocolManager);
       }
 
       if (localConnector.isEquivalent(live.getParams()) && backUp != null && !localConnector.isEquivalent(backUp.getParams())) {
@@ -269,14 +289,13 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
             logger.debug("Setting up backup config = " + backUp + " for live = " + live);
          }
          backupConfig = backUp;
-      }
-      else {
+      } else {
          if (logger.isDebugEnabled()) {
             logger.debug("ClientSessionFactoryImpl received backup update for live/backup pair = " + live +
-                                                 " / " +
-                                                 backUp +
-                                                 " but it didn't belong to " +
-                                                 connectorConfig);
+                            " / " +
+                            backUp +
+                            " but it didn't belong to " +
+                            currentConnectorConfig);
          }
       }
    }
@@ -340,7 +359,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       return createSessionInternal(null, null, xa, autoCommitSends, autoCommitAcks, preAcknowledge, serverLocator.getAckBatchSize());
    }
 
-   // ConnectionLifeCycleListener implementation --------------------------------------------------
+   // ClientConnectionLifeCycleListener implementation --------------------------------------------------
 
    @Override
    public void connectionCreated(final ActiveMQComponent component,
@@ -444,8 +463,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                session.close();
             else
                session.cleanUp(false);
-         }
-         catch (Exception e1) {
+         } catch (Exception e1) {
             ActiveMQClientLogger.LOGGER.unableToCloseSession(e1);
          }
       }
@@ -475,10 +493,9 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
    public boolean waitForTopology(long timeout, TimeUnit unit) {
       try {
          return latchFinalTopology.await(timeout, unit);
-      }
-      catch (InterruptedException e) {
+      } catch (InterruptedException e) {
          Thread.currentThread().interrupt();
-         ActiveMQClientLogger.LOGGER.warn(e.getMessage(), e);
+         ActiveMQClientLogger.LOGGER.unableToReceiveClusterTopology(e);
          return false;
       }
    }
@@ -506,12 +523,11 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                                         String scaleDownTargetNodeID) {
       try {
          failoverOrReconnect(connectionID, me, scaleDownTargetNodeID);
-      }
-      catch (ActiveMQInterruptedException e1) {
+      } catch (ActiveMQInterruptedException e1) {
          // this is just a debug, since an interrupt is an expected event (in case of a shutdown)
          logger.debug(e1.getMessage(), e1);
-      }
-      catch (Throwable t) {
+      } catch (Throwable t) {
+         ActiveMQClientLogger.LOGGER.unableToHandleConnectionFailure(t);
          //for anything else just close so clients are un blocked
          close();
          throw t;
@@ -532,7 +548,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       for (ClientSessionInternal session : sessions) {
          SessionContext context = session.getSessionContext();
          if (context instanceof ActiveMQSessionContext) {
-            ActiveMQSessionContext sessionContext = (ActiveMQSessionContext)context;
+            ActiveMQSessionContext sessionContext = (ActiveMQSessionContext) context;
             if (sessionContext.isKilled()) {
                setReconnectAttempts(0);
             }
@@ -607,8 +623,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                if (localConnector != null) {
                   try {
                      localConnector.close();
-                  }
-                  catch (Exception ignore) {
+                  } catch (Exception ignore) {
                      // no-op
                   }
                }
@@ -617,7 +632,21 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
                connector = null;
 
-               reconnectSessions(oldConnection, reconnectAttempts, me);
+               boolean allSessionReconnected;
+               int failedReconnectSessionsCounter = 0;
+               do {
+                  allSessionReconnected = reconnectSessions(oldConnection, reconnectAttempts, me);
+                  if (oldConnection != null) {
+                     oldConnection.destroy();
+                  }
+
+                  if (!allSessionReconnected) {
+                     failedReconnectSessionsCounter++;
+                     oldConnection = connection;
+                     connection = null;
+                  }
+               }
+               while ((reconnectAttempts == -1 || failedReconnectSessionsCounter < reconnectAttempts) && !allSessionReconnected);
 
                if (oldConnection != null) {
                   oldConnection.destroy();
@@ -627,8 +656,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                   callFailoverListeners(FailoverEventType.FAILOVER_COMPLETED);
                }
             }
-         }
-         else {
+         } else {
             RemotingConnection connectionToDestory = connection;
             if (connectionToDestory != null) {
                connectionToDestory.destroy();
@@ -643,8 +671,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
             callFailoverListeners(FailoverEventType.FAILOVER_FAILED);
             callSessionFailureListeners(me, true, false, scaleDownTargetNodeID);
          }
-      }
-      finally {
+      } finally {
          localFailoverLock.unlock();
       }
 
@@ -659,8 +686,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          for (ClientSessionInternal session : sessionsToClose) {
             try {
                session.cleanUp(true);
-            }
-            catch (Exception cause) {
+            } catch (Exception cause) {
                ActiveMQClientLogger.LOGGER.failedToCleanupSession(cause);
             }
          }
@@ -708,12 +734,10 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          try {
             if (afterReconnect) {
                listener.connectionFailed(me, failedOver, scaleDownTargetNodeID);
-            }
-            else {
+            } else {
                listener.beforeReconnect(me);
             }
-         }
-         catch (final Throwable t) {
+         } catch (final Throwable t) {
             // Failure of one listener to execute shouldn't prevent others
             // from
             // executing
@@ -728,8 +752,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       for (final FailoverEventListener listener : listenersClone) {
          try {
             listener.failoverEvent(type);
-         }
-         catch (final Throwable t) {
+         } catch (final Throwable t) {
             // Failure of one listener to execute shouldn't prevent others
             // from
             // executing
@@ -741,7 +764,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
    /*
     * Re-attach sessions all pre-existing sessions to the new remoting connection
     */
-   private void reconnectSessions(final RemotingConnection oldConnection,
+   private boolean reconnectSessions(final RemotingConnection oldConnection,
                                   final int reconnectAttempts,
                                   final ActiveMQException cause) {
       HashSet<ClientSessionInternal> sessionsToFailover;
@@ -753,13 +776,13 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          session.preHandleFailover(connection);
       }
 
-      getConnectionWithRetry(reconnectAttempts);
+      getConnectionWithRetry(reconnectAttempts, oldConnection);
 
       if (connection == null) {
          if (!clientProtocolManager.isAlive())
             ActiveMQClientLogger.LOGGER.failedToConnectToServer();
 
-         return;
+         return true;
       }
 
       List<FailureListener> oldListeners = oldConnection.getFailureListeners();
@@ -780,19 +803,23 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       ((CoreRemotingConnection) connection).syncIDGeneratorSequence(((CoreRemotingConnection) oldConnection).getIDGeneratorSequence());
 
       for (ClientSessionInternal session : sessionsToFailover) {
-         session.handleFailover(connection, cause);
+         if (!session.handleFailover(connection, cause)) {
+            return false;
+         }
       }
+
+      return true;
    }
 
-   private void getConnectionWithRetry(final int reconnectAttempts) {
+   private void getConnectionWithRetry(final int reconnectAttempts, RemotingConnection oldConnection) {
       if (!clientProtocolManager.isAlive())
          return;
       if (logger.isTraceEnabled()) {
          logger.trace("getConnectionWithRetry::" + reconnectAttempts +
-                                              " with retryInterval = " +
-                                              retryInterval +
-                                              " multiplier = " +
-                                              retryIntervalMultiplier, new Exception("trace"));
+                         " with retryInterval = " +
+                         retryInterval +
+                         " multiplier = " +
+                         retryIntervalMultiplier, new Exception("trace"));
       }
 
       long interval = retryInterval;
@@ -805,12 +832,15 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          }
 
          if (getConnection() != null) {
+            if (oldConnection != null && oldConnection instanceof CoreRemotingConnection) {
+               // transferring old connection version into the new connection
+               ((CoreRemotingConnection)connection).setChannelVersion(((CoreRemotingConnection)oldConnection).getChannelVersion());
+            }
             if (logger.isDebugEnabled()) {
                logger.debug("Reconnection successful");
             }
             return;
-         }
-         else {
+         } else {
             // Failed to get connection
 
             if (reconnectAttempts != 0) {
@@ -828,14 +858,8 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                   ClientSessionFactoryImpl.logger.trace("Waiting " + interval + " milliseconds before next retry. RetryInterval=" + retryInterval + " and multiplier=" + retryIntervalMultiplier);
                }
 
-               try {
-                  if (clientProtocolManager.waitOnLatch(interval)) {
-                     return;
-                  }
-               }
-               catch (InterruptedException ignore) {
-                  throw new ActiveMQInterruptedException(createTrace);
-               }
+               if (waitForRetry(interval))
+                  return;
 
                // Exponential back-off
                long newInterval = (long) (interval * retryIntervalMultiplier);
@@ -845,13 +869,24 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                }
 
                interval = newInterval;
-            }
-            else {
+            } else {
                logger.debug("Could not connect to any server. Didn't have reconnection configured on the ClientSessionFactory");
                return;
             }
          }
       }
+   }
+
+   @Override
+   public boolean waitForRetry(long interval) {
+      try {
+         if (clientProtocolManager.waitOnLatch(interval)) {
+            return true;
+         }
+      } catch (InterruptedException ignore) {
+         throw new ActiveMQInterruptedException(createTrace);
+      }
+      return false;
    }
 
    private void cancelScheduledTasks() {
@@ -876,8 +911,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
          try {
             connectionInUse.destroy();
-         }
-         catch (Throwable ignore) {
+         } catch (Throwable ignore) {
          }
 
          connection = null;
@@ -886,14 +920,17 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
             if (connectorInUse != null) {
                connectorInUse.close();
             }
-         }
-         catch (Throwable ignore) {
+         } catch (Throwable ignore) {
          }
 
          connector = null;
       }
    }
 
+   //The order of connector configs to try to get a connection:
+   //currentConnectorConfig, backupConfig and then lastConnectorConfig.
+   //On each successful connect, the current and last will be
+   //updated properly.
    @Override
    public RemotingConnection getConnection() {
       if (closed)
@@ -904,8 +941,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          if (connection != null) {
             // a connection already exists, so returning the same one
             return connection;
-         }
-         else {
+         } else {
             RemotingConnection connection = establishNewConnection();
 
             this.connection = connection;
@@ -920,8 +956,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                      this.connection = null;
                      return null;
                   }
-               }
-               catch (ActiveMQException e) {
+               } catch (ActiveMQException e) {
                   connection.destroy();
                   this.connection = null;
                   return null;
@@ -939,8 +974,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                   }
                   clientProtocolManager.sendSubscribeTopology(serverLocator.isClusterConnection());
                }
-            }
-            else {
+            } else {
                logger.debug("serverLocator@" + System.identityHashCode(serverLocator + " had no topology"));
             }
 
@@ -959,10 +993,9 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
          // To make sure the first ping will be sent
          pingRunnable.send();
-      }
-      // send a ping every time we create a new remoting connection
-      // to set up its TTL on the server side
-      else {
+      } else {
+         // send a ping every time we create a new remoting connection
+         // to set up its TTL on the server side
          pingRunnable.run();
       }
    }
@@ -992,7 +1025,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
       return AccessController.doPrivileged(new PrivilegedAction<ConnectorFactory>() {
          @Override
          public ConnectorFactory run() {
-            return (ConnectorFactory) ClassloadingUtil.newInstanceFromClassLoader(connectorFactoryClassName);
+            return (ConnectorFactory) ClassloadingUtil.newInstanceFromClassLoader(ClientSessionFactoryImpl.class, connectorFactoryClassName);
          }
       });
    }
@@ -1015,12 +1048,10 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
             CLOSE_RUNNABLES.add(this);
             if (scaleDownTargetNodeID == null) {
                conn.fail(ActiveMQClientMessageBundle.BUNDLE.disconnected());
-            }
-            else {
+            } else {
                conn.fail(ActiveMQClientMessageBundle.BUNDLE.disconnected(), scaleDownTargetNodeID);
             }
-         }
-         finally {
+         } finally {
             CLOSE_RUNNABLES.remove(this);
          }
 
@@ -1065,8 +1096,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
          try {
             connector.close();
-         }
-         catch (Throwable t) {
+         } catch (Throwable t) {
          }
       }
 
@@ -1074,7 +1104,16 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
    }
 
    protected Connector createConnector(ConnectorFactory connectorFactory, TransportConfiguration configuration) {
-      return connectorFactory.createConnector(configuration.getParams(), new DelegatingBufferHandler(), this, closeExecutor, threadPool, scheduledThreadPool, clientProtocolManager);
+      Connector connector = connectorFactory.createConnector(configuration.getParams(), new DelegatingBufferHandler(), this, closeExecutor, threadPool, scheduledThreadPool, clientProtocolManager);
+      if (connector instanceof NettyConnector) {
+         NettyConnector nettyConnector = (NettyConnector) connector;
+         if (nettyConnector.getConnectTimeoutMillis() < 0) {
+            nettyConnector.setConnectTimeoutMillis((int)serverLocator.getConnectionTTL());
+         }
+
+      }
+
+      return connector;
    }
 
    private void checkTransportKeys(final ConnectorFactory factory, final TransportConfiguration tc) {
@@ -1091,20 +1130,17 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
       try {
          if (logger.isDebugEnabled()) {
-            logger.debug("Trying to connect with connector = " + connectorFactory +
-                                                 ", parameters = " +
-                                                 connectorConfig.getParams() +
-                                                 " connector = " +
-                                                 connector);
+            logger.debug("Trying to connect with connectorFactory = " + connectorFactory +
+                           ", connectorConfig=" + currentConnectorConfig);
          }
 
-         Connector liveConnector = createConnector(connectorFactory, connectorConfig);
+         Connector liveConnector = createConnector(connectorFactory, currentConnectorConfig);
 
          if ((transportConnection = openTransportConnection(liveConnector)) != null) {
             // if we can't connect the connect method will return null, hence we have to try the backup
             connector = liveConnector;
-         }
-         else if (backupConfig != null) {
+            return transportConnection;
+         } else if (backupConfig != null) {
             if (logger.isDebugEnabled()) {
                logger.debug("Trying backup config = " + backupConfig);
             }
@@ -1124,19 +1160,42 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
                // Switching backup as live
                connector = backupConnector;
-               connectorConfig = backupConfig;
-               backupConfig = null;
+               connectorConfig = currentConnectorConfig;
+               currentConnectorConfig = backupConfig;
                connectorFactory = backupConnectorFactory;
+               return transportConnection;
             }
-            else {
-               if (logger.isDebugEnabled()) {
-                  logger.debug("Backup is not active.");
-               }
-            }
-
          }
-      }
-      catch (Exception cause) {
+
+         if (logger.isDebugEnabled()) {
+            logger.debug("Backup is not active, trying original connection configuration now.");
+         }
+
+
+         if (currentConnectorConfig.equals(connectorConfig) || connectorConfig == null) {
+
+            // There was no changes on current and original connectors, just return null here and let the retry happen at the first portion of this method on the next retry
+            return null;
+         }
+
+         ConnectorFactory lastConnectorFactory = instantiateConnectorFactory(connectorConfig.getFactoryClassName());
+
+         Connector lastConnector = createConnector(lastConnectorFactory, connectorConfig);
+
+         transportConnection = openTransportConnection(lastConnector);
+
+         if (transportConnection != null) {
+            logger.debug("Returning into original connector");
+            connector = lastConnector;
+            TransportConfiguration temp = currentConnectorConfig;
+            currentConnectorConfig = connectorConfig;
+            connectorConfig = temp;
+            return transportConnection;
+         } else {
+            logger.debug("no connection been made, returning null");
+            return null;
+         }
+      } catch (Exception cause) {
          // Sanity catch for badly behaved remoting plugins
 
          ActiveMQClientLogger.LOGGER.createConnectorException(cause);
@@ -1144,25 +1203,20 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          if (transportConnection != null) {
             try {
                transportConnection.close();
-            }
-            catch (Throwable t) {
+            } catch (Throwable t) {
             }
          }
 
          if (connector != null) {
             try {
                connector.close();
-            }
-            catch (Throwable t) {
+            } catch (Throwable t) {
             }
          }
-
-         transportConnection = null;
-
          connector = null;
+         return null;
       }
 
-      return transportConnection;
    }
 
    private class DelegatingBufferHandler implements BufferHandler {
@@ -1172,9 +1226,39 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
          RemotingConnection theConn = connection;
 
          if (theConn != null && connectionID.equals(theConn.getID())) {
-            theConn.bufferReceived(connectionID, buffer);
+            try {
+               theConn.bufferReceived(connectionID, buffer);
+            } catch (final RuntimeException e) {
+               ActiveMQClientLogger.LOGGER.disconnectOnErrorDecoding(e);
+               threadPool.execute(new Runnable() {
+                  @Override
+                  public void run() {
+                     theConn.fail(new ActiveMQException(e.getMessage()));
+                  }
+               });
+            }
+         } else {
+            logger.debug("TheConn == null on ClientSessionFactoryImpl::DelegatingBufferHandler, ignoring packet");
          }
-         else {
+      }
+
+      @Override
+      public void endOfBatch(final Object connectionID) {
+         RemotingConnection theConn = connection;
+
+         if (theConn != null && connectionID.equals(theConn.getID())) {
+            try {
+               theConn.endOfBatch(connectionID);
+            } catch (final RuntimeException e) {
+               ActiveMQClientLogger.LOGGER.disconnectOnErrorDecoding(e);
+               threadPool.execute(new Runnable() {
+                  @Override
+                  public void run() {
+                     theConn.fail(new ActiveMQException(e.getMessage()));
+                  }
+               });
+            }
+         } else {
             logger.debug("TheConn == null on ClientSessionFactoryImpl::DelegatingBufferHandler, ignoring packet");
          }
       }
@@ -1262,8 +1346,7 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
                });
 
                return;
-            }
-            else {
+            } else {
                lastCheck = now;
             }
          }
@@ -1331,11 +1414,11 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
          if (logger.isTraceEnabled()) {
             logger.trace("Disconnect being called on client:" +
-                                                 " server locator = " +
-                                                 serverLocator +
-                                                 " notifying node " +
-                                                 nodeID +
-                                                 " as down", new Exception("trace"));
+                            " server locator = " +
+                            serverLocator +
+                            " notifying node " +
+                            nodeID +
+                            " as down", new Exception("trace"));
          }
 
          serverLocator.notifyNodeDown(System.currentTimeMillis(), nodeID);
@@ -1354,13 +1437,12 @@ public class ClientSessionFactoryImpl implements ClientSessionFactoryInternal, C
 
          try {
             // if it is our connector then set the live id used for failover
-            if (connectorPair.getA() != null && TransportConfigurationUtil.isSameHost(connectorPair.getA(), connectorConfig)) {
+            if (connectorPair.getA() != null && TransportConfigurationUtil.isSameHost(connectorPair.getA(), currentConnectorConfig)) {
                liveNodeID = nodeID;
             }
 
             serverLocator.notifyNodeUp(uniqueEventID, nodeID, backupGroupName, scaleDownGroupName, connectorPair, isLast);
-         }
-         finally {
+         } finally {
             if (isLast) {
                latchFinalTopology.countDown();
             }

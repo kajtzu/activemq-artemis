@@ -30,12 +30,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.apache.activemq.artemis.api.config.ActiveMQDefaultConfiguration;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffers;
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.ActiveMQExceptionType;
 import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException;
 import org.apache.activemq.artemis.api.core.Interceptor;
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
@@ -44,10 +46,11 @@ import org.apache.activemq.artemis.api.core.client.ClientProducer;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
 import org.apache.activemq.artemis.api.core.client.ClientSessionFactory;
 import org.apache.activemq.artemis.api.core.client.ServerLocator;
-import org.apache.activemq.artemis.core.io.IOCallback;
 import org.apache.activemq.artemis.core.config.ClusterConnectionConfiguration;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.config.ha.SharedStoreSlavePolicyConfiguration;
+import org.apache.activemq.artemis.core.io.IOCallback;
+import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.EncodingSupport;
 import org.apache.activemq.artemis.core.journal.IOCompletion;
 import org.apache.activemq.artemis.core.journal.Journal;
@@ -55,9 +58,9 @@ import org.apache.activemq.artemis.core.journal.JournalLoadInformation;
 import org.apache.activemq.artemis.core.journal.LoaderCallback;
 import org.apache.activemq.artemis.core.journal.PreparedTransactionInfo;
 import org.apache.activemq.artemis.core.journal.RecordInfo;
-import org.apache.activemq.artemis.core.io.SequentialFileFactory;
 import org.apache.activemq.artemis.core.journal.TransactionFailureCallback;
 import org.apache.activemq.artemis.core.journal.impl.JournalFile;
+import org.apache.activemq.artemis.core.message.impl.CoreMessage;
 import org.apache.activemq.artemis.core.paging.PagedMessage;
 import org.apache.activemq.artemis.core.paging.PagingManager;
 import org.apache.activemq.artemis.core.paging.PagingStore;
@@ -65,8 +68,10 @@ import org.apache.activemq.artemis.core.paging.impl.PagedMessageImpl;
 import org.apache.activemq.artemis.core.paging.impl.PagingManagerImpl;
 import org.apache.activemq.artemis.core.paging.impl.PagingStoreFactoryNIO;
 import org.apache.activemq.artemis.core.persistence.OperationContext;
+import org.apache.activemq.artemis.core.persistence.Persister;
 import org.apache.activemq.artemis.core.persistence.StorageManager;
 import org.apache.activemq.artemis.core.persistence.impl.journal.JournalStorageManager;
+import org.apache.activemq.artemis.core.persistence.impl.journal.LargeServerMessageImpl;
 import org.apache.activemq.artemis.core.persistence.impl.journal.OperationContextImpl;
 import org.apache.activemq.artemis.core.protocol.core.CoreRemotingConnection;
 import org.apache.activemq.artemis.core.protocol.core.Packet;
@@ -74,10 +79,9 @@ import org.apache.activemq.artemis.core.replication.ReplicatedJournal;
 import org.apache.activemq.artemis.core.replication.ReplicationManager;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
-import org.apache.activemq.artemis.core.server.ServerMessage;
+import org.apache.activemq.artemis.core.server.LargeServerMessage;
 import org.apache.activemq.artemis.core.server.cluster.ClusterController;
 import org.apache.activemq.artemis.core.server.impl.ActiveMQServerImpl;
-import org.apache.activemq.artemis.core.server.impl.ServerMessageImpl;
 import org.apache.activemq.artemis.core.settings.HierarchicalRepository;
 import org.apache.activemq.artemis.core.settings.impl.AddressSettings;
 import org.apache.activemq.artemis.spi.core.protocol.RemotingConnection;
@@ -86,7 +90,9 @@ import org.apache.activemq.artemis.tests.util.ReplicatedBackupUtils;
 import org.apache.activemq.artemis.tests.util.TransportConfigurationUtils;
 import org.apache.activemq.artemis.utils.ActiveMQThreadFactory;
 import org.apache.activemq.artemis.utils.ExecutorFactory;
-import org.apache.activemq.artemis.utils.OrderedExecutorFactory;
+import org.apache.activemq.artemis.utils.actors.OrderedExecutorFactory;
+import org.apache.activemq.artemis.utils.collections.SparseArrayLinkedList;
+import org.apache.activemq.artemis.utils.critical.EmptyCriticalAnalyzer;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -127,8 +133,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
          liveAcceptor = TransportConfigurationUtils.getNettyAcceptor(true, 0);
          backupConnector = TransportConfigurationUtils.getNettyConnector(false, 0);
          backupAcceptor = TransportConfigurationUtils.getNettyAcceptor(false, 0);
-      }
-      else {
+      } else {
          liveConnector = TransportConfigurationUtils.getInVMConnector(true);
          backupConnector = TransportConfigurationUtils.getInVMConnector(false);
          backupAcceptor = TransportConfigurationUtils.getInVMAcceptor(false);
@@ -153,8 +158,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
       backupServer = createServer(backupConfig);
       if (useNetty) {
          locator = createNettyNonHALocator();
-      }
-      else {
+      } else {
          locator = createInVMNonHALocator();
       }
 
@@ -191,15 +195,13 @@ public final class ReplicationTest extends ActiveMQTestBase {
       setupServer(false);
       try {
          ClientSessionFactory sf = createSessionFactory(locator);
-         manager = new ReplicationManager((CoreRemotingConnection) sf.getConnection(), sf.getServerLocator().getCallTimeout(), factory);
+         manager = new ReplicationManager(null, (CoreRemotingConnection) sf.getConnection(), sf.getServerLocator().getCallTimeout(), sf.getServerLocator().getCallTimeout(), factory);
          addActiveMQComponent(manager);
          manager.start();
          Assert.fail("Exception was expected");
-      }
-      catch (ActiveMQNotConnectedException nce) {
+      } catch (ActiveMQNotConnectedException nce) {
          // ok
-      }
-      catch (ActiveMQException expected) {
+      } catch (ActiveMQException expected) {
          fail("Invalid Exception type:" + expected.getType());
       }
    }
@@ -208,7 +210,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
    public void testSendPackets() throws Exception {
       setupServer(true);
 
-      StorageManager storage = getStorage();
+      JournalStorageManager storage = getStorage();
 
       manager = liveServer.getReplicationManager();
       waitForComponent(manager);
@@ -232,7 +234,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
 
       Assert.assertTrue("Expecting no active tokens:" + manager.getActiveTokens(), manager.getActiveTokens().isEmpty());
 
-      ServerMessage msg = new ServerMessageImpl(1, 1024);
+      CoreMessage msg = new CoreMessage().initBuffer(1024).setMessageID(1);
 
       SimpleString dummy = new SimpleString("dummy");
       msg.setAddress(dummy);
@@ -263,18 +265,18 @@ public final class ReplicationTest extends ActiveMQTestBase {
 
       blockOnReplication(storage, manager);
 
-      ServerMessageImpl serverMsg = new ServerMessageImpl();
+      CoreMessage serverMsg = new CoreMessage();
       serverMsg.setMessageID(500);
       serverMsg.setAddress(new SimpleString("tttt"));
 
       ActiveMQBuffer buffer = ActiveMQBuffers.dynamicBuffer(100);
-      serverMsg.encodeHeadersAndProperties(buffer);
+      serverMsg.encodeHeadersAndProperties(buffer.byteBuf());
 
       manager.largeMessageBegin(500);
 
       manager.largeMessageWrite(500, new byte[1024]);
 
-      manager.largeMessageDelete(Long.valueOf(500));
+      manager.largeMessageDelete(Long.valueOf(500), storage);
 
       blockOnReplication(storage, manager);
 
@@ -294,7 +296,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
       ClientSessionFactory sf = createSessionFactory(locator);
       final ClientSession session = sf.createSession();
       final ClientSession session2 = sf.createSession();
-      session.createQueue(ADDRESS, ADDRESS, null, true);
+      session.createQueue(new QueueConfiguration(ADDRESS));
 
       final ClientProducer producer = session.createProducer(ADDRESS);
 
@@ -318,8 +320,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
             Assert.assertEquals(i, msgRcvd.getIntProperty("counter").intValue());
             msgRcvd.acknowledge();
          }
-      }
-      finally {
+      } finally {
          TestInterceptor.value.set(false);
          if (!session.isClosed())
             session.close();
@@ -440,7 +441,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
     * @throws Exception
     */
    private JournalStorageManager getStorage() throws Exception {
-      return new JournalStorageManager(createDefaultInVMConfig(), factory, null);
+      return new JournalStorageManager(createDefaultInVMConfig(), EmptyCriticalAnalyzer.getInstance(), factory, factory);
    }
 
    /**
@@ -540,6 +541,29 @@ public final class ReplicationTest extends ActiveMQTestBase {
       Assert.assertEquals(0, manager.getActiveTokens().size());
    }
 
+   @Test
+   public void testReplicationLargeMessageFileClose() throws Exception {
+      setupServer(true);
+
+      JournalStorageManager storage = getStorage();
+
+      manager = liveServer.getReplicationManager();
+      waitForComponent(manager);
+
+      CoreMessage msg = new CoreMessage().initBuffer(1024).setMessageID(1);
+      LargeServerMessage largeMsg = liveServer.getStorageManager().createLargeMessage(500, msg);
+      largeMsg.addBytes(new byte[1024]);
+      largeMsg.releaseResources(true, true);
+
+      blockOnReplication(storage, manager);
+
+      LargeServerMessageImpl message1 = (LargeServerMessageImpl) backupServer.getReplicationEndpoint().getLargeMessages().get(Long.valueOf(500));
+
+      Assert.assertNotNull(message1);
+      Assert.assertFalse(largeMsg.getAppendFile().isOpen());
+      Assert.assertFalse(message1.getAppendFile().isOpen());
+   }
+
    class FakeData implements EncodingSupport {
 
       @Override
@@ -601,7 +625,7 @@ public final class ReplicationTest extends ActiveMQTestBase {
                                              final ExecutorFactory executorFactory,
                                              final HierarchicalRepository<AddressSettings> addressSettingsRepository) throws Exception {
 
-      PagingManager paging = new PagingManagerImpl(new PagingStoreFactoryNIO(storageManager, configuration.getPagingLocation(), 1000, null, executorFactory, false, null), addressSettingsRepository);
+      PagingManager paging = new PagingManagerImpl(new PagingStoreFactoryNIO(storageManager, configuration.getPagingLocation(), 1000, null, executorFactory, false, null), addressSettingsRepository, configuration.getManagementAddress());
 
       paging.start();
       return paging;
@@ -622,6 +646,81 @@ public final class ReplicationTest extends ActiveMQTestBase {
    }
 
    static final class FakeJournal implements Journal {
+
+      @Override
+      public void appendAddRecord(long id,
+                                  byte recordType,
+                                  Persister persister,
+                                  Object record,
+                                  boolean sync) throws Exception {
+
+      }
+
+      @Override
+      public void appendAddRecord(long id,
+                                  byte recordType,
+                                  Persister persister,
+                                  Object record,
+                                  boolean sync,
+                                  IOCompletion completionCallback) throws Exception {
+
+      }
+
+      @Override
+      public void appendUpdateRecord(long id,
+                                     byte recordType,
+                                     Persister persister,
+                                     Object record,
+                                     boolean sync) throws Exception {
+
+      }
+
+      @Override
+      public boolean tryAppendUpdateRecord(long id,
+                                           byte recordType,
+                                           Persister persister,
+                                           Object record,
+                                           boolean sync) throws Exception {
+         return true;
+      }
+
+      @Override
+      public void appendUpdateRecord(long id,
+                                     byte recordType,
+                                     Persister persister,
+                                     Object record,
+                                     boolean sync,
+                                     IOCompletion callback) throws Exception {
+
+      }
+
+      @Override
+      public boolean tryAppendUpdateRecord(long id,
+                                           byte recordType,
+                                           Persister persister,
+                                           Object record,
+                                           boolean sync,
+                                           IOCompletion callback) throws Exception {
+         return true;
+      }
+
+      @Override
+      public void appendAddRecordTransactional(long txID,
+                                               long id,
+                                               byte recordType,
+                                               Persister persister,
+                                               Object record) throws Exception {
+
+      }
+
+      @Override
+      public void appendUpdateRecordTransactional(long txID,
+                                                  long id,
+                                                  byte recordType,
+                                                  Persister persister,
+                                                  Object record) throws Exception {
+
+      }
 
       @Override
       public void appendAddRecord(final long id,
@@ -656,6 +755,16 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
+      public void flush() throws Exception {
+
+      }
+
+      @Override
+      public long getMaxRecordSize() {
+         return ActiveMQDefaultConfiguration.getDefaultJournalBufferSizeAio();
+      }
+
+      @Override
       public void appendCommitRecord(final long txID, final boolean sync) throws Exception {
 
       }
@@ -663,6 +772,11 @@ public final class ReplicationTest extends ActiveMQTestBase {
       @Override
       public void appendDeleteRecord(final long id, final boolean sync) throws Exception {
 
+      }
+
+      @Override
+      public boolean tryAppendDeleteRecord(long id, boolean sync) throws Exception {
+         return true;
       }
 
       @Override
@@ -712,6 +826,11 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
+      public boolean tryAppendUpdateRecord(long id, byte recordType, byte[] record, boolean sync) throws Exception {
+         return true;
+      }
+
+      @Override
       public void appendUpdateRecord(final long id,
                                      final byte recordType,
                                      final EncodingSupport record,
@@ -748,16 +867,21 @@ public final class ReplicationTest extends ActiveMQTestBase {
       }
 
       @Override
-      public JournalLoadInformation load(final List<RecordInfo> committedRecords,
+      public JournalLoadInformation load(final SparseArrayLinkedList<RecordInfo> committedRecords,
                                          final List<PreparedTransactionInfo> preparedTransactions,
-                                         final TransactionFailureCallback transactionFailure) throws Exception {
+                                         final TransactionFailureCallback transactionFailure,
+                                         final boolean fixbadtx) throws Exception {
 
          return new JournalLoadInformation();
       }
 
       @Override
-      public void perfBlast(final int pages) {
+      public JournalLoadInformation load(final List<RecordInfo> committedRecords,
+                                         final List<PreparedTransactionInfo> preparedTransactions,
+                                         final TransactionFailureCallback transactionFailure,
+                                         final boolean fixbadtx) throws Exception {
 
+         return new JournalLoadInformation();
       }
 
       @Override
@@ -804,6 +928,11 @@ public final class ReplicationTest extends ActiveMQTestBase {
       public void appendDeleteRecord(final long id,
                                      final boolean sync,
                                      final IOCompletion completionCallback) throws Exception {
+      }
+
+      @Override
+      public boolean tryAppendDeleteRecord(long id, boolean sync, IOCompletion completionCallback) throws Exception {
+         return true;
       }
 
       @Override

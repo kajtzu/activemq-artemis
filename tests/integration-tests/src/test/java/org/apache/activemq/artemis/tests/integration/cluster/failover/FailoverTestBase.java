@@ -112,7 +112,11 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
       liveServer.setIdentity(this.getClass().getSimpleName() + "/liveServer");
    }
 
-   protected TestableServer createTestableServer(Configuration config) {
+   protected TestableServer createTestableServer(Configuration config) throws Exception {
+      return createTestableServer(config, nodeManager);
+   }
+
+   protected TestableServer createTestableServer(Configuration config, NodeManager nodeManager) throws Exception {
       boolean isBackup = config.getHAPolicyConfiguration() instanceof ReplicaPolicyConfiguration || config.getHAPolicyConfiguration() instanceof SharedStoreSlavePolicyConfiguration;
       return new SameProcessActiveMQServer(createInVMFailoverServer(true, config, nodeManager, isBackup ? 2 : 1));
    }
@@ -133,8 +137,7 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
    protected static void setLargeMessageBody(final int i, final ClientMessage message) {
       try {
          message.setBodyInputStream(ActiveMQTestBase.createFakeLargeStream(LARGE_MESSAGE_SIZE));
-      }
-      catch (Exception e) {
+      } catch (Exception e) {
          throw new RuntimeException(e);
       }
    }
@@ -154,19 +157,34 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
       }
    }
 
+   /**
+    * Override this if is needed a different implementation of {@link NodeManager} to be used into {@link #createConfigs()}.
+    */
+   protected NodeManager createNodeManager() throws Exception {
+      return new InVMNodeManager(false);
+   }
+
    protected void createConfigs() throws Exception {
-      nodeManager = new InVMNodeManager(false);
+      nodeManager = createNodeManager();
       TransportConfiguration liveConnector = getConnectorTransportConfiguration(true);
       TransportConfiguration backupConnector = getConnectorTransportConfiguration(false);
 
-      backupConfig = super.createDefaultInVMConfig().clearAcceptorConfigurations().addAcceptorConfiguration(getAcceptorTransportConfiguration(false)).setHAPolicyConfiguration(new SharedStoreSlavePolicyConfiguration()).addConnectorConfiguration(liveConnector.getName(), liveConnector).addConnectorConfiguration(backupConnector.getName(), backupConnector).addClusterConfiguration(basicClusterConnectionConfig(backupConnector.getName(), liveConnector.getName()));
+      backupConfig = super.createDefaultInVMConfig().clearAcceptorConfigurations().addAcceptorConfiguration(getAcceptorTransportConfiguration(false)).setHAPolicyConfiguration(new SharedStoreSlavePolicyConfiguration()).addConnectorConfiguration(liveConnector.getName(), liveConnector).addConnectorConfiguration(backupConnector.getName(), backupConnector).addClusterConfiguration(createBasicClusterConfig(backupConnector.getName(), liveConnector.getName()));
 
       backupServer = createTestableServer(backupConfig);
 
-      liveConfig = super.createDefaultInVMConfig().clearAcceptorConfigurations().addAcceptorConfiguration(getAcceptorTransportConfiguration(true)).setHAPolicyConfiguration(new SharedStoreMasterPolicyConfiguration()).addClusterConfiguration(basicClusterConnectionConfig(liveConnector.getName())).addConnectorConfiguration(liveConnector.getName(), liveConnector);
+      liveConfig = super.createDefaultInVMConfig().clearAcceptorConfigurations().addAcceptorConfiguration(getAcceptorTransportConfiguration(true)).setHAPolicyConfiguration(new SharedStoreMasterPolicyConfiguration()).addClusterConfiguration(createBasicClusterConfig(liveConnector.getName())).addConnectorConfiguration(liveConnector.getName(), liveConnector);
 
       liveServer = createTestableServer(liveConfig);
    }
+
+   /**
+    * Override this if is needed a different implementation of {@link NodeManager} to be used into {@link #createReplicatedConfigs()}.
+    */
+   protected NodeManager createReplicatedBackupNodeManager(Configuration backupConfig) {
+      return new InVMNodeManager(true, backupConfig.getJournalLocation());
+   }
+
 
    protected void createReplicatedConfigs() throws Exception {
       final TransportConfiguration liveConnector = getConnectorTransportConfiguration(true);
@@ -181,7 +199,7 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
       backupConfig.setBindingsDirectory(getBindingsDir(0, true)).setJournalDirectory(getJournalDir(0, true)).setPagingDirectory(getPageDir(0, true)).setLargeMessagesDirectory(getLargeMessagesDir(0, true)).setSecurityEnabled(false);
 
       setupHAPolicyConfiguration();
-      nodeManager = new InVMNodeManager(true, backupConfig.getJournalLocation());
+      nodeManager = createReplicatedBackupNodeManager(backupConfig);
 
       backupServer = createTestableServer(backupConfig);
 
@@ -191,7 +209,7 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
    }
 
    protected void setupHAPolicyConfiguration() {
-      ((ReplicaPolicyConfiguration) backupConfig.getHAPolicyConfiguration()).setMaxSavedReplicatedJournalsSize(0).setAllowFailBack(true);
+      ((ReplicaPolicyConfiguration) backupConfig.getHAPolicyConfiguration()).setMaxSavedReplicatedJournalsSize(-1).setAllowFailBack(true);
       ((ReplicaPolicyConfiguration) backupConfig.getHAPolicyConfiguration()).setRestartBackup(false);
    }
 
@@ -230,15 +248,13 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
       try {
          ServerSocket serverSocket = new ServerSocket(61616);
          serverSocket.close();
-      }
-      catch (IOException e) {
+      } catch (IOException e) {
          throw e;
       }
       try {
          ServerSocket serverSocket = new ServerSocket(61617);
          serverSocket.close();
-      }
-      catch (IOException e) {
+      } catch (IOException e) {
          throw e;
       }
    }
@@ -267,28 +283,32 @@ public abstract class FailoverTestBase extends ActiveMQTestBase {
       final ActiveMQServerImpl actualServer = (ActiveMQServerImpl) backupServer.getServer();
       if (actualServer.getHAPolicy().isSharedStore()) {
          waitForServerToStart(actualServer);
-      }
-      else {
+      } else {
          waitForRemoteBackup(sessionFactory, seconds, true, actualServer);
       }
    }
 
    protected abstract TransportConfiguration getAcceptorTransportConfiguration(boolean live);
 
-   protected abstract TransportConfiguration getConnectorTransportConfiguration(final boolean live);
+   protected abstract TransportConfiguration getConnectorTransportConfiguration(boolean live);
 
    protected ServerLocatorInternal getServerLocator() throws Exception {
-      return (ServerLocatorInternal) addServerLocator(ActiveMQClient.createServerLocatorWithHA(getConnectorTransportConfiguration(true), getConnectorTransportConfiguration(false))).setRetryInterval(50);
+      return (ServerLocatorInternal) addServerLocator(ActiveMQClient.createServerLocatorWithHA(getConnectorTransportConfiguration(true), getConnectorTransportConfiguration(false))).setRetryInterval(50).setInitialConnectAttempts(50);
    }
 
    protected void crash(final ClientSession... sessions) throws Exception {
-      liveServer.crash(sessions);
+      this.crash(true, sessions);
    }
 
    protected void crash(final boolean waitFailure, final ClientSession... sessions) throws Exception {
-      liveServer.crash(waitFailure, sessions);
+      this.crash(true, waitFailure, sessions);
    }
 
+   protected void crash(final boolean failover,
+                        final boolean waitFailure,
+                        final ClientSession... sessions) throws Exception {
+      liveServer.crash(failover, waitFailure, sessions);
+   }
    // Private -------------------------------------------------------
 
    // Inner classes -------------------------------------------------

@@ -16,6 +16,7 @@
  */
 package org.apache.activemq.artemis.tests.integration.client;
 
+import org.apache.activemq.artemis.api.core.QueueConfiguration;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
@@ -26,9 +27,9 @@ import org.apache.activemq.artemis.api.core.client.ServerLocator;
 import org.apache.activemq.artemis.core.config.Configuration;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.ActiveMQServers;
-import org.apache.activemq.artemis.tests.integration.IntegrationTestLogger;
 import org.apache.activemq.artemis.tests.util.ActiveMQTestBase;
 import org.apache.activemq.artemis.utils.RandomUtil;
+import org.jboss.logging.Logger;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -37,7 +38,7 @@ public class MessagePriorityTest extends ActiveMQTestBase {
 
    // Constants -----------------------------------------------------
 
-   private static final IntegrationTestLogger log = IntegrationTestLogger.LOGGER;
+   private static final Logger log = Logger.getLogger(MessagePriorityTest.class);
 
    // Attributes ----------------------------------------------------
 
@@ -59,7 +60,7 @@ public class MessagePriorityTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
 
@@ -95,7 +96,7 @@ public class MessagePriorityTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       session.start();
 
@@ -117,7 +118,7 @@ public class MessagePriorityTest extends ActiveMQTestBase {
       for (int i = 9; i >= 0; i--) {
          ClientMessage m = consumer.receive(500);
 
-         log.info("received msg " + m.getPriority());
+         log.debug("received msg " + m.getPriority());
 
          Assert.assertNotNull(m);
          Assert.assertEquals(i, m.getPriority());
@@ -132,7 +133,7 @@ public class MessagePriorityTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
 
@@ -200,7 +201,7 @@ public class MessagePriorityTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
 
@@ -258,7 +259,7 @@ public class MessagePriorityTest extends ActiveMQTestBase {
       SimpleString queue = RandomUtil.randomSimpleString();
       SimpleString address = RandomUtil.randomSimpleString();
 
-      session.createQueue(address, queue, false);
+      session.createQueue(new QueueConfiguration(queue).setAddress(address).setDurable(false));
 
       ClientProducer producer = session.createProducer(address);
 

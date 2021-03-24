@@ -6,7 +6,7 @@
  * (the "License"); you may not use this file except in compliance with
  * the License.  You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,6 +16,8 @@
  */
 package org.apache.activemq.transport.failover;
 
+import javax.jms.Connection;
+import javax.jms.JMSException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -31,13 +33,12 @@ import org.apache.activemq.broker.artemiswrapper.OpenwireArtemisBaseTest;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.jms.Connection;
-import javax.jms.JMSException;
-
+@Ignore
 public class FailoverPriorityTest extends OpenwireArtemisBaseTest {
 
    protected final Logger LOG = LoggerFactory.getLogger(getClass());
@@ -48,9 +49,9 @@ public class FailoverPriorityTest extends OpenwireArtemisBaseTest {
    private final HashMap<Integer, String> urls = new HashMap<>();
 
    private final List<ActiveMQConnection> connections = new ArrayList<>();
-   private EmbeddedJMS[] servers = new EmbeddedJMS[3];
+   private final EmbeddedJMS[] servers = new EmbeddedJMS[3];
    private String clientUrl;
-   private Map<String, String> params = new HashMap<>();
+   private final Map<String, String> params = new HashMap<>();
 
    @Before
    public void setUp() throws Exception {
@@ -195,8 +196,7 @@ public class FailoverPriorityTest extends OpenwireArtemisBaseTest {
          LOG.info("Stopping " + primaryID);
          stopBroker(primaryID);
          Assert.assertTrue(servers[secondaryID].waitClusterForming(100, TimeUnit.MILLISECONDS, 20, total - 1));
-      }
-      else {
+      } else {
          LOG.info("Stopping " + secondaryID);
          stopBroker(secondaryID);
          Assert.assertTrue(servers[primaryID].waitClusterForming(100, TimeUnit.MILLISECONDS, 20, total - 1));
@@ -205,8 +205,7 @@ public class FailoverPriorityTest extends OpenwireArtemisBaseTest {
 
       if (primary) {
          assertAllConnectedTo(urls.get(secondaryID));
-      }
-      else {
+      } else {
          assertAllConnectedTo(urls.get(primaryID));
       }
 
@@ -220,8 +219,7 @@ public class FailoverPriorityTest extends OpenwireArtemisBaseTest {
 
          Assert.assertTrue(servers[primaryID].waitClusterForming(100, TimeUnit.MILLISECONDS, 20, total));
          Assert.assertTrue(servers[secondaryID].waitClusterForming(100, TimeUnit.MILLISECONDS, 20, total));
-      }
-      else {
+      } else {
          Configuration config = createConfig("127.0.0.1", secondaryID);
 
          deployClusterConfiguration(config, primaryID);

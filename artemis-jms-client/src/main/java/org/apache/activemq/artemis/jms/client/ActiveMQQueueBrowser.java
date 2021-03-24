@@ -16,18 +16,18 @@
  */
 package org.apache.activemq.artemis.jms.client;
 
-import java.util.Enumeration;
-import java.util.NoSuchElementException;
-
 import javax.jms.JMSException;
 import javax.jms.Queue;
 import javax.jms.QueueBrowser;
+import java.util.Enumeration;
+import java.util.NoSuchElementException;
 
 import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ClientConsumer;
 import org.apache.activemq.artemis.api.core.client.ClientMessage;
 import org.apache.activemq.artemis.api.core.client.ClientSession;
+import org.apache.activemq.artemis.jms.client.compatible1X.ActiveMQCompatibleMessage;
 import org.apache.activemq.artemis.utils.SelectorTranslator;
 
 /**
@@ -50,18 +50,22 @@ public final class ActiveMQQueueBrowser implements QueueBrowser {
 
    private SimpleString filterString;
 
+   private final boolean enable1xPrefixes;
+
    // Constructors ---------------------------------------------------------------------------------
 
    protected ActiveMQQueueBrowser(final ConnectionFactoryOptions options,
                                   final ActiveMQQueue queue,
                                   final String messageSelector,
-                                  final ClientSession session) throws JMSException {
+                                  final ClientSession session,
+                                  final boolean enable1xPrefixes) throws JMSException {
       this.options = options;
       this.session = session;
       this.queue = queue;
       if (messageSelector != null) {
          filterString = new SimpleString(SelectorTranslator.convertToActiveMQFilterString(messageSelector));
       }
+      this.enable1xPrefixes = enable1xPrefixes;
    }
 
    // QueueBrowser implementation -------------------------------------------------------------------
@@ -71,8 +75,7 @@ public final class ActiveMQQueueBrowser implements QueueBrowser {
       if (consumer != null) {
          try {
             consumer.close();
-         }
-         catch (ActiveMQException e) {
+         } catch (ActiveMQException e) {
             throw JMSExceptionHelper.convertFromActiveMQException(e);
          }
       }
@@ -86,8 +89,7 @@ public final class ActiveMQQueueBrowser implements QueueBrowser {
          consumer = session.createConsumer(queue.getSimpleAddress(), filterString, true);
 
          return new BrowserEnumeration();
-      }
-      catch (ActiveMQException e) {
+      } catch (ActiveMQException e) {
          throw JMSExceptionHelper.convertFromActiveMQException(e);
       }
 
@@ -127,8 +129,7 @@ public final class ActiveMQQueueBrowser implements QueueBrowser {
          if (current == null) {
             try {
                current = consumer.receiveImmediate();
-            }
-            catch (ActiveMQException e) {
+            } catch (ActiveMQException e) {
                return false;
             }
          }
@@ -141,18 +142,21 @@ public final class ActiveMQQueueBrowser implements QueueBrowser {
          if (hasMoreElements()) {
             ClientMessage next = current;
             current = null;
-            msg = ActiveMQMessage.createMessage(next, session, options);
+            if (enable1xPrefixes) {
+               msg = ActiveMQCompatibleMessage.createMessage(next, session, options);
+            } else {
+               msg = ActiveMQMessage.createMessage(next, session, options);
+            }
+
             try {
                msg.doBeforeReceive();
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                ActiveMQJMSClientLogger.LOGGER.errorCreatingMessage(msg.getCoreMessage().toString(), e);
 
                return null;
             }
             return msg;
-         }
-         else {
+         } else {
             throw new NoSuchElementException();
          }
       }

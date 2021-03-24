@@ -20,15 +20,25 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.activemq.artemis.api.core.ActiveMQException;
 import org.apache.activemq.artemis.api.core.Pair;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.TransportConfiguration;
 import org.apache.activemq.artemis.api.core.client.ClusterTopologyListener;
 import org.apache.activemq.artemis.api.core.client.TopologyMember;
+import org.apache.activemq.artemis.core.client.impl.ClientSessionFactoryInternal;
 import org.apache.activemq.artemis.core.client.impl.TopologyMemberImpl;
+import org.apache.activemq.artemis.core.protocol.core.Channel;
+import org.apache.activemq.artemis.core.protocol.core.Packet;
+import org.apache.activemq.artemis.core.protocol.core.impl.PacketImpl;
+import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.QuorumVoteMessage;
+import org.apache.activemq.artemis.core.protocol.core.impl.wireformat.QuorumVoteReplyMessage;
 import org.apache.activemq.artemis.core.server.ActiveMQComponent;
+import org.apache.activemq.artemis.core.server.ActiveMQServerLogger;
 import org.apache.activemq.artemis.core.server.cluster.ClusterControl;
 import org.apache.activemq.artemis.core.server.cluster.ClusterController;
 
@@ -46,7 +56,7 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
    /**
     * all the current registered {@link org.apache.activemq.artemis.core.server.cluster.qourum.Quorum}'s
     */
-   private Map<String, Quorum> quorums = new HashMap<>();
+   private final Map<String, Quorum> quorums = new HashMap<>();
 
    /**
     * any currently running runnables.
@@ -96,10 +106,10 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
             }
          }
       }
-      quorums.clear();
       for (Quorum quorum : quorums.values()) {
          quorum.close();
       }
+      quorums.clear();
    }
 
    /**
@@ -161,6 +171,51 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
       }
    }
 
+   public boolean hasLive(String nodeID, int quorumSize, int voteTimeout, TimeUnit voteTimeoutUnit) {
+      Objects.requireNonNull(nodeID, "nodeID");
+      if (!started) {
+         throw new IllegalStateException("QuorumManager must start first");
+      }
+      int size = quorumSize == -1 ? maxClusterSize : quorumSize;
+      QuorumVoteServerConnect quorumVote = new QuorumVoteServerConnect(size, nodeID);
+      // A positive decision means that there is no live with nodeID
+      boolean noLive = awaitVoteComplete(quorumVote, voteTimeout, voteTimeoutUnit);
+      return !noLive;
+   }
+
+   public boolean isStillLive(String nodeID,
+                              TransportConfiguration liveConnector,
+                              int quorumSize,
+                              int voteTimeout,
+                              TimeUnit voteTimeoutUnit) {
+      Objects.requireNonNull(nodeID, "nodeID");
+      Objects.requireNonNull(liveConnector, "liveConnector");
+      if (!started) {
+         throw new IllegalStateException("QuorumManager must start first");
+      }
+      int size = quorumSize == -1 ? maxClusterSize : quorumSize;
+      QuorumVoteServerConnect quorumVote = new QuorumVoteServerConnect(size, nodeID, true, liveConnector.toString());
+      return awaitVoteComplete(quorumVote, voteTimeout, voteTimeoutUnit);
+   }
+
+   private boolean awaitVoteComplete(QuorumVoteServerConnect quorumVote, int voteTimeout, TimeUnit voteTimeoutUnit) {
+      final int maxClusterSize = this.maxClusterSize;
+      vote(quorumVote);
+      if (maxClusterSize > 1) {
+         try {
+            quorumVote.await(voteTimeout, voteTimeoutUnit);
+         } catch (InterruptedException interruption) {
+            // No-op. The best the quorum can do now is to return the latest number it has
+            ActiveMQServerLogger.LOGGER.quorumVoteAwaitInterrupted();
+         }
+      } else {
+         ActiveMQServerLogger.LOGGER.ignoringQuorumVote(maxClusterSize);
+      }
+      voteComplete(quorumVote);
+
+      return quorumVote.getDecision();
+   }
+
    /**
     * returns the maximum size this cluster has been.
     *
@@ -181,6 +236,7 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
          if (!started)
             return;
          //send a vote to each node
+         ActiveMQServerLogger.LOGGER.initiatingQuorumVote(quorumVote.getName());
          for (TopologyMemberImpl tm : clusterController.getDefaultClusterTopology().getMembers()) {
             //but not ourselves
             if (!tm.getNodeId().equals(clusterController.getNodeID().toString())) {
@@ -193,14 +249,15 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
                runnables.add(voteRunnable);
             }
          }
-         if (runnables.size() > 0) {
-            voteRunnables.put(quorumVote, new VoteRunnableHolder(quorumVote, runnables, runnables.size()));
+         final int votes = runnables.size();
+         ActiveMQServerLogger.LOGGER.requestedQuorumVotes(votes);
+         if (votes > 0) {
+            voteRunnables.put(quorumVote, new VoteRunnableHolder(quorumVote, runnables, votes));
 
             for (VoteRunnable runnable : runnables) {
                executor.submit(runnable);
             }
-         }
-         else {
+         } else {
             quorumVote.allVotesCast(clusterController.getDefaultClusterTopology());
          }
       }
@@ -213,7 +270,7 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
     * @param vote    the vote
     * @return the updated vote
     */
-   public Vote vote(SimpleString handler, Vote vote) {
+   private Vote vote(SimpleString handler, Vote vote) {
       QuorumVoteHandler quorumVoteHandler = handlers.get(handler);
       return quorumVoteHandler.vote(vote);
    }
@@ -224,7 +281,7 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
     *
     * @param quorumVote the vote
     */
-   public void voteComplete(QuorumVoteServerConnect quorumVote) {
+   private void voteComplete(QuorumVoteServerConnect quorumVote) {
       VoteRunnableHolder holder = voteRunnables.remove(quorumVote);
       if (holder != null) {
          for (VoteRunnable runnable : holder.runnables) {
@@ -247,13 +304,27 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
       return QuorumManager.class.getSimpleName() + "(server=" + clusterController.getIdentity() + ")";
    }
 
-   public QuorumVoteHandler getVoteHandler(SimpleString handler) {
+   private QuorumVoteHandler getVoteHandler(SimpleString handler) {
       return handlers.get(handler);
+   }
+
+   public void handleQuorumVote(Channel clusterChannel, Packet packet) {
+      QuorumVoteMessage quorumVoteMessage = (QuorumVoteMessage) packet;
+      QuorumVoteHandler voteHandler = getVoteHandler(quorumVoteMessage.getHandler());
+      if (voteHandler == null) {
+         ActiveMQServerLogger.LOGGER.noVoteHandlerConfigured();
+         return;
+      }
+      quorumVoteMessage.decode(voteHandler);
+      ActiveMQServerLogger.LOGGER.receivedQuorumVoteRequest(quorumVoteMessage.getVote().toString());
+      Vote vote = vote(quorumVoteMessage.getHandler(), quorumVoteMessage.getVote());
+      ActiveMQServerLogger.LOGGER.sendingQuorumVoteResponse(vote.toString());
+      clusterChannel.send(new QuorumVoteReplyMessage(quorumVoteMessage.getHandler(), vote));
    }
 
    private final class VoteRunnableHolder {
 
-      private QuorumVote quorumVote;
+      private final QuorumVote quorumVote;
       private final List<VoteRunnable> runnables;
       private int size;
 
@@ -269,6 +340,23 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
          if (size <= 0) {
             quorumVote.allVotesCast(clusterController.getDefaultClusterTopology());
          }
+      }
+   }
+
+   private Vote sendQuorumVote(ClusterControl clusterControl, SimpleString handler, Vote vote) {
+      try {
+         final ClientSessionFactoryInternal sessionFactory = clusterControl.getSessionFactory();
+         final String remoteAddress = sessionFactory.getConnection().getRemoteAddress();
+         ActiveMQServerLogger.LOGGER.sendingQuorumVoteRequest(remoteAddress, vote.toString());
+         QuorumVoteReplyMessage replyMessage = (QuorumVoteReplyMessage) clusterControl.getClusterChannel().get()
+            .sendBlocking(new QuorumVoteMessage(handler, vote), PacketImpl.QUORUM_VOTE_REPLY);
+         QuorumVoteHandler voteHandler = getVoteHandler(replyMessage.getHandler());
+         replyMessage.decodeRest(voteHandler);
+         Vote voteResponse = replyMessage.getVote();
+         ActiveMQServerLogger.LOGGER.receivedQuorumVoteResponse(remoteAddress, voteResponse.toString());
+         return voteResponse;
+      } catch (ActiveMQException e) {
+         return null;
       }
    }
 
@@ -298,26 +386,23 @@ public final class QuorumManager implements ClusterTopologyListener, ActiveMQCom
             clusterControl.authorize();
             //if we are successful get the vote and check whether we need to send it to the target server,
             //just connecting may be enough
+
             vote = quorumVote.connected();
             if (vote.isRequestServerVote()) {
-               vote = clusterControl.sendQuorumVote(quorumVote.getName(), vote);
+               vote = sendQuorumVote(clusterControl, quorumVote.getName(), vote);
+               quorumVote.vote(vote);
+            } else {
                quorumVote.vote(vote);
             }
-            else {
-               quorumVote.vote(vote);
-            }
-         }
-         catch (Exception e) {
+         } catch (Exception e) {
             Vote vote = quorumVote.notConnected();
             quorumVote.vote(vote);
-         }
-         finally {
+         } finally {
             try {
                if (clusterControl != null) {
                   clusterControl.close();
                }
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                //ignore
             }
             QuorumManager.this.votingComplete(quorumVote);

@@ -23,6 +23,7 @@ import java.util.List;
 import org.apache.activemq.artemis.api.core.ActiveMQBuffer;
 import org.apache.activemq.artemis.api.core.SimpleString;
 import org.apache.activemq.artemis.api.core.client.ActiveMQClient;
+import org.apache.activemq.artemis.api.jms.ActiveMQJMSClient;
 import org.apache.activemq.artemis.api.jms.JMSFactoryType;
 import org.apache.activemq.artemis.jms.server.config.ConnectionFactoryConfiguration;
 import org.apache.activemq.artemis.utils.BufferHelper;
@@ -110,8 +111,6 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
 
    private int reconnectAttempts = ActiveMQClient.DEFAULT_RECONNECT_ATTEMPTS;
 
-   private boolean failoverOnInitialConnection = ActiveMQClient.DEFAULT_FAILOVER_ON_INITIAL_CONNECTION;
-
    private String groupID = null;
 
    private String protocolManagerFactoryStr;
@@ -121,6 +120,15 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
    private String deserializationBlackList;
 
    private String deserializationWhiteList;
+
+   private int initialMessagePacketSize = ActiveMQClient.DEFAULT_INITIAL_MESSAGE_PACKET_SIZE;
+
+   private boolean enable1xPrefixes = ActiveMQJMSClient.DEFAULT_ENABLE_1X_PREFIXES;
+
+   private boolean enableSharedClientID = ActiveMQClient.DEFAULT_ENABLED_SHARED_CLIENT_ID;
+
+   private boolean useTopologyForLoadBalancing = ActiveMQClient.DEFAULT_USE_TOPOLOGY_FOR_LOADBALANCING;
+
 
    // Static --------------------------------------------------------
 
@@ -186,9 +194,8 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
       return this;
    }
 
-
    @Override
-   public ConnectionFactoryConfiguration setConnectorNames(final String...names) {
+   public ConnectionFactoryConfiguration setConnectorNames(final String... names) {
       return this.setConnectorNames(Arrays.asList(names));
    }
 
@@ -509,14 +516,15 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
       return this;
    }
 
+   @Deprecated
    @Override
    public boolean isFailoverOnInitialConnection() {
-      return failoverOnInitialConnection;
+      return false;
    }
 
+   @Deprecated
    @Override
    public ConnectionFactoryConfiguration setFailoverOnInitialConnection(final boolean failover) {
-      failoverOnInitialConnection = failover;
       return this;
    }
 
@@ -528,6 +536,17 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
    @Override
    public ConnectionFactoryConfiguration setGroupID(final String groupID) {
       this.groupID = groupID;
+      return this;
+   }
+
+   @Override
+   public boolean isEnable1xPrefixes() {
+      return enable1xPrefixes;
+   }
+
+   @Override
+   public ConnectionFactoryConfiguration setEnable1xPrefixes(final boolean enable1xPrefixes) {
+      this.enable1xPrefixes = enable1xPrefixes;
       return this;
    }
 
@@ -609,7 +628,8 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
 
       reconnectAttempts = buffer.readInt();
 
-      failoverOnInitialConnection = buffer.readBoolean();
+      buffer.readBoolean();
+      // failoverOnInitialConnection
 
       compressLargeMessage = buffer.readBoolean();
 
@@ -622,6 +642,12 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
       deserializationBlackList = BufferHelper.readNullableSimpleStringAsString(buffer);
 
       deserializationWhiteList = BufferHelper.readNullableSimpleStringAsString(buffer);
+
+      enable1xPrefixes = buffer.readableBytes() > 0 ? buffer.readBoolean() : ActiveMQJMSClient.DEFAULT_ENABLE_1X_PREFIXES;
+
+      enableSharedClientID = buffer.readableBytes() > 0 ? BufferHelper.readNullableBoolean(buffer) : ActiveMQClient.DEFAULT_ENABLED_SHARED_CLIENT_ID;
+
+      useTopologyForLoadBalancing = buffer.readableBytes() > 0 ? BufferHelper.readNullableBoolean(buffer) : ActiveMQClient.DEFAULT_USE_TOPOLOGY_FOR_LOADBALANCING;
    }
 
    @Override
@@ -634,8 +660,7 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
 
       if (this.connectorNames == null) {
          buffer.writeInt(0);
-      }
-      else {
+      } else {
          buffer.writeInt(connectorNames.size());
 
          for (String tc : connectorNames) {
@@ -699,7 +724,8 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
 
       buffer.writeInt(reconnectAttempts);
 
-      buffer.writeBoolean(failoverOnInitialConnection);
+      buffer.writeBoolean(false);
+      // failoverOnInitialConnection
 
       buffer.writeBoolean(compressLargeMessage);
 
@@ -712,6 +738,12 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
       BufferHelper.writeAsNullableSimpleString(buffer, deserializationBlackList);
 
       BufferHelper.writeAsNullableSimpleString(buffer, deserializationWhiteList);
+
+      buffer.writeBoolean(enable1xPrefixes);
+
+      BufferHelper.writeNullableBoolean(buffer, enableSharedClientID);
+
+      BufferHelper.writeNullableBoolean(buffer, useTopologyForLoadBalancing);
    }
 
    @Override
@@ -819,13 +851,20 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
          BufferHelper.sizeOfNullableSimpleString(groupID) +
 
          DataConstants.SIZE_INT +
-          // factoryType
+         // factoryType
 
          BufferHelper.sizeOfNullableSimpleString(protocolManagerFactoryStr) +
 
          BufferHelper.sizeOfNullableSimpleString(deserializationBlackList) +
 
-         BufferHelper.sizeOfNullableSimpleString(deserializationWhiteList);
+         BufferHelper.sizeOfNullableSimpleString(deserializationWhiteList) +
+
+         DataConstants.SIZE_BOOLEAN +
+         // enable1xPrefixes;
+
+         BufferHelper.sizeOfNullableBoolean(enableSharedClientID) +
+
+         BufferHelper.sizeOfNullableBoolean(useTopologyForLoadBalancing);
 
       return size;
    }
@@ -881,6 +920,39 @@ public class ConnectionFactoryConfigurationImpl implements ConnectionFactoryConf
    @Override
    public String getProtocolManagerFactoryStr() {
       return protocolManagerFactoryStr;
+   }
+
+   @Override
+   public int getInitialMessagePacketSize() {
+      return initialMessagePacketSize;
+   }
+
+   @Override
+   public ConnectionFactoryConfiguration setInitialMessagePacketSize(int size) {
+      this.initialMessagePacketSize = size;
+      return this;
+   }
+
+   @Override
+   public ConnectionFactoryConfiguration setEnableSharedClientID(boolean enabled) {
+      this.enableSharedClientID = enabled;
+      return this;
+   }
+
+   @Override
+   public boolean isEnableSharedClientID() {
+      return enableSharedClientID;
+   }
+
+   @Override
+   public ConnectionFactoryConfiguration setUseTopologyForLoadBalancing(boolean useTopologyForLoadBalancing) {
+      this.useTopologyForLoadBalancing = useTopologyForLoadBalancing;
+      return this;
+   }
+
+   @Override
+   public boolean getUseTopologyForLoadBalancing() {
+      return useTopologyForLoadBalancing;
    }
 
    // Public --------------------------------------------------------
