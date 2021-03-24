@@ -69,7 +69,7 @@
        <!-- base url for site deployment.  See distribution management for full url.  Override this in settings.xml for staging -->
       <staging.siteURL>scp://people.apache.org/x1/www/activemq.apache.org</staging.siteURL>
 
-      <activemq5-version>5.12.0</activemq5-version>
+      <activemq5-version>5.16.1</activemq5-version>
       <apache.derby.version>10.11.1.1</apache.derby.version>
       <commons.beanutils.version>1.9.2</commons.beanutils.version>
       <commons.collections.version>3.2.2</commons.collections.version>
