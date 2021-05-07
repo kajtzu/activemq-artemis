@@ -17,23 +17,59 @@
 
 package org.apache.activemq.artemis.utils.critical;
 
-import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 
+import org.apache.activemq.artemis.utils.ArtemisCloseable;
 import org.jboss.logging.Logger;
 
 public class CriticalMeasure {
+
+   public static boolean isDummy(ArtemisCloseable closeable) {
+      return closeable == dummyCloseable;
+   }
 
    private static final Logger logger = Logger.getLogger(CriticalMeasure.class);
 
    // this is used on enterCritical, if the logger is in trace mode
    private volatile Exception traceEnter;
+   static final AtomicIntegerFieldUpdater<CriticalMeasure> CURRENT_MEASURING = AtomicIntegerFieldUpdater.newUpdater(CriticalMeasure.class, "measuring");
 
-   //uses updaters to avoid creates many AtomicLong instances
-   static final AtomicLongFieldUpdater<CriticalMeasure> TIME_ENTER_UPDATER = AtomicLongFieldUpdater.newUpdater(CriticalMeasure.class, "timeEnter");
-   static final AtomicLongFieldUpdater<CriticalMeasure> TIME_LEFT_UPDATER = AtomicLongFieldUpdater.newUpdater(CriticalMeasure.class, "timeLeft");
+   private final CriticalCloseable autoCloseable = new CriticalCloseable() {
+      ArtemisCloseable beforeClose;
 
-   private volatile long timeEnter;
-   private volatile long timeLeft;
+      @Override
+      public void beforeClose(ArtemisCloseable closeable) {
+         beforeClose = closeable;
+      }
+
+      @Override
+      public void close() {
+         try {
+            if (beforeClose != null) {
+               beforeClose.close();
+               beforeClose = null;
+            }
+         } finally {
+            leaveCritical();
+            CURRENT_MEASURING.set(CriticalMeasure.this, 0);
+         }
+      }
+   };
+
+   protected static final CriticalCloseable dummyCloseable = new CriticalCloseable() {
+      @Override
+      public void beforeClose(ArtemisCloseable runnable) {
+         throw new IllegalStateException("The dummy closeable does not support beforeClose. Check before CriticalMeasure.isDummy(closeable) before you call beforeClose(runnable)");
+      }
+
+      @Override
+      public void close() {
+      }
+   };
+
+   // this is working like a boolean, although using AtomicIntegerFieldUpdater instead
+   protected volatile int measuring;
+   protected volatile long timeEnter;
 
    private final int id;
    private final CriticalComponent component;
@@ -41,24 +77,31 @@ public class CriticalMeasure {
    public CriticalMeasure(CriticalComponent component, int id) {
       this.id = id;
       this.component = component;
-      //prefer this approach instead of using some fixed value because System::nanoTime could change sign
-      //with long running processes
-      long time = System.nanoTime();
-      TIME_LEFT_UPDATER.set(this, time);
-      TIME_ENTER_UPDATER.set(this, time);
+      this.timeEnter = 0;
    }
 
-   public void enterCritical() {
-      //prefer lazySet in order to avoid heavy-weight full barriers on x86
-      TIME_ENTER_UPDATER.lazySet(this, System.nanoTime());
+   public CriticalCloseable measure() {
+      // I could have chosen to simply store the time on this value, however I would be calling nanoTime a lot of times
+      // to just waste the value
+      // So, I keep a measuring atomic to protect the thread sampling,
+      // and I will still do the set using a single thread.
+      if (CURRENT_MEASURING.compareAndSet(this, 0, 1)) {
+         enterCritical();
+         return autoCloseable;
+      } else {
+         return dummyCloseable;
+      }
+   }
+
+   protected void enterCritical() {
+      timeEnter = System.nanoTime();
 
       if (logger.isTraceEnabled()) {
          traceEnter = new Exception("entered");
       }
    }
 
-   public void leaveCritical() {
-
+   protected void leaveCritical() {
       if (logger.isTraceEnabled()) {
 
          CriticalAnalyzer analyzer = component != null ? component.getCriticalAnalyzer() : null;
@@ -71,8 +114,7 @@ public class CriticalMeasure {
          }
          traceEnter = null;
       }
-
-      TIME_LEFT_UPDATER.lazySet(this, System.nanoTime());
+      timeEnter = 0L;
    }
 
    protected String getComponentName() {
@@ -84,12 +126,10 @@ public class CriticalMeasure {
    }
 
    public boolean checkExpiration(long timeout, boolean reset) {
-      long time = System.nanoTime();
-      final long timeLeft = TIME_LEFT_UPDATER.get(this);
-      final long timeEnter = TIME_ENTER_UPDATER.get(this);
-      //due to how System::nanoTime works is better to use differences to prevent numerical overflow while comparing
-      if (timeLeft - timeEnter < 0) {
-         boolean expired = System.nanoTime() - timeEnter > timeout;
+      final long thisTimeEnter = this.timeEnter;
+      if (thisTimeEnter != 0L) {
+         long time = System.nanoTime();
+         boolean expired = time - timeEnter > timeout;
 
          if (expired) {
             Exception lastTraceEnter = this.traceEnter;
@@ -101,20 +141,12 @@ public class CriticalMeasure {
             }
 
             if (reset) {
-               TIME_LEFT_UPDATER.lazySet(this, time);
-               TIME_ENTER_UPDATER.lazySet(this, time);
+               this.timeEnter = 0;
             }
+
          }
          return expired;
       }
       return false;
-   }
-
-   public long enterTime() {
-      return TIME_ENTER_UPDATER.get(this);
-   }
-
-   public long leaveTime() {
-      return TIME_LEFT_UPDATER.get(this);
    }
 }

@@ -31,6 +31,7 @@ import org.apache.activemq.artemis.cli.commands.InputAbstract;
 import org.apache.activemq.artemis.cli.commands.InvalidOptionsError;
 import org.apache.activemq.artemis.cli.commands.Kill;
 import org.apache.activemq.artemis.cli.commands.Mask;
+import org.apache.activemq.artemis.cli.commands.PrintVersion;
 import org.apache.activemq.artemis.cli.commands.check.HelpCheck;
 import org.apache.activemq.artemis.cli.commands.check.NodeCheck;
 import org.apache.activemq.artemis.cli.commands.check.QueueCheck;
@@ -46,7 +47,6 @@ import org.apache.activemq.artemis.cli.commands.address.UpdateAddress;
 import org.apache.activemq.artemis.cli.commands.messages.Browse;
 import org.apache.activemq.artemis.cli.commands.messages.Consumer;
 import org.apache.activemq.artemis.cli.commands.messages.Producer;
-import org.apache.activemq.artemis.cli.commands.migration1x.Migrate1X;
 import org.apache.activemq.artemis.cli.commands.queue.CreateQueue;
 import org.apache.activemq.artemis.cli.commands.queue.DeleteQueue;
 import org.apache.activemq.artemis.cli.commands.queue.HelpQueue;
@@ -54,6 +54,7 @@ import org.apache.activemq.artemis.cli.commands.queue.PurgeQueue;
 import org.apache.activemq.artemis.cli.commands.queue.UpdateQueue;
 import org.apache.activemq.artemis.cli.commands.tools.HelpData;
 import org.apache.activemq.artemis.cli.commands.tools.PrintData;
+import org.apache.activemq.artemis.cli.commands.tools.RecoverMessages;
 import org.apache.activemq.artemis.cli.commands.tools.journal.CompactJournal;
 import org.apache.activemq.artemis.cli.commands.tools.journal.DecodeJournal;
 import org.apache.activemq.artemis.cli.commands.tools.journal.EncodeJournal;
@@ -156,7 +157,9 @@ public class Artemis {
 
    private static Cli.CliBuilder<Action> builder(File artemisInstance) {
       String instance = artemisInstance != null ? artemisInstance.getAbsolutePath() : System.getProperty("artemis.instance");
-      Cli.CliBuilder<Action> builder = Cli.<Action>builder("artemis").withDescription("ActiveMQ Artemis Command Line").withCommand(HelpAction.class).withCommand(Producer.class).withCommand(Transfer.class).withCommand(Consumer.class).withCommand(Browse.class).withCommand(Mask.class).withDefaultCommand(HelpAction.class);
+      Cli.CliBuilder<Action> builder = Cli.<Action>builder("artemis").withDescription("ActiveMQ Artemis Command Line").
+         withCommand(HelpAction.class).withCommand(Producer.class).withCommand(Transfer.class).withCommand(Consumer.class).
+         withCommand(Browse.class).withCommand(Mask.class).withCommand(PrintVersion.class).withDefaultCommand(HelpAction.class);
 
       builder.withGroup("check").withDescription("Check tools group (node|queue) (example ./artemis check node)").
          withDefaultCommand(HelpCheck.class).withCommands(NodeCheck.class, QueueCheck.class);
@@ -169,7 +172,7 @@ public class Artemis {
 
       if (instance != null) {
          builder.withGroup("data").withDescription("data tools group (print|imp|exp|encode|decode|compact) (example ./artemis data print)").
-            withDefaultCommand(HelpData.class).withCommands(PrintData.class, XmlDataExporter.class, XmlDataImporter.class, DecodeJournal.class, EncodeJournal.class, CompactJournal.class);
+            withDefaultCommand(HelpData.class).withCommands(RecoverMessages.class, PrintData.class, XmlDataExporter.class, XmlDataImporter.class, DecodeJournal.class, EncodeJournal.class, CompactJournal.class);
          builder.withGroup("user").withDescription("default file-based user management (add|rm|list|reset) (example ./artemis user list)").
                  withDefaultCommand(HelpUser.class).withCommands(ListUser.class, AddUser.class, RemoveUser.class, ResetUser.class);
          builder = builder.withCommands(Run.class, Stop.class, Kill.class, PerfJournal.class);
@@ -177,7 +180,6 @@ public class Artemis {
          builder.withGroup("data").withDescription("data tools group (print) (example ./artemis data print)").
             withDefaultCommand(HelpData.class).withCommands(PrintData.class);
          builder = builder.withCommand(Create.class);
-         builder = builder.withCommand(Migrate1X.class);
       }
 
       return builder;

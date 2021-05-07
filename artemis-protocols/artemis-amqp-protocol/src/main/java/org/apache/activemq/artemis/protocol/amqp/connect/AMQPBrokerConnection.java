@@ -48,6 +48,7 @@ import org.apache.activemq.artemis.core.server.ActiveMQComponent;
 import org.apache.activemq.artemis.core.server.ActiveMQServer;
 import org.apache.activemq.artemis.core.server.BrokerConnection;
 import org.apache.activemq.artemis.core.server.Consumer;
+import org.apache.activemq.artemis.core.server.MessageReference;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.impl.AddressInfo;
 import org.apache.activemq.artemis.core.server.mirror.MirrorController;
@@ -63,10 +64,12 @@ import org.apache.activemq.artemis.protocol.amqp.proton.ProtonServerSenderContex
 import org.apache.activemq.artemis.protocol.amqp.proton.SenderController;
 import org.apache.activemq.artemis.protocol.amqp.sasl.ClientSASL;
 import org.apache.activemq.artemis.protocol.amqp.sasl.ClientSASLFactory;
+import org.apache.activemq.artemis.protocol.amqp.sasl.scram.SCRAMClientSASL;
 import org.apache.activemq.artemis.spi.core.protocol.ConnectionEntry;
 import org.apache.activemq.artemis.spi.core.remoting.ClientConnectionLifeCycleListener;
 import org.apache.activemq.artemis.spi.core.remoting.ClientProtocolManager;
 import org.apache.activemq.artemis.spi.core.remoting.Connection;
+import org.apache.activemq.artemis.spi.core.security.scram.SCRAM;
 import org.apache.activemq.artemis.utils.ConfigurationHelper;
 import org.apache.activemq.artemis.utils.UUIDGenerator;
 import org.apache.qpid.proton.amqp.Symbol;
@@ -96,8 +99,8 @@ public class AMQPBrokerConnection implements ClientConnectionLifeCycleListener, 
    private int retryCounter = 0;
    private boolean connecting = false;
    private volatile ScheduledFuture reconnectFuture;
-   private Set<Queue> senders = new HashSet<>();
-   private Set<Queue> receivers = new HashSet<>();
+   private final Set<Queue> senders = new HashSet<>();
+   private final Set<Queue> receivers = new HashSet<>();
 
    final Executor connectExecutor;
    final ScheduledExecutorService scheduledExecutorService;
@@ -202,11 +205,11 @@ public class AMQPBrokerConnection implements ClientConnectionLifeCycleListener, 
 
    public void createLink(Queue queue, AMQPBrokerConnectionElement connectionElement) {
       if (connectionElement.getType() == AMQPBrokerConnectionAddressType.PEER) {
-         connectSender(queue, queue.getAddress().toString(), Symbol.valueOf("qd.waypoint"));
+         connectSender(queue, queue.getAddress().toString(), null, Symbol.valueOf("qd.waypoint"));
          connectReceiver(protonRemotingConnection, session, sessionContext, queue, Symbol.valueOf("qd.waypoint"));
       } else {
          if (connectionElement.getType() == AMQPBrokerConnectionAddressType.SENDER) {
-            connectSender(queue, queue.getAddress().toString());
+            connectSender(queue, queue.getAddress().toString(), null);
          }
          if (connectionElement.getType() == AMQPBrokerConnectionAddressType.RECEIVER) {
             connectReceiver(protonRemotingConnection, session, sessionContext, queue);
@@ -276,7 +279,7 @@ public class AMQPBrokerConnection implements ClientConnectionLifeCycleListener, 
                   AMQPMirrorBrokerConnectionElement replica = (AMQPMirrorBrokerConnectionElement)connectionElement;
                   Queue queue = server.locateQueue(replica.getSourceMirrorAddress());
 
-                  connectSender(queue, ProtonProtocolManager.MIRROR_ADDRESS);
+                  connectSender(queue, ProtonProtocolManager.MIRROR_ADDRESS, (r) -> AMQPMirrorControllerSource.validateProtocolData(r, replica.getSourceMirrorAddress()));
                }
             }
          }
@@ -455,6 +458,7 @@ public class AMQPBrokerConnection implements ClientConnectionLifeCycleListener, 
 
    private void connectSender(Queue queue,
                               String targetName,
+                              java.util.function.Consumer<? super MessageReference> beforeDeliver,
                               Symbol... capabilities) {
       if (logger.isDebugEnabled()) {
          logger.debug("Connecting outbound for " + queue);
@@ -489,7 +493,7 @@ public class AMQPBrokerConnection implements ClientConnectionLifeCycleListener, 
 
             AMQPOutgoingController outgoingInitializer = new AMQPOutgoingController(queue, sender, sessionContext.getSessionSPI());
 
-            ProtonServerSenderContext senderContext = new ProtonServerSenderContext(protonRemotingConnection.getAmqpConnection(), sender, sessionContext, sessionContext.getSessionSPI(), outgoingInitializer);
+            ProtonServerSenderContext senderContext = new ProtonServerSenderContext(protonRemotingConnection.getAmqpConnection(), sender, sessionContext, sessionContext.getSessionSPI(), outgoingInitializer).setBeforeDelivery(beforeDeliver);
 
             sessionContext.addSender(sender, senderContext);
          } catch (Exception e) {
@@ -676,7 +680,15 @@ public class AMQPBrokerConnection implements ClientConnectionLifeCycleListener, 
          if (availableMechanisms.contains(EXTERNAL) && ExternalSASLMechanism.isApplicable(connection)) {
             return new ExternalSASLMechanism();
          }
-
+         if (SCRAMClientSASL.isApplicable(brokerConnectConfiguration.getUser(),
+                                          brokerConnectConfiguration.getPassword())) {
+            for (SCRAM scram : SCRAM.values()) {
+               if (availableMechanisms.contains(scram.getName())) {
+                  return new SCRAMClientSASL(scram, brokerConnectConfiguration.getUser(),
+                                             brokerConnectConfiguration.getPassword());
+               }
+            }
+         }
          if (availableMechanisms.contains(PLAIN) && PlainSASLMechanism.isApplicable(brokerConnectConfiguration.getUser(), brokerConnectConfiguration.getPassword())) {
             return new PlainSASLMechanism(brokerConnectConfiguration.getUser(), brokerConnectConfiguration.getPassword());
          }
